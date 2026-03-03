@@ -18,7 +18,6 @@ import { ChatSessionsSidebar } from "../components/workspace/chat-sessions-sideb
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
 import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../components/chat-panel";
-import { SubagentPanel } from "../components/subagent-panel";
 import { EntryDetailModal } from "../components/workspace/entry-detail-modal";
 import { useSearchIndex } from "@/lib/search-index";
 import { parseWorkspaceLink, isWorkspaceLink } from "@/lib/workspace-links";
@@ -1512,33 +1511,27 @@ function WorkspacePageInner() {
             /* Main chat view (default when no file is selected) */
             <>
               <div className="flex-1 flex flex-col min-w-0" style={{ background: "var(--color-main-bg)" }}>
-                {activeSubagent ? (
-                  <SubagentPanel
-                    sessionKey={activeSubagent.childSessionKey}
-                    task={activeSubagent.task}
-                    label={activeSubagent.label}
-                    onBack={handleBackFromSubagent}
-                    onSubagentClick={handleSubagentClickFromChat}
-                    onFilePathClick={handleFilePathClickFromChat}
-                  />
-                ) : (
                 <ChatPanel
-                  ref={chatRef}
+                  key={activeSubagent?.childSessionKey ?? "main"}
+                  ref={activeSubagent ? undefined : chatRef}
                   sessionTitle={activeSessionTitle}
                   initialSessionId={activeSessionId ?? undefined}
-                  onActiveSessionChange={(id) => {
+                  onActiveSessionChange={activeSubagent ? undefined : (id) => {
                     setActiveSessionId(id);
                     setActiveSubagentKey(null);
                   }}
-                  onSessionsChange={refreshSessions}
-                  onSubagentSpawned={handleSubagentSpawned}
+                  onSessionsChange={activeSubagent ? undefined : refreshSessions}
+                  onSubagentSpawned={activeSubagent ? undefined : handleSubagentSpawned}
                   onSubagentClick={handleSubagentClickFromChat}
                   onFilePathClick={handleFilePathClickFromChat}
-                  onDeleteSession={handleDeleteSession}
-                  onRenameSession={handleRenameSession}
+                  onDeleteSession={activeSubagent ? undefined : handleDeleteSession}
+                  onRenameSession={activeSubagent ? undefined : handleRenameSession}
                   compact={isMobile}
+                  sessionKey={activeSubagent?.childSessionKey}
+                  subagentTask={activeSubagent?.task}
+                  subagentLabel={activeSubagent?.label}
+                  onBack={activeSubagent ? handleBackFromSubagent : undefined}
                 />
-                )}
               </div>
               {/* Chat sessions sidebar — static on desktop, drawer overlay on mobile */}
               {isMobile ? (

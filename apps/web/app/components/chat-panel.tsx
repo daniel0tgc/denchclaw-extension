@@ -673,6 +673,14 @@ type ChatPanelProps = {
 	onDeleteSession?: (sessionId: string) => void;
 	/** Called when user renames the current session. */
 	onRenameSession?: (sessionId: string, newTitle: string) => void;
+	/** Subagent mode: when set, connects to an existing subagent session via its gateway session key. */
+	sessionKey?: string;
+	/** The subagent task description (shown as the first user message in subagent mode). */
+	subagentTask?: string;
+	/** Display label for the subagent header. */
+	subagentLabel?: string;
+	/** Back button handler (subagent mode only). */
+	onBack?: () => void;
 };
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -690,9 +698,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onFilePathClick,
 			onDeleteSession,
 			onRenameSession: _onRenameSession,
+			sessionKey: subagentSessionKey,
+			subagentTask,
+			subagentLabel,
+			onBack,
 		},
 		ref,
 	) {
+		const isSubagentMode = !!subagentSessionKey;
 		const editorRef = useRef<ChatEditorHandle>(null);
 		const [editorEmpty, setEditorEmpty] = useState(true);
 		const [currentSessionId, setCurrentSessionId] = useState<
@@ -736,12 +749,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			sessionIdRef.current = currentSessionId;
 		}, [currentSessionId]);
 
+		const subagentSessionKeyRef = useRef(subagentSessionKey);
+		useEffect(() => {
+			subagentSessionKeyRef.current = subagentSessionKey;
+		}, [subagentSessionKey]);
+
 		// ── Transport (per-instance) ──
 		const transport = useMemo(
 			() =>
 				new DefaultChatTransport({
 					api: "/api/chat",
 					body: () => {
+						const sk = subagentSessionKeyRef.current;
+						if (sk) {return { sessionKey: sk };}
 						const sid = sessionIdRef.current;
 						return sid ? { sessionId: sid } : {};
 					},
@@ -815,6 +835,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// ── Stream reconnection ──
 		// Attempts to reconnect to an active agent run for the given session.
 		// Replays buffered SSE events and streams live updates.
+		// Accepts either a web sessionId or a gateway sessionKey (subagent mode).
 		const attemptReconnect = useCallback(
 			async (
 				sessionId: string,
@@ -823,13 +844,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					role: "user" | "assistant" | "system";
 					parts: UIMessage["parts"];
 				}>,
+				options?: { sessionKey?: string },
 			): Promise<boolean> => {
 				const abort = new AbortController();
 				reconnectAbortRef.current = abort;
 
 				try {
+					const streamParam = options?.sessionKey
+						? `sessionKey=${encodeURIComponent(options.sessionKey)}`
+						: `sessionId=${encodeURIComponent(sessionId)}`;
 					const res = await fetch(
-						`/api/chat/stream?sessionId=${encodeURIComponent(sessionId)}`,
+						`/api/chat/stream?${streamParam}`,
 						{ signal: abort.signal },
 					);
 					if (!res.ok || !res.body) {
@@ -962,7 +987,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		};
 
 		useEffect(() => {
-			if (!filePath) {
+			if (!filePath || isSubagentMode) {
 				return;
 			}
 			let cancelled = false;
@@ -1063,13 +1088,87 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// and reconnect to any active stream.
 		const initialSessionHandled = useRef(false);
 		useEffect(() => {
-			if (filePath || !initialSessionId || initialSessionHandled.current) {
+			if (filePath || isSubagentMode || !initialSessionId || initialSessionHandled.current) {
 				return;
 			}
 			initialSessionHandled.current = true;
 			void handleSessionSelect(initialSessionId);
 			// eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
 		}, []);
+
+		// ── Subagent mode: load persisted messages + reconnect to active stream ──
+		useEffect(() => {
+			if (!subagentSessionKey || !subagentTask) {return;}
+			let cancelled = false;
+
+			reconnectAbortRef.current?.abort();
+			void stop();
+			savedMessageIdsRef.current.clear();
+			setQueuedMessages([]);
+
+			const taskMsg = {
+				id: `task-${subagentSessionKey}`,
+				role: "user" as const,
+				parts: [{ type: "text" as const, text: subagentTask }] as UIMessage["parts"],
+			};
+			setMessages([taskMsg]);
+
+			void (async () => {
+				if (cancelled) {return;}
+
+				// Load persisted messages from the subagent session JSONL
+				let baseMessages: Array<{ id: string; role: "user" | "assistant"; parts: UIMessage["parts"] }> = [taskMsg];
+				try {
+					const msgRes = await fetch(`/api/web-sessions/${encodeURIComponent(subagentSessionKey)}`);
+					if (cancelled) {return;}
+					if (msgRes.ok) {
+						const msgData = await msgRes.json();
+						const sessionMessages: Array<{
+							id: string;
+							role: "user" | "assistant";
+							content: string;
+							parts?: Array<Record<string, unknown>>;
+							_streaming?: boolean;
+						}> = msgData.messages || [];
+
+						const completedMessages = sessionMessages.some((m) => m._streaming)
+							? sessionMessages.filter((m) => !m._streaming)
+							: sessionMessages;
+
+						if (completedMessages.length > 0) {
+							const uiMessages = completedMessages.map((msg) => {
+								savedMessageIdsRef.current.add(msg.id);
+								return {
+									id: msg.id,
+									role: msg.role,
+									parts: (msg.parts ?? [{ type: "text" as const, text: msg.content }]) as UIMessage["parts"],
+								};
+							});
+							baseMessages = [taskMsg, ...uiMessages];
+							if (!cancelled) {
+								setMessages(baseMessages);
+							}
+						}
+
+					} else {
+						// No persisted session file — use task message only
+					}
+				} catch {
+					// ignore — fall through to reconnect with task message only
+				}
+
+				// Try to reconnect to an active stream (may be still running)
+				if (!cancelled) {
+					await attemptReconnect(subagentSessionKey, baseMessages, { sessionKey: subagentSessionKey });
+				}
+			})();
+
+			return () => {
+				cancelled = true;
+				reconnectAbortRef.current?.abort();
+			};
+			// eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters
+		}, [subagentSessionKey, subagentTask, attemptReconnect]);
 
 		// ── Poll for subagent spawns during active streaming ──
 		const [hasRunningSubagents, setHasRunningSubagents] = useState(false);
@@ -1229,7 +1328,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				}
 
 				let sessionId = currentSessionId;
-				if (!sessionId) {
+				if (!sessionId && !isSubagentMode) {
 					const titleSource =
 						userText || "File attachment";
 					const title =
@@ -1453,23 +1552,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			// Stop the server-side agent run and wait for confirmation so the
 			// session is no longer in "running" state before we stop the
 			// client-side stream (which may trigger queued message flush).
-			if (currentSessionId) {
+			const stopKey = subagentSessionKey || currentSessionId;
+			if (stopKey) {
 				try {
 					await fetch("/api/chat/stop", {
 						method: "POST",
 						headers: {
 							"Content-Type": "application/json",
 						},
-						body: JSON.stringify({
-							sessionId: currentSessionId,
-						}),
+						body: JSON.stringify(
+							subagentSessionKey
+								? { sessionKey: subagentSessionKey }
+								: { sessionId: currentSessionId },
+						),
 					});
 				} catch { /* ignore */ }
 			}
 
 		// Stop the useChat transport stream (transitions status → "ready").
 		void stop();
-	}, [currentSessionId, stop]);
+	}, [currentSessionId, subagentSessionKey, stop]);
 
 		// ── Queue handlers ──
 
@@ -1621,11 +1723,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			>
 				{/* Header — sticky glass bar */}
 				<header
-					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center justify-between z-20`}
+					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex items-center ${isSubagentMode ? "gap-3" : "justify-between"} z-20`}
 					style={{
 						background: "var(--color-bg-glass)",
 					}}
 				>
+				{isSubagentMode ? (
+					<>
+						<button
+							type="button"
+							onClick={onBack}
+							className="p-1.5 rounded-lg flex-shrink-0"
+							style={{ color: "var(--color-text-muted)" }}
+							title="Back to parent chat"
+						>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="m12 19-7-7 7-7" />
+								<path d="M19 12H5" />
+							</svg>
+						</button>
+						<div className="min-w-0 flex-1">
+							<h2 className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>
+								{subagentLabel || (subagentTask && subagentTask.length > 60 ? subagentTask.slice(0, 60) + "..." : subagentTask)}
+							</h2>
+							<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+								{isStreaming ? <UnicodeSpinner name="braille" /> : "Completed"}
+							</p>
+						</div>
+					</>
+				) : (
+					<>
 					<div className="min-w-0 flex-1">
 						{compact && fileContext ? (
 							<h2
@@ -1710,10 +1837,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							</button>
 						)}
 					</div>
+					</>
+				)}
 				</header>
 
-				{/* File-scoped session tabs (compact mode) */}
-				{compact && fileContext && fileSessions.length > 0 && (
+				{/* File-scoped session tabs (compact mode, not in subagent mode) */}
+				{!isSubagentMode && compact && fileContext && fileSessions.length > 0 && (
 					<div
 						className="px-2 py-1.5 border-b flex gap-1 overflow-x-auto z-20"
 						style={{
@@ -1981,7 +2110,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							</div>
 						)}
 
-						{/* Attachment preview strip */}
+						{/* Attachment preview strip (hidden in subagent mode) */}
+						{!isSubagentMode && (
 						<AttachmentStrip
 							files={attachedFiles}
 							compact={compact}
@@ -1990,6 +2120,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								clearAllAttachments
 							}
 						/>
+						)}
 
 							<ChatEditor
 								ref={editorRef}
@@ -1997,16 +2128,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								onChange={(isEmpty) =>
 									setEditorEmpty(isEmpty)
 								}
-								onNativeFileDrop={uploadAndAttachNativeFiles}
+								onNativeFileDrop={isSubagentMode ? undefined : uploadAndAttachNativeFiles}
 							placeholder={
-								compact && fileContext
-									? `Ask about ${fileContext.isDirectory ? "this folder" : fileContext.filename}...`
-									: isStreaming
-										? "Type to queue a message..."
-									: attachedFiles.length >
-												0
-											? "Add a message or send files..."
-											: "Type @ to mention files..."
+								isSubagentMode
+									? (isStreaming ? "Type to queue a message..." : "Type @ to mention files...")
+									: compact && fileContext
+										? `Ask about ${fileContext.isDirectory ? "this folder" : fileContext.filename}...`
+										: isStreaming
+											? "Type to queue a message..."
+										: attachedFiles.length >
+													0
+												? "Add a message or send files..."
+												: "Type @ to mention files..."
 								}
 								disabled={loadingSession}
 								compact={compact}
@@ -2017,6 +2150,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								className={`flex items-center justify-between ${compact ? "px-2 pb-1.5" : "px-3 pb-2.5"}`}
 							>
 							<div className="flex items-center gap-0.5">
+								{!isSubagentMode && (
 								<button
 									type="button"
 									onClick={() =>
@@ -2047,6 +2181,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 											<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
 										</svg>
 									</button>
+								)}
 								</div>
 							{/* Send / Stop / Queue buttons */}
 							<div className="flex items-center gap-1.5">
@@ -2147,7 +2282,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 				</div>
 
-				{/* File picker modal */}
+				{/* File picker modal (not in subagent mode) */}
+				{!isSubagentMode && (
 				<FilePickerModal
 					open={showFilePicker}
 					onClose={() =>
@@ -2155,6 +2291,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					}
 					onSelect={handleFilesSelected}
 				/>
+				)}
 
 			</div>
 		);

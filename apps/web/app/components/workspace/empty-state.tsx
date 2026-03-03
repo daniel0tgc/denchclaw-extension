@@ -136,7 +136,7 @@ export function EmptyState({
 					>
 						{expectedPath
 							? shortenPath(expectedPath)
-							: "~/.openclaw/workspace"}
+							: "~/.openclaw-ironclaw/workspace-<name>"}
 					</code>
 				</span>
 			</div>

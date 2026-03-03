@@ -351,7 +351,7 @@ export function Sidebar({
   const [mainMemory, setMainMemory] = useState<string | null>(null);
   const [dailyLogs, setDailyLogs] = useState<MemoryFile[]>([]);
   const [workspaceTree, setWorkspaceTree] = useState<TreeNode[]>([]);
-  const [activeProfile, setActiveProfile] = useState("default");
+  const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const toggleSection = (section: SidebarSection) => {
@@ -368,19 +368,19 @@ export function Sidebar({
     async function load() {
       setLoading(true);
       try {
-        const [webSessionsRes, skillsRes, memoriesRes, workspaceRes, profilesRes] = await Promise.all([
+        const [webSessionsRes, skillsRes, memoriesRes, workspaceRes, workspaceListRes] = await Promise.all([
           fetch("/api/web-sessions").then((r) => r.json()),
           fetch("/api/skills").then((r) => r.json()),
           fetch("/api/memories").then((r) => r.json()),
           fetch("/api/workspace/tree").then((r) => r.json()).catch(() => ({ tree: [] })),
-          fetch("/api/profiles").then((r) => r.json()).catch(() => ({ activeProfile: "default" })),
+          fetch("/api/workspace/list").then((r) => r.json()).catch(() => ({ activeWorkspace: null })),
         ]);
         setWebSessions(webSessionsRes.sessions ?? []);
         setSkills(skillsRes.skills ?? []);
         setMainMemory(memoriesRes.mainMemory ?? null);
         setDailyLogs(memoriesRes.dailyLogs ?? []);
         setWorkspaceTree(workspaceRes.tree ?? []);
-        setActiveProfile(String(profilesRes.activeProfile || "default"));
+        setActiveWorkspace((workspaceListRes.activeWorkspace ?? null) as string | null);
       } catch (err) {
         console.error("Failed to load sidebar data:", err);
       } finally {
@@ -428,7 +428,9 @@ export function Sidebar({
             </svg>
           </button>
         </div>
-        <p className="text-xs text-[var(--color-text-muted)]">Profile: {activeProfile}</p>
+        <p className="text-xs text-[var(--color-text-muted)]">
+          Workspace: {activeWorkspace ?? "none"}
+        </p>
       </div>
 
       {/* Content */}

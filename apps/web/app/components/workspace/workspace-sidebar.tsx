@@ -48,10 +48,10 @@ type WorkspaceSidebarProps = {
 	onToggleHidden?: () => void;
 	/** Called when the user clicks the collapse/hide sidebar button. */
 	onCollapse?: () => void;
-	/** Active profile hint used by the profile switcher. */
-	activeProfile?: string | null;
-	/** Called after profile switches or workspace creation so parent can refresh state. */
-	onProfileChanged?: () => void;
+  /** Active workspace hint used by the switcher. */
+  activeWorkspace?: string | null;
+  /** Called after workspace switches or workspace creation so parent can refresh state. */
+  onWorkspaceChanged?: () => void;
 };
 
 function HomeIcon() {
@@ -431,8 +431,8 @@ export function WorkspaceSidebar({
 	onToggleHidden,
 	width: widthProp,
 	onCollapse,
-	activeProfile,
-	onProfileChanged,
+  activeWorkspace,
+  onWorkspaceChanged,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
 	const width = mobile ? "280px" : (widthProp ?? 260);
@@ -519,28 +519,28 @@ export function WorkspaceSidebar({
 							</div>
 							<div className="mt-1">
 								<ProfileSwitcher
-									activeProfileHint={activeProfile ?? null}
-									onProfileSwitch={() => {
-										onProfileChanged?.();
+									activeWorkspaceHint={activeWorkspace ?? null}
+									onWorkspaceSwitch={() => {
+										onWorkspaceChanged?.();
 									}}
 									onWorkspaceDelete={() => {
-										onProfileChanged?.();
+										onWorkspaceChanged?.();
 									}}
 									onCreateWorkspace={() => {
 										setCreateWorkspaceOpen(true);
 									}}
-									trigger={({ onClick, activeProfile: profileName, switching }) => (
+									trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
 										<button
 											type="button"
 											onClick={onClick}
 											disabled={switching}
 											className="text-[11px] flex items-center gap-1 truncate w-full transition-colors"
 											style={{ color: "var(--color-text-muted)" }}
-											title="Switch profile"
+											title="Switch workspace"
 										>
-											<span>Profile</span>
+											<span>Workspace</span>
 											<span className="px-1 py-0.5 rounded text-[10px] shrink-0 bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300">
-												{profileName || "default"}
+												{workspaceName || "-"}
 											</span>
 											<svg
 												width="10"
@@ -670,7 +670,7 @@ export function WorkspaceSidebar({
 					isOpen={createWorkspaceOpen}
 					onClose={() => setCreateWorkspaceOpen(false)}
 					onCreated={() => {
-						onProfileChanged?.();
+						onWorkspaceChanged?.();
 					}}
 				/>
 			</>
@@ -689,7 +689,7 @@ export function WorkspaceSidebar({
 				isOpen={createWorkspaceOpen}
 				onClose={() => setCreateWorkspaceOpen(false)}
 				onCreated={() => {
-					onProfileChanged?.();
+					onWorkspaceChanged?.();
 				}}
 			/>
 		</>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-export type ProfileInfo = {
+export type WorkspaceInfo = {
   name: string;
   stateDir: string;
   workspaceDir: string | null;
@@ -13,16 +13,16 @@ export type ProfileInfo = {
 export type ProfileSwitcherTriggerProps = {
   isOpen: boolean;
   onClick: () => void;
-  activeProfile: string;
+  activeWorkspace: string | null;
   switching: boolean;
 };
 
 type ProfileSwitcherProps = {
-  onProfileSwitch?: () => void;
-  onWorkspaceDelete?: (profileName: string) => void;
+  onWorkspaceSwitch?: () => void;
+  onWorkspaceDelete?: (workspaceName: string) => void;
   onCreateWorkspace?: () => void;
-  /** Parent-tracked active profile -- triggers a re-fetch when it changes (e.g. after workspace creation). */
-  activeProfileHint?: string | null;
+  /** Parent-tracked active workspace, used to trigger refetches after changes. */
+  activeWorkspaceHint?: string | null;
   /** When set, this renders instead of the default button; dropdown still opens below. */
   trigger?: (props: ProfileSwitcherTriggerProps) => React.ReactNode;
 };
@@ -35,34 +35,42 @@ function shortenPath(p: string): string {
 }
 
 export function ProfileSwitcher({
-  onProfileSwitch,
+  onWorkspaceSwitch,
   onWorkspaceDelete,
   onCreateWorkspace,
-  activeProfileHint,
+  activeWorkspaceHint,
   trigger,
 }: ProfileSwitcherProps) {
-  const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
-  const [activeProfile, setActiveProfile] = useState("default");
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [deletingProfile, setDeletingProfile] = useState<string | null>(null);
+  const [deletingWorkspace, setDeletingWorkspace] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const fetchProfiles = useCallback(async () => {
+  const fetchWorkspaces = useCallback(async () => {
     try {
-      const res = await fetch("/api/profiles");
+      const res = await fetch("/api/workspace/list");
       const data = await res.json();
-      setProfiles(data.profiles ?? []);
-      setActiveProfile(data.activeProfile ?? "default");
+      const nextWorkspaces = ((data.workspaces ?? data.profiles ?? []) as WorkspaceInfo[])
+        .filter((workspace) => Boolean(workspace.workspaceDir));
+      const nextActiveWorkspace =
+        (data.activeWorkspace ?? data.activeProfile ?? null) as string | null;
+      const activeFromList =
+        nextActiveWorkspace && nextWorkspaces.some((workspace) => workspace.name === nextActiveWorkspace)
+          ? nextActiveWorkspace
+          : (nextWorkspaces.find((workspace) => workspace.isActive)?.name ?? nextWorkspaces[0]?.name ?? null);
+      setWorkspaces(nextWorkspaces);
+      setActiveWorkspace(activeFromList);
     } catch {
       // ignore
     }
   }, []);
 
   useEffect(() => {
-    void fetchProfiles();
-  }, [fetchProfiles, activeProfileHint]);
+    void fetchWorkspaces();
+  }, [fetchWorkspaces, activeWorkspaceHint]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -77,75 +85,74 @@ export function ProfileSwitcher({
     }
   }, [isOpen]);
 
-  const handleSwitch = async (profileName: string) => {
-    if (profileName === activeProfile) {
+  const handleSwitch = async (workspaceName: string) => {
+    if (workspaceName === activeWorkspace) {
       setIsOpen(false);
       return;
     }
     setActionError(null);
     setSwitching(true);
     try {
-      const res = await fetch("/api/profiles/switch", {
+      const res = await fetch("/api/workspace/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile: profileName }),
+        body: JSON.stringify({ workspace: workspaceName }),
       });
       if (res.ok) {
         const data = await res.json();
-        setActiveProfile(data.activeProfile ?? "default");
-        onProfileSwitch?.();
-        void fetchProfiles();
+        setActiveWorkspace((data.activeWorkspace ?? data.activeProfile ?? null) as string | null);
+        onWorkspaceSwitch?.();
+        void fetchWorkspaces();
       } else {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setActionError(data.error ?? "Failed to switch profile.");
+        setActionError(data.error ?? "Failed to switch workspace.");
       }
     } catch {
-      setActionError("Failed to switch profile.");
+      setActionError("Failed to switch workspace.");
     } finally {
       setSwitching(false);
       setIsOpen(false);
     }
   };
 
-  const handleDeleteWorkspace = async (profileName: string) => {
-    const target = profiles.find((p) => p.name === profileName);
+  const handleDeleteWorkspace = async (workspaceName: string) => {
+    const target = workspaces.find((workspace) => workspace.name === workspaceName);
     if (!target?.workspaceDir) {
       return;
     }
     const confirmed = window.confirm(
-      `Delete workspace for profile "${profileName}"?\n\nThis runs openclaw --profile ${profileName} workspace delete.`,
+      `Delete workspace "${workspaceName}"?\n\nThis permanently removes:\n${shortenPath(target.workspaceDir)}\n\nThis cannot be undone.`,
     );
     if (!confirmed) {
       return;
     }
 
     setActionError(null);
-    setDeletingProfile(profileName);
+    setDeletingWorkspace(workspaceName);
     try {
       const res = await fetch("/api/workspace/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile: profileName }),
+        body: JSON.stringify({ workspace: workspaceName }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setActionError(data.error ?? `Failed to delete workspace for profile '${profileName}'.`);
+        setActionError(data.error ?? `Failed to delete workspace '${workspaceName}'.`);
         return;
       }
-      if (profileName === activeProfile) {
-        onProfileSwitch?.();
+      if (workspaceName === activeWorkspace) {
+        onWorkspaceSwitch?.();
       }
-      onWorkspaceDelete?.(profileName);
-      await fetchProfiles();
+      onWorkspaceDelete?.(workspaceName);
+      await fetchWorkspaces();
     } catch {
-      setActionError(`Failed to delete workspace for profile '${profileName}'.`);
+      setActionError(`Failed to delete workspace '${workspaceName}'.`);
     } finally {
-      setDeletingProfile(null);
+      setDeletingWorkspace(null);
     }
   };
 
-  // Don't show the switcher if there's only one profile and no way to create more
-  const showSwitcher = profiles.length > 0;
+  const showSwitcher = workspaces.length > 0;
   const handleToggle = () => {
     if (showSwitcher) { setIsOpen((o) => !o); }
   };
@@ -161,7 +168,7 @@ export function ProfileSwitcher({
         trigger({
           isOpen,
           onClick: handleToggle,
-          activeProfile,
+          activeWorkspace,
           switching,
         })
       ) : (
@@ -170,14 +177,14 @@ export function ProfileSwitcher({
           disabled={switching}
           className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
           style={{ color: "var(--color-text-secondary)" }}
-          title="Switch workspace profile"
+          title="Switch workspace"
         >
           {/* Workspace icon */}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
           </svg>
           <span className="truncate max-w-[120px]">
-            {activeProfile === "default" ? "Default" : activeProfile}
+            {activeWorkspace ?? "No workspace"}
           </span>
           <svg
             className={`w-3 h-3 transition-transform ${isOpen ? "rotate-180" : ""}`}
@@ -207,18 +214,18 @@ export function ProfileSwitcher({
               borderBottom: "1px solid var(--color-border)",
             }}
           >
-            Workspace Profiles
+            Workspaces
           </div>
 
-          {/* Profile list */}
+          {/* Workspace list */}
           <div className="py-1 max-h-64 overflow-y-auto">
-            {profiles.map((p) => {
-              const isCurrent = p.name === activeProfile;
+            {workspaces.map((workspace) => {
+              const isCurrent = workspace.name === activeWorkspace;
               return (
-                <div key={p.name} className="flex items-center gap-1 px-1.5 py-0.5">
+                <div key={workspace.name} className="flex items-center gap-1 px-1.5 py-0.5">
                   <button
-                    onClick={() => void handleSwitch(p.name)}
-                    disabled={switching || !!deletingProfile}
+                    onClick={() => void handleSwitch(workspace.name)}
+                    disabled={switching || !!deletingWorkspace}
                     className="flex-1 min-w-0 flex items-center gap-2 px-1.5 py-1.5 rounded text-left text-sm transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
                     style={{ color: "var(--color-text)" }}
                   >
@@ -234,15 +241,15 @@ export function ProfileSwitcher({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate font-medium">
-                          {p.name === "default" ? "Default" : p.name}
+                          {workspace.name}
                         </span>
                       </div>
                       <div
                         className="text-xs truncate mt-0.5"
                         style={{ color: "var(--color-text-muted)" }}
                       >
-                        {p.workspaceDir
-                          ? shortenPath(p.workspaceDir)
+                        {workspace.workspaceDir
+                          ? shortenPath(workspace.workspaceDir)
                           : "No workspace yet"}
                       </div>
                     </div>
@@ -260,14 +267,14 @@ export function ProfileSwitcher({
                     )}
                   </button>
 
-                  {p.workspaceDir && (
+                  {workspace.workspaceDir && (
                     <button
-                      onClick={() => void handleDeleteWorkspace(p.name)}
-                      disabled={switching || !!deletingProfile}
-                      title={`Delete workspace for ${p.name}`}
+                      onClick={() => void handleDeleteWorkspace(workspace.name)}
+                      disabled={switching || !!deletingWorkspace}
+                      title={`Delete workspace ${workspace.name}`}
                       className="p-1.5 rounded transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
                       style={{
-                        color: deletingProfile === p.name
+                        color: deletingWorkspace === workspace.name
                           ? "var(--color-text-muted)"
                           : "var(--color-error)",
                       }}

@@ -297,8 +297,8 @@ export function discoverProfiles(): DiscoveredProfile[] {
  * - named profile:   ~/.openclaw-<profile>
  * - OPENCLAW_STATE_DIR override wins for all profiles
  */
-export function resolveOpenClawStateDir(): string {
-  const profile = getEffectiveProfile();
+export function resolveOpenClawStateDir(profileOverride?: string | null): string {
+  const profile = normalizeProfileName(profileOverride ?? getEffectiveProfile());
   migrateLegacyProfileStorage(profile);
   return resolveProfileStateDir(profile);
 }
@@ -325,11 +325,15 @@ export function resolveWorkspaceRoot(): string | null {
   const normalizedProfile = normalizeProfileName(profile);
   const stateDir = resolveProfileStateDir(profile);
   const registryPath = getRegisteredWorkspacePath(profile);
+  const legacyWorkspaceFallback =
+    normalizedProfile
+      ? join(resolveLegacySharedStateDir(), `workspace-${normalizedProfile}`)
+      : null;
   const candidates = [
     process.env.OPENCLAW_WORKSPACE,
     registryPath,
     join(stateDir, "workspace"),
-    normalizedProfile ? join(resolveLegacySharedStateDir(), `workspace-${normalizedProfile}`) : null,
+    legacyWorkspaceFallback,
   ].filter(Boolean) as string[];
 
   for (const dir of candidates) {
@@ -1009,6 +1013,7 @@ const ALWAYS_SYSTEM_PATTERNS = [
 const ROOT_ONLY_SYSTEM_PATTERNS = [
   /^workspace\.duckdb/,
   /^workspace_context\.yaml$/,
+  /^IDENTITY\.md$/,
 ];
 
 /** Check if a workspace-relative path refers to a protected system file. */

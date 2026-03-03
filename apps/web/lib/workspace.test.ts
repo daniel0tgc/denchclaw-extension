@@ -915,6 +915,16 @@ describe("workspace utilities", () => {
       expect(isSystemFile("sub/workspace_context.yaml")).toBe(false);
     });
 
+    it("returns true for IDENTITY.md at root", async () => {
+      const { isSystemFile } = await importWorkspace();
+      expect(isSystemFile("IDENTITY.md")).toBe(true);
+    });
+
+    it("returns false for IDENTITY.md in subdirectory", async () => {
+      const { isSystemFile } = await importWorkspace();
+      expect(isSystemFile("sub/IDENTITY.md")).toBe(false);
+    });
+
     it("returns false for regular files", async () => {
       const { isSystemFile } = await importWorkspace();
       expect(isSystemFile("readme.md")).toBe(false);

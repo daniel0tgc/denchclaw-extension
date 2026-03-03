@@ -6,7 +6,6 @@
  *
  * Events are fed from CLI NDJSON streams (parent run + subscribe continuations).
  */
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
@@ -15,6 +14,7 @@ import {
 	type AgentEvent,
 	type AgentProcessHandle,
 	spawnAgentSubscribeProcess,
+	callGatewayRpc,
 	extractToolResult,
 	buildToolOutput,
 	parseAgentErrorMessage,
@@ -51,6 +51,10 @@ type SubagentRun = SubagentInfo & {
 	_finalizeTimer: ReturnType<typeof setTimeout> | null;
 	/** Last globalSeq seen from the gateway event stream for replay cursor. */
 	lastGlobalSeq: number;
+	/** Retry timer for subscribe stream restarts. */
+	_subscribeRetryTimer: ReturnType<typeof setTimeout> | null;
+	/** Consecutive subscribe restart attempts without a received event. */
+	_subscribeRetryAttempt: number;
 };
 
 type TransformState = {
@@ -66,6 +70,8 @@ type TransformState = {
 // ── Constants ──
 
 const CLEANUP_GRACE_MS = 24 * 60 * 60_000; // 24 hours — events are persisted to disk
+const SUBSCRIBE_RETRY_BASE_MS = 300;
+const SUBSCRIBE_RETRY_MAX_MS = 5_000;
 const GLOBAL_KEY = "__openclaw_subagentRuns" as const;
 
 // ── Singleton registry ──
@@ -240,6 +246,8 @@ export function registerSubagent(
 		_lifecycleEnded: false,
 		_finalizeTimer: null,
 		lastGlobalSeq: 0,
+		_subscribeRetryTimer: null,
+		_subscribeRetryAttempt: 0,
 	};
 
 	// Load persisted events from disk (fills the replay buffer)
@@ -462,26 +470,11 @@ export function reactivateSubagent(sessionKey: string): boolean {
 
 function sendGatewayAbortForSubagent(sessionKey: string): void {
 	try {
-		const child = spawn(
-			"openclaw",
-			[
-				"gateway",
-				"call",
-				"chat.abort",
-				"--params",
-				JSON.stringify({ sessionKey }),
-				"--json",
-				"--timeout",
-				"4000",
-			],
-			{
-				env: { ...process.env },
-				stdio: "ignore",
-				detached: true,
+		void callGatewayRpc("chat.abort", { sessionKey }, { timeoutMs: 4_000 }).catch(
+			() => {
+				// best effort
 			},
 		);
-		child.on("error", () => {});
-		child.unref();
 	} catch {
 		// best effort
 	}
@@ -500,34 +493,21 @@ export function spawnSubagentMessage(sessionKey: string, message: string): boole
 		const run = getRegistry().runs.get(sessionKey);
 		if (!run) {return false;}
 		const idempotencyKey = randomUUID();
-		const child = spawn(
-			"openclaw",
-			[
-				"gateway",
-				"call",
-				"agent",
-				"--params",
-				JSON.stringify({
-					message,
-					sessionKey,
-					idempotencyKey,
-					deliver: false,
-					channel: "webchat",
-					lane: "subagent",
-					timeout: 0,
-				}),
-				"--json",
-				"--timeout",
-				"10000",
-			],
+		void callGatewayRpc(
+			"agent",
 			{
-				env: { ...process.env },
-				stdio: "ignore",
-				detached: true,
+				message,
+				sessionKey,
+				idempotencyKey,
+				deliver: false,
+				channel: "webchat",
+				lane: "subagent",
+				timeout: 0,
 			},
-		);
-		child.on("error", () => {});
-		child.unref();
+			{ timeoutMs: 10_000 },
+		).catch(() => {
+			// best effort
+		});
 		return true;
 	} catch {
 		return false;
@@ -782,6 +762,7 @@ function handleAgentEvent(run: SubagentRun, evt: AgentEvent): void {
 
 function finalizeRun(run: SubagentRun, status: "completed" | "error"): void {
 	if (run.status !== "running") {return;}
+	resetSubscribeRetryState(run);
 
 	if (run._finalizeTimer) {
 		clearTimeout(run._finalizeTimer);
@@ -855,13 +836,17 @@ function startSubagentSubscribeStream(run: SubagentRun): void {
 		if (ev.sessionKey && ev.sessionKey !== run.sessionKey) {
 			return;
 		}
+		if (run._subscribeRetryAttempt > 0) {
+			resetSubscribeRetryState(run);
+		}
 		handleAgentEvent(run, ev);
 	});
 
 	child.on("close", () => {
-		if (run._subscribeProcess === child) {
-			run._subscribeProcess = null;
+		if (run._subscribeProcess !== child) {
+			return;
 		}
+		run._subscribeProcess = null;
 		if (run.status !== "running") {return;}
 		if (run._lifecycleEnded) {
 			if (run._finalizeTimer) {
@@ -871,11 +856,11 @@ function startSubagentSubscribeStream(run: SubagentRun): void {
 			finalizeRun(run, "completed");
 			return;
 		}
-		setTimeout(() => {
+		scheduleSubscribeRestart(run, () => {
 			if (run.status === "running" && !run._subscribeProcess) {
 				startSubagentSubscribeStream(run);
 			}
-		}, 300);
+		});
 	});
 
 	child.on("error", (err) => {
@@ -888,6 +873,7 @@ function startSubagentSubscribeStream(run: SubagentRun): void {
 }
 
 function stopSubagentSubscribeStream(run: SubagentRun): void {
+	clearSubscribeRetryTimer(run);
 	if (!run._subscribeProcess) {return;}
 	try {
 		run._subscribeProcess.kill("SIGTERM");
@@ -895,4 +881,32 @@ function stopSubagentSubscribeStream(run: SubagentRun): void {
 		/* ignore */
 	}
 	run._subscribeProcess = null;
+}
+
+function clearSubscribeRetryTimer(run: SubagentRun): void {
+	if (!run._subscribeRetryTimer) {
+		return;
+	}
+	clearTimeout(run._subscribeRetryTimer);
+	run._subscribeRetryTimer = null;
+}
+
+function resetSubscribeRetryState(run: SubagentRun): void {
+	run._subscribeRetryAttempt = 0;
+	clearSubscribeRetryTimer(run);
+}
+
+function scheduleSubscribeRestart(run: SubagentRun, restart: () => void): void {
+	if (run._subscribeRetryTimer) {
+		return;
+	}
+	const delay = Math.min(
+		SUBSCRIBE_RETRY_MAX_MS,
+		SUBSCRIBE_RETRY_BASE_MS * 2 ** run._subscribeRetryAttempt,
+	);
+	run._subscribeRetryAttempt += 1;
+	run._subscribeRetryTimer = setTimeout(() => {
+		run._subscribeRetryTimer = null;
+		restart();
+	}, delay);
 }

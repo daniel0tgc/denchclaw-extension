@@ -13,8 +13,8 @@ const nextConfig: NextConfig = {
   // instead of resolving through pnpm's virtual store symlinks.
   outputFileTracingRoot: path.join(import.meta.dirname, "..", ".."),
 
-  // Allow long-running API routes for agent streaming
-  serverExternalPackages: [],
+  // Externalize packages with native addons so webpack doesn't break them
+  serverExternalPackages: ["ws", "bufferutil", "utf-8-validate"],
 
   // Transpile ESM-only packages so webpack can bundle them
   transpilePackages: ["react-markdown", "remark-gfm"],
@@ -29,6 +29,7 @@ const nextConfig: NextConfig = {
           "**/dist/**",
           "**/.next/**",
           path.join(homedir(), ".openclaw", "**"),
+          path.join(homedir(), ".openclaw-*", "**"),
         ],
         poll: 1500,
       };

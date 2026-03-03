@@ -4,6 +4,7 @@ import {
   resolveOpenClawStateDir,
   resolveWorkspaceRoot,
   setUIActiveWorkspace,
+  setDefaultAgentInConfig,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
   }
 
   setUIActiveWorkspace(requestedWorkspace);
+  setDefaultAgentInConfig(requestedWorkspace);
   const activeWorkspace = getActiveWorkspaceName();
   const selected = discoverWorkspaces().find((workspace) => workspace.name === activeWorkspace) ?? null;
   return Response.json({

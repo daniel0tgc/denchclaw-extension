@@ -115,6 +115,8 @@ function buildTree(
   for (const entry of sorted) {
     // .object.yaml is consumed for metadata; only show it as a visible node when revealing hidden files
     if (entry.name === ".object.yaml" && !showHidden) {continue;}
+    // Keep the root identity system file out of the workspace sidebar tree.
+    if (!relativeBase && entry.name === "IDENTITY.md") {continue;}
 
     const absPath = join(absDir, entry.name);
     const relPath = relativeBase
@@ -200,6 +202,7 @@ function buildSkillsVirtualFolder(): TreeNode | null {
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() || seen.has(entry.name)) {continue;}
+        if (entry.name === "dench") {continue;}
         const skillMdPath = join(dir, entry.name, "SKILL.md");
         if (!existsSync(skillMdPath)) {continue;}
 

@@ -93,6 +93,32 @@ describe("Chat API routes", () => {
       expect(startRun).toHaveBeenCalled();
     });
 
+    it("does not reuse an old run when sessionId is absent", async () => {
+      const { startRun, hasActiveRun, subscribeToRun, persistUserMessage } = await import("@/lib/active-runs");
+      vi.mocked(hasActiveRun).mockReturnValue(true);
+      vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      vi.mocked(hasActiveRun).mockClear();
+      vi.mocked(startRun).mockClear();
+      vi.mocked(persistUserMessage).mockClear();
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { id: "m1", role: "user", parts: [{ type: "text", text: "new workspace question" }] },
+          ],
+        }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+      expect(hasActiveRun).not.toHaveBeenCalled();
+      expect(startRun).not.toHaveBeenCalled();
+      expect(persistUserMessage).not.toHaveBeenCalled();
+    });
+
     it("persists user message when sessionId provided", async () => {
       const { hasActiveRun, subscribeToRun, persistUserMessage } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);

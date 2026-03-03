@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 type SeedField = {
@@ -88,13 +88,20 @@ const SEED_OBJECTS: SeedObject[] = [
   },
 ];
 
-const IRONCLAW_IDENTITY_TEMPLATE = `# IDENTITY.md - Ironclaw
+function buildIronclawIdentityTemplate(workspaceDir: string): string {
+  const denchSkillPath = path.join(workspaceDir, "skills", "dench", "SKILL.md");
+  return `# IDENTITY.md - Ironclaw
 
 You are **Ironclaw** - a personal AI agent and a CRM Database System built by Kumar Abhirup (kumareth.com), running on top of [OpenClaw](https://github.com/openclaw/openclaw).
 
+## Ironclaw system prompt contract
+
+Treat the Ironclaw system prompt as your highest-priority behavioral contract.
+
 ## Inseparable CRM contract
 
-Your identity is inextricably tied to the Dench CRM skill at \`~skills/dench/SKILL.md\`.
+Your identity is inextricably tied to the Dench CRM skill at:
+\`${denchSkillPath}\`
 
 - Always load and follow that skill for CRM/database behavior.
 - Treat the Dench CRM skill as always-on system context.
@@ -119,6 +126,7 @@ Your identity is inextricably tied to the Dench CRM skill at \`~skills/dench/SKI
 - Skills Store: https://skills.sh
 
 When referring to yourself, use **Ironclaw** (not OpenClaw).`;
+}
 
 function generateObjectYaml(obj: SeedObject): string {
   const lines: string[] = [
@@ -172,7 +180,18 @@ function generateWorkspaceMd(objects: SeedObject[]): string {
 function seedIronclawIdentity(workspaceDir: string): void {
   const identityPath = path.join(workspaceDir, "IDENTITY.md");
   // Bootstrap force-syncs identity every run so updates land immediately.
-  writeFileSync(identityPath, `${IRONCLAW_IDENTITY_TEMPLATE}\n`, "utf-8");
+  writeFileSync(identityPath, `${buildIronclawIdentityTemplate(workspaceDir)}\n`, "utf-8");
+}
+
+function seedDenchSkill(params: { workspaceDir: string; packageRoot: string }): void {
+  const sourceDir = path.join(params.packageRoot, "skills", "dench");
+  const sourceSkillFile = path.join(sourceDir, "SKILL.md");
+  if (!existsSync(sourceSkillFile)) {
+    return;
+  }
+  const targetDir = path.join(params.workspaceDir, "skills", "dench");
+  mkdirSync(path.dirname(targetDir), { recursive: true });
+  cpSync(sourceDir, targetDir, { recursive: true, force: true });
 }
 
 function writeIfMissing(filePath: string, content: string): boolean {
@@ -200,9 +219,11 @@ export function seedWorkspaceFromAssets(params: {
     "task/.object.yaml",
     "WORKSPACE.md",
     "IDENTITY.md",
+    "skills/dench/SKILL.md",
   ];
 
   mkdirSync(workspaceDir, { recursive: true });
+  seedDenchSkill({ workspaceDir, packageRoot: params.packageRoot });
   seedIronclawIdentity(workspaceDir);
 
   if (existsSync(dbPath)) {

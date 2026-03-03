@@ -6,6 +6,8 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ""),
   readdirSync: vi.fn(() => []),
+  writeFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
 
 // Mock node:child_process
@@ -48,6 +50,8 @@ function makeDirent(name: string, isDir: boolean): Dirent {
 
 describe("workspace utilities", () => {
   const originalEnv = { ...process.env };
+  const STATE_DIR = join("/home/testuser", ".openclaw-ironclaw");
+  const WS_DIR = join(STATE_DIR, "workspace-test");
 
   beforeEach(() => {
     vi.resetModules();
@@ -58,6 +62,8 @@ describe("workspace utilities", () => {
       existsSync: vi.fn(() => false),
       readFileSync: vi.fn(() => ""),
       readdirSync: vi.fn(() => []),
+      writeFileSync: vi.fn(),
+      mkdirSync: vi.fn(),
     }));
     vi.mock("node:child_process", () => ({
       execSync: vi.fn(() => ""),
@@ -88,22 +94,33 @@ describe("workspace utilities", () => {
     };
   }
 
+  /** Set up mocks so resolveWorkspaceRoot() returns WS_DIR via OPENCLAW_WORKSPACE env. */
+  function useEnvWorkspace(mockExists: ReturnType<typeof vi.mocked<typeof existsSync>>) {
+    process.env.OPENCLAW_WORKSPACE = WS_DIR;
+    mockExists.mockImplementation((p) => String(p) === WS_DIR);
+  }
+
   // ─── resolveWorkspaceRoot ────────────────────────────────────────
 
   describe("resolveWorkspaceRoot", () => {
     it("returns OPENCLAW_WORKSPACE env var when set and exists", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/custom/workspace";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { resolveWorkspaceRoot, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/custom/workspace");
-      expect(resolveWorkspaceRoot()).toBe("/custom/workspace");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(resolveWorkspaceRoot()).toBe(WS_DIR);
     });
 
-    it("returns default ~/.openclaw/workspace when env not set", async () => {
+    it("returns discovered workspace when env not set", async () => {
       delete process.env.OPENCLAW_WORKSPACE;
-      const { resolveWorkspaceRoot, mockExists } = await importWorkspace();
-      const defaultPath = join("/home/testuser", ".openclaw", "workspace");
-      mockExists.mockImplementation((p) => String(p) === defaultPath);
-      expect(resolveWorkspaceRoot()).toBe(defaultPath);
+      const { resolveWorkspaceRoot, mockExists, mockReaddir } = await importWorkspace();
+      mockReaddir.mockImplementation((dir, _opts) => {
+        if (String(dir) === STATE_DIR) {
+          return [makeDirent("workspace-test", true)] as unknown as Dirent[];
+        }
+        return [] as unknown as Dirent[];
+      });
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(resolveWorkspaceRoot()).toBe(WS_DIR);
     });
 
     it("returns null when no candidate directory exists", async () => {
@@ -113,19 +130,65 @@ describe("workspace utilities", () => {
       expect(resolveWorkspaceRoot()).toBeNull();
     });
 
-    it("prefers OPENCLAW_WORKSPACE over default when both exist", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/custom/workspace";
-      const { resolveWorkspaceRoot, mockExists } = await importWorkspace();
+    it("prefers OPENCLAW_WORKSPACE over discovered workspace", async () => {
+      const envWs = join(STATE_DIR, "workspace-fromenv");
+      process.env.OPENCLAW_WORKSPACE = envWs;
+      const { resolveWorkspaceRoot, mockExists, mockReaddir } = await importWorkspace();
+      mockReaddir.mockImplementation((dir, _opts) => {
+        if (String(dir) === STATE_DIR) {
+          return [
+            makeDirent("workspace-fromenv", true),
+            makeDirent("workspace-other", true),
+          ] as unknown as Dirent[];
+        }
+        return [] as unknown as Dirent[];
+      });
       mockExists.mockReturnValue(true);
-      expect(resolveWorkspaceRoot()).toBe("/custom/workspace");
+      expect(resolveWorkspaceRoot()).toBe(envWs);
     });
 
-    it("falls back to default when env var path does not exist", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/nonexistent";
-      const { resolveWorkspaceRoot, mockExists } = await importWorkspace();
-      const defaultPath = join("/home/testuser", ".openclaw", "workspace");
-      mockExists.mockImplementation((p) => String(p) === defaultPath);
-      expect(resolveWorkspaceRoot()).toBe(defaultPath);
+    it("falls back to discovered workspace when env var path does not exist", async () => {
+      process.env.OPENCLAW_WORKSPACE = join(STATE_DIR, "workspace-nonexistent");
+      const { resolveWorkspaceRoot, mockExists, mockReaddir } = await importWorkspace();
+      const fallbackWs = join(STATE_DIR, "workspace-fallback");
+      mockReaddir.mockImplementation((dir, _opts) => {
+        if (String(dir) === STATE_DIR) {
+          return [makeDirent("workspace-fallback", true)] as unknown as Dirent[];
+        }
+        return [] as unknown as Dirent[];
+      });
+      mockExists.mockImplementation((p) => String(p) === fallbackWs);
+      expect(resolveWorkspaceRoot()).toBe(fallbackWs);
+    });
+
+    it("resolves bootstrap root workspace as ironclaw default", async () => {
+      delete process.env.OPENCLAW_WORKSPACE;
+      const { resolveWorkspaceRoot, mockExists, mockReaddir } = await importWorkspace();
+      const rootWorkspace = join(STATE_DIR, "workspace");
+      mockReaddir.mockImplementation((dir, _opts) => {
+        if (String(dir) === STATE_DIR) {
+          return [makeDirent("workspace", true)] as unknown as Dirent[];
+        }
+        return [] as unknown as Dirent[];
+      });
+      mockExists.mockImplementation((p) => String(p) === rootWorkspace);
+      expect(resolveWorkspaceRoot()).toBe(rootWorkspace);
+    });
+  });
+
+  // ─── resolveWebChatDir ────────────────────────────────────────────
+
+  describe("resolveWebChatDir", () => {
+    it("falls back to root workspace chat dir for ironclaw default", async () => {
+      delete process.env.OPENCLAW_WORKSPACE;
+      const { resolveWebChatDir, mockReadFile, mockReaddir } = await importWorkspace();
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      expect(resolveWebChatDir()).toBe(
+        join(STATE_DIR, "workspace", ".openclaw", "web-chat"),
+      );
     });
   });
 
@@ -140,27 +203,29 @@ describe("workspace utilities", () => {
     });
 
     it("returns absolute path when workspace is outside repo", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/external/workspace";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { resolveAgentWorkspacePrefix, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/external/workspace");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
       vi.spyOn(process, "cwd").mockReturnValue("/repo/apps/web");
-      expect(resolveAgentWorkspacePrefix()).toBe("/external/workspace");
+      expect(resolveAgentWorkspacePrefix()).toBe(WS_DIR);
     });
 
     it("returns relative path when workspace is inside repo", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/repo/workspace";
+      const repoWs = join(STATE_DIR, "workspace-test");
+      process.env.OPENCLAW_WORKSPACE = repoWs;
       const { resolveAgentWorkspacePrefix, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/repo/workspace");
-      vi.spyOn(process, "cwd").mockReturnValue("/repo/apps/web");
-      expect(resolveAgentWorkspacePrefix()).toBe("workspace");
+      mockExists.mockImplementation((p) => String(p) === repoWs);
+      vi.spyOn(process, "cwd").mockReturnValue(STATE_DIR);
+      expect(resolveAgentWorkspacePrefix()).toBe("workspace-test");
     });
 
     it("handles non apps/web cwd", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/repo/workspace";
+      const repoWs = join(STATE_DIR, "workspace-test");
+      process.env.OPENCLAW_WORKSPACE = repoWs;
       const { resolveAgentWorkspacePrefix, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/repo/workspace");
-      vi.spyOn(process, "cwd").mockReturnValue("/repo");
-      expect(resolveAgentWorkspacePrefix()).toBe("workspace");
+      mockExists.mockImplementation((p) => String(p) === repoWs);
+      vi.spyOn(process, "cwd").mockReturnValue(STATE_DIR);
+      expect(resolveAgentWorkspacePrefix()).toBe("workspace-test");
     });
   });
 
@@ -264,27 +329,27 @@ describe("workspace utilities", () => {
 
   describe("duckdbPath", () => {
     it("returns root-level workspace.duckdb when it exists", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbPath, mockExists, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb;
+        return s === WS_DIR || s === rootDb;
       });
       mockReaddir.mockReturnValue([]);
       expect(duckdbPath()).toBe(rootDb);
     });
 
     it("falls back to discovered nested db when root has none", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbPath, mockExists, mockReaddir } = await importWorkspace();
-      const nestedDb = join("/ws", "sub", "workspace.duckdb");
+      const nestedDb = join(WS_DIR, "sub", "workspace.duckdb");
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === nestedDb;
+        return s === WS_DIR || s === nestedDb;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === "/ws") {
+        if (String(dir) === WS_DIR) {
           return [makeDirent("sub", true)] as unknown as Dirent[];
         }
         return [] as unknown as Dirent[];
@@ -300,9 +365,9 @@ describe("workspace utilities", () => {
     });
 
     it("returns null when workspace exists but no duckdb files", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbPath, mockExists, mockReaddir } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
       mockReaddir.mockReturnValue([]);
       expect(duckdbPath()).toBeNull();
     });
@@ -312,17 +377,17 @@ describe("workspace utilities", () => {
 
   describe("duckdbRelativeScope", () => {
     it("returns empty string for root-level db", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbRelativeScope, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
-      expect(duckdbRelativeScope("/ws/workspace.duckdb")).toBe("");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(duckdbRelativeScope(join(WS_DIR, "workspace.duckdb"))).toBe("");
     });
 
     it("returns relative path for nested db", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbRelativeScope, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
-      expect(duckdbRelativeScope("/ws/sub/deep/workspace.duckdb")).toBe(join("sub", "deep"));
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(duckdbRelativeScope(join(WS_DIR, "sub", "deep", "workspace.duckdb"))).toBe(join("sub", "deep"));
     });
 
     it("returns empty string when no workspace root", async () => {
@@ -378,13 +443,13 @@ describe("workspace utilities", () => {
 
   describe("duckdbQuery", () => {
     it("returns parsed JSON rows on success", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       mockExec.mockReturnValue('[{"id":"1","name":"test"}]' as never);
       const result = duckdbQuery("SELECT * FROM objects");
@@ -392,7 +457,7 @@ describe("workspace utilities", () => {
     });
 
     it("returns empty array for empty result", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
       mockExists.mockReturnValue(true);
       mockExec.mockReturnValue("[]" as never);
@@ -407,7 +472,7 @@ describe("workspace utilities", () => {
     });
 
     it("returns empty array on execSync error", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
       mockExists.mockReturnValue(true);
       mockExec.mockImplementation(() => { throw new Error("query failed"); });
@@ -419,14 +484,14 @@ describe("workspace utilities", () => {
 
   describe("duckdbQueryAsync", () => {
     it("returns parsed JSON rows on success", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists } = await importWorkspace();
       const { exec: mockExecFn } = await import("node:child_process");
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       vi.mocked(mockExecFn).mockImplementation((_cmd: unknown, _opts: unknown, cb: unknown) => {
         (cb as (err: null, r: { stdout: string }) => void)(null, { stdout: '[{"id":"1"}]' });
@@ -445,7 +510,7 @@ describe("workspace utilities", () => {
     });
 
     it("returns empty array for empty stdout", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists } = await importWorkspace();
       const { exec: mockExecFn } = await import("node:child_process");
       mockExists.mockReturnValue(true);
@@ -458,7 +523,7 @@ describe("workspace utilities", () => {
     });
 
     it("returns empty array on exec error", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists } = await importWorkspace();
       const { exec: mockExecFn } = await import("node:child_process");
       mockExists.mockReturnValue(true);
@@ -475,17 +540,17 @@ describe("workspace utilities", () => {
 
   describe("duckdbQueryAll", () => {
     it("merges results from multiple databases", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
-      const subDb = join("/ws", "sub", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
+      const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === subDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === subDb || s === bin;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === "/ws") {
+        if (String(dir) === WS_DIR) {
           return [makeDirent("sub", true)] as unknown as Dirent[];
         }
         return [] as unknown as Dirent[];
@@ -501,17 +566,17 @@ describe("workspace utilities", () => {
     });
 
     it("deduplicates by key (shallower wins)", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
-      const subDb = join("/ws", "sub", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
+      const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === subDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === subDb || s === bin;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === "/ws") {return [makeDirent("sub", true)] as unknown as Dirent[];}
+        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as Dirent[];}
         return [] as unknown as Dirent[];
       });
       let callCount = 0;
@@ -532,17 +597,17 @@ describe("workspace utilities", () => {
     });
 
     it("skips failing databases", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
-      const subDb = join("/ws", "sub", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
+      const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === subDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === subDb || s === bin;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === "/ws") {return [makeDirent("sub", true)] as unknown as Dirent[];}
+        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as Dirent[];}
         return [] as unknown as Dirent[];
       });
       let callCount = 0;
@@ -560,13 +625,13 @@ describe("workspace utilities", () => {
 
   describe("findDuckDBForObject", () => {
     it("finds object in first database", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
       mockExec.mockReturnValue('[{"id":"123"}]' as never);
@@ -574,13 +639,13 @@ describe("workspace utilities", () => {
     });
 
     it("returns null when object not found in any db", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
       mockExec.mockReturnValue("[]" as never);
@@ -595,13 +660,13 @@ describe("workspace utilities", () => {
     });
 
     it("handles object names with single quotes", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
       mockExec.mockReturnValue('[{"id":"1"}]' as never);
@@ -613,13 +678,13 @@ describe("workspace utilities", () => {
 
   describe("duckdbExec", () => {
     it("returns true on successful exec", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbExec, mockExists, mockExec } = await importWorkspace();
-      const rootDb = join("/ws", "workspace.duckdb");
+      const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === rootDb || s === bin;
+        return s === WS_DIR || s === rootDb || s === bin;
       });
       mockExec.mockReturnValue("" as never);
       expect(duckdbExec("INSERT INTO t VALUES (1)")).toBe(true);
@@ -803,33 +868,33 @@ describe("workspace utilities", () => {
 
   describe("safeResolvePath", () => {
     it("resolves valid path within workspace", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolvePath, mockExists } = await importWorkspace();
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === "/ws/knowledge/doc.md";
+        return s === WS_DIR || s === join(WS_DIR, "knowledge", "doc.md");
       });
-      expect(safeResolvePath("knowledge/doc.md")).toBe("/ws/knowledge/doc.md");
+      expect(safeResolvePath("knowledge/doc.md")).toBe(join(WS_DIR, "knowledge", "doc.md"));
     });
 
     it("returns null for traversal with ..", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolvePath, mockExists } = await importWorkspace();
       mockExists.mockReturnValue(true);
       expect(safeResolvePath("../etc/passwd")).toBeNull();
     });
 
     it("returns null for traversal with /../", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolvePath, mockExists } = await importWorkspace();
       mockExists.mockReturnValue(true);
       expect(safeResolvePath("foo/../../../etc/passwd")).toBeNull();
     });
 
     it("returns null when file does not exist", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolvePath, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
       expect(safeResolvePath("nonexistent.txt")).toBeNull();
     });
 
@@ -845,14 +910,14 @@ describe("workspace utilities", () => {
 
   describe("safeResolveNewPath", () => {
     it("resolves valid new path (does not require existence)", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolveNewPath, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
-      expect(safeResolveNewPath("new-folder/file.txt")).toBe("/ws/new-folder/file.txt");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(safeResolveNewPath("new-folder/file.txt")).toBe(join(WS_DIR, "new-folder", "file.txt"));
     });
 
     it("returns null for traversal attempts", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolveNewPath, mockExists } = await importWorkspace();
       mockExists.mockReturnValue(true);
       expect(safeResolveNewPath("../../outside")).toBeNull();
@@ -866,10 +931,10 @@ describe("workspace utilities", () => {
     });
 
     it("handles deeply nested new paths", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { safeResolveNewPath, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
-      expect(safeResolveNewPath("a/b/c/d/e.txt")).toBe("/ws/a/b/c/d/e.txt");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
+      expect(safeResolveNewPath("a/b/c/d/e.txt")).toBe(join(WS_DIR, "a", "b", "c", "d", "e.txt"));
     });
   });
 
@@ -1000,11 +1065,11 @@ describe("workspace utilities", () => {
 
   describe("readWorkspaceFile", () => {
     it("reads markdown file and detects type", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists, mockReadFile } = await importWorkspace();
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === "/ws/doc.md";
+        return s === WS_DIR || s === join(WS_DIR, "doc.md");
       });
       mockReadFile.mockReturnValue("# Hello" as never);
       const result = readWorkspaceFile("doc.md");
@@ -1012,11 +1077,11 @@ describe("workspace utilities", () => {
     });
 
     it("reads yaml file and detects type", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists, mockReadFile } = await importWorkspace();
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === "/ws/config.yaml";
+        return s === WS_DIR || s === join(WS_DIR, "config.yaml");
       });
       mockReadFile.mockReturnValue("key: value" as never);
       const result = readWorkspaceFile("config.yaml");
@@ -1024,11 +1089,11 @@ describe("workspace utilities", () => {
     });
 
     it("reads yml file as yaml type", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists, mockReadFile } = await importWorkspace();
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === "/ws/config.yml";
+        return s === WS_DIR || s === join(WS_DIR, "config.yml");
       });
       mockReadFile.mockReturnValue("key: value" as never);
       const result = readWorkspaceFile("config.yml");
@@ -1036,11 +1101,11 @@ describe("workspace utilities", () => {
     });
 
     it("reads text file with generic type", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists, mockReadFile } = await importWorkspace();
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        return s === "/ws" || s === "/ws/notes.txt";
+        return s === WS_DIR || s === join(WS_DIR, "notes.txt");
       });
       mockReadFile.mockReturnValue("plain text" as never);
       const result = readWorkspaceFile("notes.txt");
@@ -1048,14 +1113,14 @@ describe("workspace utilities", () => {
     });
 
     it("returns null when file not found", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => String(p) === "/ws");
+      mockExists.mockImplementation((p) => String(p) === WS_DIR);
       expect(readWorkspaceFile("nonexistent.md")).toBeNull();
     });
 
     it("returns null when readFileSync throws", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/ws";
+      process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { readWorkspaceFile, mockExists, mockReadFile } = await importWorkspace();
       mockExists.mockReturnValue(true);
       mockReadFile.mockImplementation(() => { throw new Error("EACCES"); });

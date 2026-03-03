@@ -63,14 +63,10 @@ function makeDirent(name: string, isDir: boolean): Dirent {
   } as Dirent;
 }
 
-describe("workspace profiles", () => {
+describe("workspace (flat workspace model)", () => {
   const originalEnv = { ...process.env };
-  const DEFAULT_STATE_DIR = join("/home/testuser", ".openclaw");
-  const stateDirForProfile = (profile: string | null) =>
-    !profile || profile.toLowerCase() === "default"
-      ? DEFAULT_STATE_DIR
-      : join("/home/testuser", `.openclaw-${profile}`);
-  const UI_STATE_PATH = join(DEFAULT_STATE_DIR, ".ironclaw-ui-state.json");
+  const STATE_DIR = "/home/testuser/.openclaw-ironclaw";
+  const UI_STATE_PATH = join(STATE_DIR, ".ironclaw-ui-state.json");
 
   beforeEach(() => {
     vi.resetModules();
@@ -151,519 +147,480 @@ describe("workspace profiles", () => {
   // ─── getEffectiveProfile ──────────────────────────────────────────
 
   describe("getEffectiveProfile", () => {
-    it("returns env var when OPENCLAW_PROFILE is set", async () => {
+    it("always returns 'ironclaw' regardless of env/state (single profile enforcement)", async () => {
       process.env.OPENCLAW_PROFILE = "work";
-      const { getEffectiveProfile } = await importWorkspace();
-      expect(getEffectiveProfile()).toBe("work");
-    });
-
-    it("returns null when nothing is set", async () => {
-      const { getEffectiveProfile, mockReadFile } = await importWorkspace();
-      mockReadFile.mockImplementation(() => {
-        throw new Error("ENOENT");
-      });
-      expect(getEffectiveProfile()).toBeNull();
-    });
-
-    it("returns persisted profile from state file", async () => {
-      const { getEffectiveProfile, mockReadFile } = await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "personal" }) as never,
-      );
-      expect(getEffectiveProfile()).toBe("personal");
-    });
-
-    it("env var takes precedence over persisted file", async () => {
-      process.env.OPENCLAW_PROFILE = "env-profile";
-      const { getEffectiveProfile, mockReadFile } = await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "file-profile" }) as never,
-      );
-      expect(getEffectiveProfile()).toBe("env-profile");
-    });
-
-    it("in-memory override takes precedence over persisted file", async () => {
       const { getEffectiveProfile, setUIActiveProfile, mockReadFile } =
         await importWorkspace();
       mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "file-profile" }) as never,
+        JSON.stringify({ activeWorkspace: "something" }) as never,
       );
-      setUIActiveProfile("memory-profile");
-      expect(getEffectiveProfile()).toBe("memory-profile");
-    });
-
-    it("env var takes precedence over in-memory override", async () => {
-      process.env.OPENCLAW_PROFILE = "env-wins";
-      const { getEffectiveProfile, setUIActiveProfile } =
-        await importWorkspace();
-      setUIActiveProfile("memory-profile");
-      expect(getEffectiveProfile()).toBe("env-wins");
-    });
-
-    it("trims whitespace from env var", async () => {
-      process.env.OPENCLAW_PROFILE = "  padded  ";
-      const { getEffectiveProfile } = await importWorkspace();
-      expect(getEffectiveProfile()).toBe("padded");
-    });
-
-    it("trims whitespace from persisted profile", async () => {
-      const { getEffectiveProfile, mockReadFile } = await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "  trimme  " }) as never,
-      );
-      expect(getEffectiveProfile()).toBe("trimme");
-    });
-
-    it("uses persisted profile in non-test runtime", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.VITEST = "false";
-      const { getEffectiveProfile, mockReadFile } = await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "personal" }) as never,
-      );
-      expect(getEffectiveProfile()).toBe("personal");
+      setUIActiveProfile("custom");
+      expect(getEffectiveProfile()).toBe("ironclaw");
     });
   });
 
-  // ─── setUIActiveProfile ──────────────────────────────────────────
+  // ─── getActiveWorkspaceName ───────────────────────────────────────
 
-  describe("setUIActiveProfile", () => {
-    it("persists profile to state file", async () => {
-      const { setUIActiveProfile, mockReadFile, mockWriteFile, mockExists } =
+  describe("getActiveWorkspaceName", () => {
+    it("returns null when nothing is set and no workspace dirs exist", async () => {
+      const { getActiveWorkspaceName, mockReadFile } = await importWorkspace();
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      expect(getActiveWorkspaceName()).toBeNull();
+    });
+
+    it("returns persisted workspace from state file", async () => {
+      const { getActiveWorkspaceName, mockReadFile, mockReaddir } =
+        await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-dev", true),
+      ] as unknown as Dirent[]);
+      mockReadFile.mockReturnValue(
+        JSON.stringify({ activeWorkspace: "dev" }) as never,
+      );
+      expect(getActiveWorkspaceName()).toBe("dev");
+    });
+
+    it("in-memory override takes precedence over persisted file", async () => {
+      const {
+        getActiveWorkspaceName,
+        setUIActiveWorkspace,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-memory-ws", true),
+        makeDirent("workspace-file-ws", true),
+      ] as unknown as Dirent[]);
+      mockReadFile.mockReturnValue(
+        JSON.stringify({ activeWorkspace: "file-ws" }) as never,
+      );
+      setUIActiveWorkspace("memory-ws");
+      expect(getActiveWorkspaceName()).toBe("memory-ws");
+    });
+
+    it("falls back to first discovered workspace when nothing is set", async () => {
+      const { getActiveWorkspaceName, mockReadFile, mockReaddir } =
+        await importWorkspace();
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-beta", true),
+        makeDirent("workspace-alpha", true),
+        makeDirent("unrelated-dir", true),
+      ] as unknown as Dirent[]);
+      // scanWorkspaceNames sorts alphabetically, so "alpha" comes first
+      expect(getActiveWorkspaceName()).toBe("alpha");
+    });
+
+    it("OPENCLAW_WORKSPACE env pointing to workspace-<name> dir under state dir takes priority", async () => {
+      process.env.OPENCLAW_WORKSPACE = join(STATE_DIR, "workspace-envws");
+      const {
+        getActiveWorkspaceName,
+        setUIActiveWorkspace,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-envws", true),
+        makeDirent("workspace-memory", true),
+      ] as unknown as Dirent[]);
+      mockReadFile.mockReturnValue(
+        JSON.stringify({ activeWorkspace: "persisted" }) as never,
+      );
+      setUIActiveWorkspace("memory");
+      expect(getActiveWorkspaceName()).toBe("envws");
+    });
+
+    it("OPENCLAW_WORKSPACE env pointing to root workspace dir resolves to default", async () => {
+      process.env.OPENCLAW_WORKSPACE = join(STATE_DIR, "workspace");
+      const {
+        getActiveWorkspaceName,
+        setUIActiveWorkspace,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace", true),
+        makeDirent("workspace-memory", true),
+      ] as unknown as Dirent[]);
+      mockReadFile.mockReturnValue(
+        JSON.stringify({ activeWorkspace: "persisted" }) as never,
+      );
+      setUIActiveWorkspace("memory");
+      expect(getActiveWorkspaceName()).toBe("default");
+    });
+  });
+
+  // ─── setUIActiveWorkspace ─────────────────────────────────────────
+
+  describe("setUIActiveWorkspace", () => {
+    it("persists workspace name to state file with activeWorkspace key", async () => {
+      const { setUIActiveWorkspace, mockReadFile, mockWriteFile, mockExists } =
         await importWorkspace();
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
       mockExists.mockReturnValue(true);
-      setUIActiveProfile("work");
+      setUIActiveWorkspace("dev");
       expect(mockWriteFile).toHaveBeenCalledWith(
         UI_STATE_PATH,
-        expect.stringContaining('"activeProfile": "work"'),
+        expect.stringContaining('"activeWorkspace": "dev"'),
       );
     });
 
     it("null clears the override", async () => {
-      const { setUIActiveProfile, mockReadFile, mockWriteFile, mockExists } =
+      const { setUIActiveWorkspace, mockReadFile, mockWriteFile, mockExists } =
         await importWorkspace();
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
       mockExists.mockReturnValue(true);
-      setUIActiveProfile(null);
+      setUIActiveWorkspace(null);
       expect(mockWriteFile).toHaveBeenCalledWith(
         UI_STATE_PATH,
-        expect.stringContaining('"activeProfile": null'),
+        expect.stringContaining('"activeWorkspace": null'),
       );
-    });
-
-    it("preserves existing state keys", async () => {
-      const { setUIActiveProfile, mockReadFile, mockWriteFile, mockExists } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { other: "/path" },
-        }) as never,
-      );
-      mockExists.mockReturnValue(true);
-      setUIActiveProfile("new");
-      const stateWrites = mockWriteFile.mock.calls.filter((c) =>
-        (c[0] as string).includes(".ironclaw-ui-state.json"),
-      );
-      expect(stateWrites.length).toBeGreaterThan(0);
-      const parsed = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
-      expect(parsed.workspaceRegistry).toEqual({ other: "/path" });
-      expect(parsed.activeProfile).toBe("new");
     });
   });
 
-  // ─── clearUIActiveProfileCache ────────────────────────────────────
+  // ─── clearUIActiveWorkspaceCache ──────────────────────────────────
 
-  describe("clearUIActiveProfileCache", () => {
-    it("re-reads from file after clearing", async () => {
+  describe("clearUIActiveWorkspaceCache", () => {
+    it("re-reads from file after clearing in-memory override", async () => {
       const {
-        getEffectiveProfile,
-        setUIActiveProfile,
-        clearUIActiveProfileCache,
+        getActiveWorkspaceName,
+        setUIActiveWorkspace,
+        clearUIActiveWorkspaceCache,
         mockReadFile,
+        mockReaddir,
       } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-in-memory", true),
+        makeDirent("workspace-from-file", true),
+      ] as unknown as Dirent[]);
 
       mockReadFile.mockReturnValue(
-        JSON.stringify({ activeProfile: "from-file" }) as never,
+        JSON.stringify({ activeWorkspace: "from-file" }) as never,
       );
-      setUIActiveProfile("in-memory");
-      expect(getEffectiveProfile()).toBe("in-memory");
+      setUIActiveWorkspace("in-memory");
+      expect(getActiveWorkspaceName()).toBe("in-memory");
 
-      clearUIActiveProfileCache();
-      expect(getEffectiveProfile()).toBe("from-file");
+      clearUIActiveWorkspaceCache();
+      expect(getActiveWorkspaceName()).toBe("from-file");
     });
   });
 
-  // ─── discoverProfiles ─────────────────────────────────────────────
+  // ─── discoverWorkspaces ───────────────────────────────────────────
 
-  describe("discoverProfiles", () => {
-    it("always includes default profile", async () => {
-      const { discoverProfiles, mockExists } = await importWorkspace();
-      mockExists.mockReturnValue(false);
-      const profiles = discoverProfiles();
-      expect(profiles).toHaveLength(1);
-      expect(profiles[0].name).toBe("default");
-    });
-
-    it("default profile is active when no profile set", async () => {
-      const { discoverProfiles, clearUIActiveProfileCache, mockExists, mockReadFile } =
+  describe("discoverWorkspaces", () => {
+    it("returns empty array when state dir has no workspace-* dirs", async () => {
+      const { discoverWorkspaces, mockReadFile, mockReaddir } =
         await importWorkspace();
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      mockExists.mockReturnValue(false);
-      clearUIActiveProfileCache();
-      const profiles = discoverProfiles();
-      expect(profiles[0].isActive).toBe(true);
+      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      const workspaces = discoverWorkspaces();
+      expect(workspaces).toHaveLength(0);
     });
 
-    it("discovers profile-scoped .openclaw-<name> state directories", async () => {
-      const { discoverProfiles, mockExists, mockReaddir } =
+    it("discovers workspace-<name> directories under state dir", async () => {
+      const { discoverWorkspaces, mockReaddir, mockExists, mockReadFile } =
         await importWorkspace();
-      const workStateDir = stateDirForProfile("work");
-      const personalStateDir = stateDirForProfile("personal");
-      mockExists.mockImplementation((p) => {
-        const s = String(p);
-        return (
-          s === DEFAULT_STATE_DIR ||
-          s === join(DEFAULT_STATE_DIR, "openclaw.json") ||
-          s === join(workStateDir, "workspace") ||
-          s === join(personalStateDir, "workspace")
-        );
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
       });
       mockReaddir.mockReturnValue([
-        makeDirent(".openclaw-work", true),
-        makeDirent(".openclaw-personal", true),
-        makeDirent("sessions", true),
+        makeDirent("workspace-alpha", true),
+        makeDirent("workspace-beta", true),
+        makeDirent("some-other-dir", true),
         makeDirent("config.json", false),
       ] as unknown as Dirent[]);
-
-      const profiles = discoverProfiles();
-      const names = profiles.map((p) => p.name);
-      expect(names).toContain("default");
-      expect(names).toContain("work");
-      expect(names).toContain("personal");
-      expect(names).not.toContain("sessions");
-    });
-
-    it("marks active profile correctly", async () => {
-      const { discoverProfiles, setUIActiveProfile, mockExists, mockReaddir } =
-        await importWorkspace();
-      const workStateDir = stateDirForProfile("work");
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
-          s === DEFAULT_STATE_DIR ||
-          s === join(DEFAULT_STATE_DIR, "openclaw.json") ||
-          s === join(workStateDir, "workspace")
+          s === join(STATE_DIR, "workspace-alpha") ||
+          s === join(STATE_DIR, "workspace-beta")
         );
       });
-      mockReaddir.mockReturnValue([
-        makeDirent(".openclaw-work", true),
-      ] as unknown as Dirent[]);
 
-      setUIActiveProfile("work");
-      const profiles = discoverProfiles();
-      const defaultProfile = profiles.find((p) => p.name === "default");
-      const workProfile = profiles.find((p) => p.name === "work");
-      expect(defaultProfile?.isActive).toBe(false);
-      expect(workProfile?.isActive).toBe(true);
+      const workspaces = discoverWorkspaces();
+      const names = workspaces.map((w) => w.name);
+      expect(names).toContain("alpha");
+      expect(names).toContain("beta");
+      expect(names).not.toContain("some-other-dir");
+      expect(names).not.toContain("config.json");
     });
 
-    it("merges registry entries for custom-path workspaces", async () => {
-      const { discoverProfiles, mockExists, mockReadFile } =
+    it("discovers root workspace dir as default", async () => {
+      const { discoverWorkspaces, mockReaddir, mockExists, mockReadFile } =
         await importWorkspace();
-      mockExists.mockImplementation((p) => {
-        const s = String(p);
-        return s === "/custom/workspace" || s === DEFAULT_STATE_DIR;
-      });
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { custom: "/custom/workspace" },
-        }) as never,
-      );
-
-      const profiles = discoverProfiles();
-      const custom = profiles.find((p) => p.name === "custom");
-      expect(custom).toBeDefined();
-      expect(custom!.workspaceDir).toBe("/custom/workspace");
-    });
-
-    it("does not duplicate profiles seen via directory and registry", async () => {
-      const { discoverProfiles, mockExists, mockReaddir, mockReadFile } =
-        await importWorkspace();
-      const stateDir = stateDirForProfile("shared");
-      const wsDir = join(stateDir, "workspace");
-      mockExists.mockImplementation((p) => {
-        const s = String(p);
-        return s === DEFAULT_STATE_DIR || s === wsDir;
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
       });
       mockReaddir.mockReturnValue([
-        makeDirent(".openclaw-shared", true),
+        makeDirent("workspace", true),
       ] as unknown as Dirent[]);
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { shared: wsDir },
-        }) as never,
-      );
+      mockExists.mockImplementation((p) => String(p) === join(STATE_DIR, "workspace"));
 
-      const profiles = discoverProfiles();
-      const sharedProfiles = profiles.filter((p) => p.name === "shared");
-      expect(sharedProfiles).toHaveLength(1);
+      const workspaces = discoverWorkspaces();
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]?.name).toBe("default");
+      expect(workspaces[0]?.workspaceDir).toBe(join(STATE_DIR, "workspace"));
+      expect(workspaces[0]?.isActive).toBe(true);
     });
 
-    it("handles unreadable state directory gracefully", async () => {
-      const { discoverProfiles, mockExists, mockReaddir } =
+    it("keeps root default and workspace-ironclaw as distinct workspaces", async () => {
+      const { discoverWorkspaces, mockReaddir, mockExists, mockReadFile } =
         await importWorkspace();
-      mockExists.mockReturnValue(true);
-      mockReaddir.mockImplementation(() => {
-        throw new Error("EACCES");
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
       });
-      const profiles = discoverProfiles();
-      expect(profiles.length).toBeGreaterThanOrEqual(1);
-      expect(profiles[0].name).toBe("default");
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace", true),
+        makeDirent("workspace-ironclaw", true),
+      ] as unknown as Dirent[]);
+      mockExists.mockImplementation((p) => {
+        const s = String(p);
+        return s === join(STATE_DIR, "workspace") || s === join(STATE_DIR, "workspace-ironclaw");
+      });
+
+      const workspaces = discoverWorkspaces();
+      expect(workspaces).toHaveLength(2);
+      const names = workspaces.map((workspace) => workspace.name);
+      expect(names).toContain("default");
+      expect(names).toContain("ironclaw");
+      const rootDefault = workspaces.find((workspace) => workspace.name === "default");
+      const profileIronclaw = workspaces.find((workspace) => workspace.name === "ironclaw");
+      expect(rootDefault?.workspaceDir).toBe(join(STATE_DIR, "workspace"));
+      expect(profileIronclaw?.workspaceDir).toBe(join(STATE_DIR, "workspace-ironclaw"));
+    });
+
+    it("lists default, ironclaw, and custom workspace side by side", async () => {
+      const { discoverWorkspaces, mockReaddir, mockExists, mockReadFile } =
+        await importWorkspace();
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace", true),
+        makeDirent("workspace-ironclaw", true),
+        makeDirent("workspace-kumareth", true),
+      ] as unknown as Dirent[]);
+      mockExists.mockImplementation((p) => {
+        const s = String(p);
+        return (
+          s === join(STATE_DIR, "workspace") ||
+          s === join(STATE_DIR, "workspace-ironclaw") ||
+          s === join(STATE_DIR, "workspace-kumareth")
+        );
+      });
+
+      const workspaces = discoverWorkspaces();
+      expect(workspaces.map((workspace) => workspace.name)).toEqual([
+        "default",
+        "ironclaw",
+        "kumareth",
+      ]);
+    });
+
+    it("first discovered workspace is marked active when no explicit selection", async () => {
+      const { discoverWorkspaces, mockReaddir, mockExists, mockReadFile } =
+        await importWorkspace();
+      mockReadFile.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-beta", true),
+        makeDirent("workspace-alpha", true),
+      ] as unknown as Dirent[]);
+      mockExists.mockImplementation((p) => {
+        const s = String(p);
+        return (
+          s === join(STATE_DIR, "workspace-alpha") ||
+          s === join(STATE_DIR, "workspace-beta")
+        );
+      });
+
+      const workspaces = discoverWorkspaces();
+      // sorted alphabetically: alpha first
+      expect(workspaces[0].name).toBe("alpha");
+      expect(workspaces[0].isActive).toBe(true);
+      expect(workspaces[1].isActive).toBe(false);
+    });
+
+    it("marks the explicitly active workspace correctly", async () => {
+      const {
+        discoverWorkspaces,
+        setUIActiveWorkspace,
+        mockReaddir,
+        mockExists,
+        mockReadFile,
+      } = await importWorkspace();
+      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-alpha", true),
+        makeDirent("workspace-beta", true),
+      ] as unknown as Dirent[]);
+      mockExists.mockImplementation((p) => {
+        const s = String(p);
+        return (
+          s === join(STATE_DIR, "workspace-alpha") ||
+          s === join(STATE_DIR, "workspace-beta") ||
+          s === STATE_DIR
+        );
+      });
+
+      setUIActiveWorkspace("beta");
+      const workspaces = discoverWorkspaces();
+      const alpha = workspaces.find((w) => w.name === "alpha");
+      const beta = workspaces.find((w) => w.name === "beta");
+      expect(alpha?.isActive).toBe(false);
+      expect(beta?.isActive).toBe(true);
     });
   });
 
   // ─── resolveWebChatDir ────────────────────────────────────────────
 
   describe("resolveWebChatDir", () => {
-    it("returns web-chat for default profile", async () => {
-      const { resolveWebChatDir, mockReadFile } = await importWorkspace();
-      mockReadFile.mockImplementation(() => {
-        throw new Error("ENOENT");
-      });
-      expect(resolveWebChatDir()).toBe(join(DEFAULT_STATE_DIR, "web-chat"));
-    });
-
-    it("returns profile-scoped web-chat directory for named profile", async () => {
-      const { resolveWebChatDir, setUIActiveProfile, mockReadFile } =
-        await importWorkspace();
+    it("returns <workspace>/.openclaw/web-chat for active workspace (per-workspace chat isolation)", async () => {
+      const {
+        resolveWebChatDir,
+        setUIActiveWorkspace,
+        mockExists,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-dev", true),
+      ] as unknown as Dirent[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("work");
-      expect(resolveWebChatDir()).toBe(join(stateDirForProfile("work"), "web-chat"));
+      setUIActiveWorkspace("dev");
+      const wsDir = join(STATE_DIR, "workspace-dev");
+      mockExists.mockImplementation((p) => String(p) === wsDir);
+      expect(resolveWebChatDir()).toBe(join(wsDir, ".openclaw", "web-chat"));
     });
 
-    it("uses OPENCLAW_PROFILE when no UI override is set", async () => {
-      process.env.OPENCLAW_PROFILE = "ironclaw";
-      const { resolveWebChatDir, mockReadFile } = await importWorkspace();
-      mockReadFile.mockImplementation(() => {
-        throw new Error("ENOENT");
-      });
-      expect(resolveWebChatDir()).toBe(join(stateDirForProfile("ironclaw"), "web-chat"));
-    });
-
-    it("migrates legacy web-chat-<profile> into profile state dir", async () => {
-      const { resolveWebChatDir, setUIActiveProfile, mockExists, mockReadFile, mockRename } =
-        await importWorkspace();
+    it("different workspaces produce different chat directories", async () => {
+      const {
+        resolveWebChatDir,
+        setUIActiveWorkspace,
+        clearUIActiveWorkspaceCache,
+        mockExists,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-work", true),
+        makeDirent("workspace-personal", true),
+      ] as unknown as Dirent[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("work");
 
-      const legacyDir = join(DEFAULT_STATE_DIR, "web-chat-work");
-      const targetDir = join(stateDirForProfile("work"), "web-chat");
-      mockExists.mockImplementation((p) => String(p) === legacyDir);
+      setUIActiveWorkspace("work");
+      const workDir = join(STATE_DIR, "workspace-work");
+      mockExists.mockImplementation((p) => String(p) === workDir);
+      const chatWork = resolveWebChatDir();
 
-      resolveWebChatDir();
+      clearUIActiveWorkspaceCache();
+      setUIActiveWorkspace("personal");
+      const personalDir = join(STATE_DIR, "workspace-personal");
+      mockExists.mockImplementation((p) => String(p) === personalDir);
+      const chatPersonal = resolveWebChatDir();
 
-      expect(mockRename).toHaveBeenCalledWith(legacyDir, targetDir);
+      expect(chatWork).not.toBe(chatPersonal);
+      expect(chatWork).toBe(join(workDir, ".openclaw", "web-chat"));
+      expect(chatPersonal).toBe(join(personalDir, ".openclaw", "web-chat"));
     });
 
-    it("returns web-chat when profile is 'default'", async () => {
-      const { resolveWebChatDir, setUIActiveProfile, mockReadFile } =
+    it("falls back to root workspace path when no workspace is active", async () => {
+      const { resolveWebChatDir, mockReadFile, mockReaddir } =
         await importWorkspace();
-      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("default");
-      expect(resolveWebChatDir()).toBe(join(DEFAULT_STATE_DIR, "web-chat"));
-    });
-
-    it("respects OPENCLAW_STATE_DIR override", async () => {
-      process.env.OPENCLAW_STATE_DIR = "/custom/state";
-      const { resolveWebChatDir, mockReadFile } = await importWorkspace();
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      expect(resolveWebChatDir()).toBe(join("/custom/state", "web-chat"));
-    });
-
-    it("uses default web-chat dir in non-test runtime when no profile is set", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.VITEST = "false";
-      const { resolveWebChatDir, mockReadFile } = await importWorkspace();
-      mockReadFile.mockImplementation(() => {
-        throw new Error("ENOENT");
-      });
-      expect(resolveWebChatDir()).toBe(join(DEFAULT_STATE_DIR, "web-chat"));
+      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      expect(resolveWebChatDir()).toBe(
+        join(STATE_DIR, "workspace", ".openclaw", "web-chat"),
+      );
     });
   });
 
-  // ─── resolveWorkspaceRoot (profile-aware) ─────────────────────────
+  // ─── resolveWorkspaceRoot ─────────────────────────────────────────
 
-  describe("resolveWorkspaceRoot (profile-aware)", () => {
-    it("returns profile-scoped workspace for named profile", async () => {
-      const { resolveWorkspaceRoot, setUIActiveProfile, mockExists, mockReadFile } =
-        await importWorkspace();
+  describe("resolveWorkspaceRoot", () => {
+    it("returns active workspace dir when it exists on disk", async () => {
+      const {
+        resolveWorkspaceRoot,
+        setUIActiveWorkspace,
+        mockExists,
+        mockReadFile,
+        mockReaddir,
+      } = await importWorkspace();
+      mockReaddir.mockReturnValue([
+        makeDirent("workspace-dev", true),
+      ] as unknown as Dirent[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("work");
-      const workDir = join(stateDirForProfile("work"), "workspace");
-      mockExists.mockImplementation((p) => String(p) === workDir);
-      expect(resolveWorkspaceRoot()).toBe(workDir);
+      setUIActiveWorkspace("dev");
+      const wsDir = join(STATE_DIR, "workspace-dev");
+      mockExists.mockImplementation((p) => String(p) === wsDir);
+      expect(resolveWorkspaceRoot()).toBe(wsDir);
     });
 
-    it("uses OPENCLAW_PROFILE to resolve profile-scoped workspace", async () => {
-      process.env.OPENCLAW_PROFILE = "ironclaw";
-      const { resolveWorkspaceRoot, mockExists, mockReadFile } = await importWorkspace();
+    it("returns null when no workspace dirs exist", async () => {
+      const { resolveWorkspaceRoot, mockReadFile, mockReaddir } = await importWorkspace();
+      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      const profileWorkspaceDir = join(stateDirForProfile("ironclaw"), "workspace");
-      mockExists.mockImplementation((p) => String(p) === profileWorkspaceDir);
-      expect(resolveWorkspaceRoot()).toBe(profileWorkspaceDir);
-    });
-
-    it("prefers registry path over directory convention", async () => {
-      const {
-        resolveWorkspaceRoot,
-        setUIActiveProfile,
-        mockExists,
-        mockReadFile,
-      } = await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { work: "/custom/work" },
-        }) as never,
-      );
-      setUIActiveProfile("work");
-      mockExists.mockImplementation((p) => {
-        const s = String(p);
-        return (
-          s === "/custom/work" || s === join(stateDirForProfile("work"), "workspace")
-        );
-      });
-      expect(resolveWorkspaceRoot()).toBe("/custom/work");
-    });
-
-    it("OPENCLAW_WORKSPACE env takes top priority", async () => {
-      process.env.OPENCLAW_WORKSPACE = "/env/workspace";
-      const { resolveWorkspaceRoot, setUIActiveProfile, mockExists, mockReadFile } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("work");
-      mockExists.mockImplementation((p) => String(p) === "/env/workspace");
-      expect(resolveWorkspaceRoot()).toBe("/env/workspace");
-    });
-
-    it("returns null when named profile workspace is missing", async () => {
-      const { resolveWorkspaceRoot, setUIActiveProfile, mockExists, mockReadFile } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("missing");
-      mockExists.mockReturnValue(false);
       expect(resolveWorkspaceRoot()).toBeNull();
     });
 
-    it("migrates legacy workspace-<profile> and updates resolution", async () => {
-      const { resolveWorkspaceRoot, setUIActiveProfile, mockExists, mockReadFile, mockRename } =
+    it("OPENCLAW_WORKSPACE env takes priority if it points to a valid workspace-<name> path", async () => {
+      const envWsDir = join(STATE_DIR, "workspace-envws");
+      process.env.OPENCLAW_WORKSPACE = envWsDir;
+      const { resolveWorkspaceRoot, setUIActiveWorkspace, mockExists, mockReadFile } =
         await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: {
-            work: join(DEFAULT_STATE_DIR, "workspace-work"),
-          },
-        }) as never,
-      );
-      setUIActiveProfile("work");
-
-      const legacyDir = join(DEFAULT_STATE_DIR, "workspace-work");
-      const targetDir = join(stateDirForProfile("work"), "workspace");
-      let moved = false;
+      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
+      setUIActiveWorkspace("other");
       mockExists.mockImplementation((p) => {
         const s = String(p);
-        if (!moved) {
-          return s === legacyDir;
-        }
-        return s === targetDir;
+        return s === envWsDir || s === join(STATE_DIR, "workspace-other");
       });
-      mockRename.mockImplementation(() => {
-        moved = true;
-      });
-
-      expect(resolveWorkspaceRoot()).toBe(targetDir);
-      expect(mockRename).toHaveBeenCalledWith(legacyDir, targetDir);
+      expect(resolveWorkspaceRoot()).toBe(envWsDir);
     });
 
-    it("uses legacy workspace fallback when profile workspace is missing", async () => {
-      const { resolveWorkspaceRoot, setUIActiveProfile, mockExists, mockReadFile, mockRename } =
+    it("OPENCLAW_WORKSPACE env takes priority for root workspace path", async () => {
+      const envWsDir = join(STATE_DIR, "workspace");
+      process.env.OPENCLAW_WORKSPACE = envWsDir;
+      const { resolveWorkspaceRoot, setUIActiveWorkspace, mockExists, mockReadFile } =
         await importWorkspace();
-      const legacyDir = join(DEFAULT_STATE_DIR, "workspace-ironclaw");
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      setUIActiveProfile("ironclaw");
-      mockRename.mockImplementation(() => {
-        throw new Error("EPERM");
+      setUIActiveWorkspace("other");
+      mockExists.mockImplementation((p) => {
+        const s = String(p);
+        return s === envWsDir || s === join(STATE_DIR, "workspace-other");
       });
-      mockExists.mockImplementation((p) => String(p) === legacyDir);
-
-      expect(resolveWorkspaceRoot()).toBe(legacyDir);
-      expect(mockRename).toHaveBeenCalled();
+      expect(resolveWorkspaceRoot()).toBe(envWsDir);
     });
   });
 
   // ─── registerWorkspacePath / getRegisteredWorkspacePath ────────────
 
-  describe("workspace registry", () => {
-    it("registerWorkspacePath persists to state file", async () => {
-      const { registerWorkspacePath, mockReadFile, mockWriteFile, mockExists } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      mockExists.mockReturnValue(true);
+  describe("registerWorkspacePath / getRegisteredWorkspacePath", () => {
+    it("registerWorkspacePath is now a no-op (custom paths disabled)", async () => {
+      const { registerWorkspacePath, mockWriteFile } = await importWorkspace();
+      mockWriteFile.mockClear();
       registerWorkspacePath("myprofile", "/my/workspace");
       const stateWrites = mockWriteFile.mock.calls.filter((c) =>
         (c[0] as string).includes(".ironclaw-ui-state.json"),
       );
-      expect(stateWrites.length).toBeGreaterThan(0);
-      const parsed = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
-      expect(parsed.workspaceRegistry.myprofile).toBe("/my/workspace");
+      expect(stateWrites).toHaveLength(0);
     });
 
-    it("getRegisteredWorkspacePath returns null for unknown profile", async () => {
-      const { getRegisteredWorkspacePath, mockReadFile } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(JSON.stringify({}) as never);
-      expect(getRegisteredWorkspacePath("unknown")).toBeNull();
-    });
-
-    it("getRegisteredWorkspacePath returns null for null profile", async () => {
+    it("getRegisteredWorkspacePath always returns null", async () => {
       const { getRegisteredWorkspacePath } = await importWorkspace();
+      expect(getRegisteredWorkspacePath("anything")).toBeNull();
       expect(getRegisteredWorkspacePath(null)).toBeNull();
-    });
-
-    it("getRegisteredWorkspacePath returns path for registered profile", async () => {
-      const { getRegisteredWorkspacePath, mockReadFile } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { test: "/test/workspace" },
-        }) as never,
-      );
-      expect(getRegisteredWorkspacePath("test")).toBe("/test/workspace");
-    });
-
-    it("registerWorkspacePath preserves existing registry entries", async () => {
-      const { registerWorkspacePath, mockReadFile, mockWriteFile, mockExists } =
-        await importWorkspace();
-      mockReadFile.mockReturnValue(
-        JSON.stringify({
-          workspaceRegistry: { existing: "/existing" },
-        }) as never,
-      );
-      mockExists.mockReturnValue(true);
-      registerWorkspacePath("new", "/new/path");
-      const stateWrites = mockWriteFile.mock.calls.filter((c) =>
-        (c[0] as string).includes(".ironclaw-ui-state.json"),
-      );
-      expect(stateWrites.length).toBeGreaterThan(0);
-      const parsed = JSON.parse(stateWrites[stateWrites.length - 1][1] as string);
-      expect(parsed.workspaceRegistry.existing).toBe("/existing");
-      expect(parsed.workspaceRegistry.new).toBe("/new/path");
+      expect(getRegisteredWorkspacePath("test")).toBeNull();
     });
   });
 });

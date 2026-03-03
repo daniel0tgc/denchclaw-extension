@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCliProfileEnv, parseCliProfileArgs } from "./profile.js";
+import { applyCliProfileEnv, parseCliProfileArgs, IRONCLAW_PROFILE } from "./profile.js";
 
 describe("parseCliProfileArgs", () => {
   it("returns default profile parsing when no args are provided", () => {
@@ -24,7 +24,7 @@ describe("parseCliProfileArgs", () => {
     });
   });
 
-  it("rejects missing, invalid, and conflicting profile inputs", () => {
+  it("rejects missing and invalid profile inputs", () => {
     expect(parseCliProfileArgs(["node", "ironclaw", "--profile"])).toEqual({
       ok: false,
       error: "--profile requires a value",
@@ -34,11 +34,14 @@ describe("parseCliProfileArgs", () => {
       ok: false,
       error: 'Invalid --profile (use letters, numbers, "_", "-" only)',
     });
+  });
 
-    expect(parseCliProfileArgs(["node", "ironclaw", "--dev", "--profile", "team-a"])).toEqual({
-      ok: false,
-      error: "Cannot combine --dev with --profile",
-    });
+  it("allows --dev and --profile together (Ironclaw forces ironclaw anyway)", () => {
+    const result = parseCliProfileArgs(["node", "ironclaw", "--dev", "--profile", "team-a"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.profile).toBe("team-a");
+    }
   });
 
   it("stops profile parsing once command path begins", () => {
@@ -48,34 +51,91 @@ describe("parseCliProfileArgs", () => {
       argv: ["node", "ironclaw", "chat", "--profile", "dev"],
     });
   });
+});
 
-  it("produces equivalent profile env for root and bootstrap-local profile forms", () => {
-    const rootProfile = parseCliProfileArgs([
-      "node",
-      "ironclaw",
-      "--profile",
-      "team-a",
-      "bootstrap",
-    ]);
-    const bootstrapLocalProfile = parseCliProfileArgs([
-      "node",
-      "ironclaw",
-      "bootstrap",
-      "--profile",
-      "team-a",
-    ]);
-
-    expect(rootProfile).toEqual({
-      ok: true,
+describe("applyCliProfileEnv", () => {
+  it("always forces ironclaw profile regardless of requested profile (single profile enforcement)", () => {
+    const env: Record<string, string | undefined> = {};
+    const result = applyCliProfileEnv({
       profile: "team-a",
-      argv: ["node", "ironclaw", "bootstrap"],
-    });
-    expect(bootstrapLocalProfile).toEqual({
-      ok: true,
-      profile: null,
-      argv: ["node", "ironclaw", "bootstrap", "--profile", "team-a"],
+      env,
+      homedir: () => "/tmp/home",
     });
 
+    expect(result.effectiveProfile).toBe(IRONCLAW_PROFILE);
+    expect(env.OPENCLAW_PROFILE).toBe(IRONCLAW_PROFILE);
+    expect(env.OPENCLAW_STATE_DIR).toBe("/tmp/home/.openclaw-ironclaw");
+    expect(env.OPENCLAW_CONFIG_PATH).toBe("/tmp/home/.openclaw-ironclaw/openclaw.json");
+  });
+
+  it("emits warning when non-ironclaw profile is requested (prevents silent override)", () => {
+    const env: Record<string, string | undefined> = {};
+    const result = applyCliProfileEnv({
+      profile: "team-a",
+      env,
+      homedir: () => "/tmp/home",
+    });
+
+    expect(result.warning).toBeDefined();
+    expect(result.warning).toContain("team-a");
+    expect(result.warning).toContain(IRONCLAW_PROFILE);
+    expect(result.requestedProfile).toBe("team-a");
+  });
+
+  it("no warning when ironclaw profile is requested (normal path)", () => {
+    const env: Record<string, string | undefined> = {};
+    const result = applyCliProfileEnv({
+      profile: IRONCLAW_PROFILE,
+      env,
+      homedir: () => "/tmp/home",
+    });
+
+    expect(result.warning).toBeUndefined();
+    expect(result.effectiveProfile).toBe(IRONCLAW_PROFILE);
+  });
+
+  it("no warning when no profile is specified (default path)", () => {
+    const env: Record<string, string | undefined> = {};
+    const result = applyCliProfileEnv({
+      env,
+      homedir: () => "/tmp/home",
+    });
+
+    expect(result.warning).toBeUndefined();
+    expect(result.effectiveProfile).toBe(IRONCLAW_PROFILE);
+  });
+
+  it("always overwrites OPENCLAW_STATE_DIR to pinned path (prevents state drift)", () => {
+    const env: Record<string, string | undefined> = {
+      OPENCLAW_STATE_DIR: "/custom/state",
+      OPENCLAW_CONFIG_PATH: "/custom/state/openclaw.json",
+    };
+    const result = applyCliProfileEnv({
+      profile: "dev",
+      env,
+      homedir: () => "/tmp/home",
+    });
+
+    expect(env.OPENCLAW_STATE_DIR).toBe("/tmp/home/.openclaw-ironclaw");
+    expect(env.OPENCLAW_CONFIG_PATH).toBe("/tmp/home/.openclaw-ironclaw/openclaw.json");
+    expect(result.stateDir).toBe("/tmp/home/.openclaw-ironclaw");
+  });
+
+  it("picks up OPENCLAW_PROFILE from env when no explicit profile is passed", () => {
+    const env: Record<string, string | undefined> = {
+      OPENCLAW_PROFILE: "from-env",
+    };
+    const result = applyCliProfileEnv({
+      env,
+      homedir: () => "/tmp/home",
+    });
+
+    expect(result.requestedProfile).toBe("from-env");
+    expect(result.effectiveProfile).toBe(IRONCLAW_PROFILE);
+    expect(result.warning).toContain("from-env");
+  });
+
+  it("both root and bootstrap-local profile forms resolve to same state dir", () => {
     const rootEnv: Record<string, string | undefined> = {};
     const bootstrapLocalEnv: Record<string, string | undefined> = {};
     applyCliProfileEnv({
@@ -92,36 +152,5 @@ describe("parseCliProfileArgs", () => {
     expect(rootEnv.OPENCLAW_PROFILE).toBe(bootstrapLocalEnv.OPENCLAW_PROFILE);
     expect(rootEnv.OPENCLAW_STATE_DIR).toBe(bootstrapLocalEnv.OPENCLAW_STATE_DIR);
     expect(rootEnv.OPENCLAW_CONFIG_PATH).toBe(bootstrapLocalEnv.OPENCLAW_CONFIG_PATH);
-  });
-});
-
-describe("applyCliProfileEnv", () => {
-  it("fills profile defaults without overriding explicit state/config vars", () => {
-    const env: Record<string, string | undefined> = {};
-    applyCliProfileEnv({
-      profile: "team-a",
-      env,
-      homedir: () => "/tmp/home",
-    });
-
-    expect(env.OPENCLAW_PROFILE).toBe("team-a");
-    expect(env.OPENCLAW_STATE_DIR).toBe("/tmp/home/.openclaw-team-a");
-    expect(env.OPENCLAW_CONFIG_PATH).toBe("/tmp/home/.openclaw-team-a/openclaw.json");
-  });
-
-  it("respects explicit state/config paths and assigns dev gateway port when absent", () => {
-    const env: Record<string, string | undefined> = {
-      OPENCLAW_STATE_DIR: "/custom/state",
-      OPENCLAW_CONFIG_PATH: "/custom/state/openclaw.json",
-    };
-    applyCliProfileEnv({
-      profile: "dev",
-      env,
-      homedir: () => "/tmp/home",
-    });
-
-    expect(env.OPENCLAW_STATE_DIR).toBe("/custom/state");
-    expect(env.OPENCLAW_CONFIG_PATH).toBe("/custom/state/openclaw.json");
-    expect(env.OPENCLAW_GATEWAY_PORT).toBe("19001");
   });
 });

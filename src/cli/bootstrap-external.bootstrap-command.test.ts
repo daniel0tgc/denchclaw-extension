@@ -490,7 +490,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(identityContent).not.toContain("# stale identity");
   });
 
-  it("creates people/company/task object projection files when seeding a new workspace", async () => {
+  it("ignores custom config workspace and seeds the managed default workspace", async () => {
     const runtime: RuntimeEnv = {
       log: vi.fn(),
       error: vi.fn(),
@@ -519,13 +519,14 @@ describe("bootstrapCommand always-onboard behavior", () => {
       runtime,
     );
 
+    const managedWorkspace = path.join(stateDir, "workspace");
     expect(summary.workspaceSeed?.seeded).toBe(true);
-    expect(summary.workspaceSeed?.workspaceDir).toBe(customWorkspace);
-    expect(existsSync(path.join(customWorkspace, "people", ".object.yaml"))).toBe(true);
-    expect(existsSync(path.join(customWorkspace, "company", ".object.yaml"))).toBe(true);
-    expect(existsSync(path.join(customWorkspace, "task", ".object.yaml"))).toBe(true);
-    expect(existsSync(path.join(customWorkspace, "WORKSPACE.md"))).toBe(true);
-    const identityPath = path.join(customWorkspace, "IDENTITY.md");
+    expect(summary.workspaceSeed?.workspaceDir).toBe(managedWorkspace);
+    expect(existsSync(path.join(managedWorkspace, "people", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(managedWorkspace, "company", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(managedWorkspace, "task", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(managedWorkspace, "WORKSPACE.md"))).toBe(true);
+    const identityPath = path.join(managedWorkspace, "IDENTITY.md");
     expect(existsSync(identityPath)).toBe(true);
     const identityContent = readFileSync(identityPath, "utf-8");
     expect(identityContent).toContain("You are **Ironclaw**");
@@ -581,6 +582,46 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(content).not.toContain("# custom");
   });
 
+  it("pins workspace config to default workspace path during bootstrap", async () => {
+    const runtime: RuntimeEnv = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+
+    await bootstrapCommand(
+      {
+        nonInteractive: true,
+        noOpen: true,
+        skipUpdate: true,
+      },
+      runtime,
+    );
+
+    const workspaceConfigSetCalls = spawnCalls.filter(
+      (call) =>
+        call.command === "openclaw" &&
+        call.args.includes("config") &&
+        call.args.includes("set") &&
+        call.args.includes("agents.defaults.workspace"),
+    );
+
+    expect(workspaceConfigSetCalls.length).toBeGreaterThan(0);
+    const lastArgs = workspaceConfigSetCalls.at(-1)?.args ?? [];
+    expect(lastArgs).toEqual(
+      expect.arrayContaining([
+        "--profile",
+        "ironclaw",
+        "config",
+        "set",
+        "agents.defaults.workspace",
+      ]),
+    );
+    const configuredWorkspace = lastArgs.at(-1) ?? "";
+    expect(configuredWorkspace).toContain(path.join(".openclaw-ironclaw", "workspace"));
+    expect(configuredWorkspace).not.toContain("workspace-ironclaw");
+  });
+
   it("keeps Dench in managed skills even when workspace path is custom", async () => {
     const runtime: RuntimeEnv = {
       log: vi.fn(),
@@ -614,6 +655,8 @@ describe("bootstrapCommand always-onboard behavior", () => {
 
     expect(existsSync(managedSkill)).toBe(true);
     expect(existsSync(workspaceSkill)).toBe(false);
+    const managedWorkspaceSkill = path.join(stateDir, "workspace", "skills", "dench", "SKILL.md");
+    expect(existsSync(managedWorkspaceSkill)).toBe(true);
   });
 
   it("uses inherited stdio for onboarding in interactive mode (shows wizard prompts)", async () => {

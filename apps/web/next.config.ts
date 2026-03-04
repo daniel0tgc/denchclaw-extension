@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
 
   webpack: (config, { dev, isServer }) => {
     if (!isServer) {
+      // html-to-docx references Node-only modules that should not be resolved in browser bundles.
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,

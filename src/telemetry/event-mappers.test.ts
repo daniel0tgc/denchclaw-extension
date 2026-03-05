@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { TraceContextManager } from "../../extensions/posthog-analytics/lib/trace-context.js";
-import { emitGeneration, emitToolSpan, emitTrace, emitCustomEvent, extractToolNamesFromMessages } from "../../extensions/posthog-analytics/lib/event-mappers.js";
+import { emitGeneration, emitToolSpan, emitTrace, emitCustomEvent, extractToolNamesFromMessages, extractUsageFromMessages, normalizeOutputForPostHog } from "../../extensions/posthog-analytics/lib/event-mappers.js";
 
 function createMockPostHog() {
   return {
@@ -44,6 +44,90 @@ describe("extractToolNamesFromMessages", () => {
     expect(extractToolNamesFromMessages([{ role: "user", content: "hello" }])).toEqual([]);
     expect(extractToolNamesFromMessages(null)).toEqual([]);
     expect(extractToolNamesFromMessages([])).toEqual([]);
+  });
+});
+
+describe("extractUsageFromMessages", () => {
+  it("sums input/output tokens and cost across assistant messages", () => {
+    const messages = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi", usage: { input: 10, output: 50, cost: { total: 0.001 } } },
+      { role: "user", content: "more" },
+      { role: "assistant", content: "sure", usage: { input: 20, output: 100, cost: { total: 0.002 } } },
+    ];
+    const result = extractUsageFromMessages(messages);
+    expect(result.inputTokens).toBe(30);
+    expect(result.outputTokens).toBe(150);
+    expect(result.totalCostUsd).toBeCloseTo(0.003);
+  });
+
+  it("skips non-assistant messages (user, tool, system)", () => {
+    const messages = [
+      { role: "user", content: "hello", usage: { input: 999, output: 999, cost: { total: 99 } } },
+      { role: "tool", name: "exec", content: "result" },
+    ];
+    const result = extractUsageFromMessages(messages);
+    expect(result.inputTokens).toBe(0);
+    expect(result.outputTokens).toBe(0);
+    expect(result.totalCostUsd).toBe(0);
+  });
+
+  it("handles assistant messages without usage field", () => {
+    const messages = [
+      { role: "assistant", content: "hi" },
+    ];
+    const result = extractUsageFromMessages(messages);
+    expect(result.inputTokens).toBe(0);
+  });
+
+  it("returns zeros for non-array input", () => {
+    expect(extractUsageFromMessages(null)).toEqual({ inputTokens: 0, outputTokens: 0, totalCostUsd: 0 });
+  });
+});
+
+describe("normalizeOutputForPostHog", () => {
+  it("converts Anthropic toolCall content blocks to OpenAI tool_calls format", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me run that." },
+          { type: "toolCall", name: "exec", id: "call_1", arguments: { command: "ls" } },
+        ],
+      },
+    ];
+    const result = normalizeOutputForPostHog(messages) as any[];
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("assistant");
+    expect(result[0].content).toBe("Let me run that.");
+    expect(result[0].tool_calls).toHaveLength(1);
+    expect(result[0].tool_calls[0].function.name).toBe("exec");
+    expect(result[0].tool_calls[0].type).toBe("function");
+  });
+
+  it("passes through OpenAI-format tool_calls unchanged", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: "OK",
+        tool_calls: [{ id: "c1", type: "function", function: { name: "search" } }],
+      },
+    ];
+    const result = normalizeOutputForPostHog(messages) as any[];
+    expect(result[0].tool_calls[0].function.name).toBe("search");
+  });
+
+  it("returns undefined for non-array or empty input", () => {
+    expect(normalizeOutputForPostHog(null)).toBeUndefined();
+    expect(normalizeOutputForPostHog([])).toBeUndefined();
+  });
+
+  it("skips non-assistant messages", () => {
+    const messages = [
+      { role: "user", content: "hello" },
+      { role: "tool", name: "exec", content: "result" },
+    ];
+    expect(normalizeOutputForPostHog(messages)).toBeUndefined();
   });
 });
 
@@ -105,9 +189,12 @@ describe("emitGeneration", () => {
     expect(ph.capture.mock.calls[0][0].properties.$ai_total_cost_usd).toBeUndefined();
   });
 
-  it("sets $ai_total_cost_usd when cost is positive", () => {
+  it("sets $ai_total_cost_usd when cost is positive (via event.usage path)", () => {
     traceCtx.startTrace("s", "r");
-    emitGeneration(ph, traceCtx, "s", { cost: { totalUsd: 0.05 } }, true);
+    emitGeneration(ph, traceCtx, "s", {
+      usage: { inputTokens: 10, outputTokens: 20 },
+      cost: { totalUsd: 0.05 },
+    }, true);
     expect(ph.capture.mock.calls[0][0].properties.$ai_total_cost_usd).toBe(0.05);
   });
 
@@ -125,6 +212,19 @@ describe("emitGeneration", () => {
     const props = ph.capture.mock.calls[0][0].properties;
     expect(props).not.toHaveProperty("$ai_input_tokens");
     expect(props).not.toHaveProperty("$ai_output_tokens");
+  });
+
+  it("extracts real token counts and cost from message usage metadata (OpenClaw fallback)", () => {
+    traceCtx.startTrace("s", "r");
+    const messages = [
+      { role: "user", content: "What is 2 + 2?" },
+      { role: "assistant", content: "The answer is 4.", usage: { input: 15, output: 8, cost: { total: 0.0005 } } },
+    ];
+    emitGeneration(ph, traceCtx, "s", { messages }, true);
+    const props = ph.capture.mock.calls[0][0].properties;
+    expect(props.$ai_input_tokens).toBe(15);
+    expect(props.$ai_output_tokens).toBe(8);
+    expect(props.$ai_total_cost_usd).toBe(0.0005);
   });
 
   it("captures error details when generation fails", () => {

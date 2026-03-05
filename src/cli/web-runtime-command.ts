@@ -64,6 +64,8 @@ export type UpdateWebRuntimeSummary = {
   skippedForeignPids: number[];
   ready: boolean;
   reason: string;
+  gatewayRestarted: boolean;
+  gatewayError?: string;
 };
 
 export type StopWebRuntimeSummary = {
@@ -80,6 +82,8 @@ export type StartWebRuntimeSummary = {
   skippedForeignPids: number[];
   started: boolean;
   reason: string;
+  gatewayRestarted: boolean;
+  gatewayError?: string;
 };
 
 function parseOptionalPort(value: string | number | undefined): number | undefined {
@@ -254,6 +258,59 @@ function readConfigGatewayPort(configPath: string): number | undefined {
   }
 }
 
+async function restartGatewayDaemon(params: {
+  profile: string;
+  gatewayPort: number;
+  json: boolean;
+}): Promise<{ restarted: boolean; error?: string }> {
+  let openclawCommand: string;
+  try {
+    openclawCommand = resolveOpenClawCommandOrThrow();
+  } catch {
+    return { restarted: false, error: "openclaw CLI not found on PATH" };
+  }
+
+  const s = !params.json ? spinner() : null;
+  s?.start("Stopping gateway daemon…");
+
+  await runOpenClawCommand({
+    openclawCommand,
+    args: ["--profile", params.profile, "gateway", "stop"],
+    timeoutMs: 90_000,
+  }).catch(() => ({ code: 1, stdout: "", stderr: "stop timed out" }));
+
+  s?.message("Installing gateway daemon…");
+  await runOpenClawCommand({
+    openclawCommand,
+    args: [
+      "--profile", params.profile,
+      "gateway", "install", "--force",
+      "--port", String(params.gatewayPort),
+    ],
+    timeoutMs: 2 * 60_000,
+  }).catch(() => ({ code: 1, stdout: "", stderr: "install failed" }));
+
+  s?.message("Starting gateway daemon…");
+  const startResult = await runOpenClawCommand({
+    openclawCommand,
+    args: [
+      "--profile", params.profile,
+      "gateway", "start",
+      "--port", String(params.gatewayPort),
+    ],
+    timeoutMs: 2 * 60_000,
+  }).catch(() => ({ code: 1, stdout: "", stderr: "start failed" }));
+
+  if (startResult.code !== 0) {
+    const detail = firstNonEmptyLine(startResult.stderr, startResult.stdout);
+    s?.stop(detail ? `Gateway restart failed: ${detail}` : "Gateway restart failed.");
+    return { restarted: false, error: detail ?? "gateway start failed" };
+  }
+
+  s?.stop("Gateway daemon restarted.");
+  return { restarted: true };
+}
+
 export async function updateWebRuntimeCommand(
   opts: UpdateWebRuntimeOptions,
   runtime: RuntimeEnv = defaultRuntime,
@@ -298,6 +355,13 @@ export async function updateWebRuntimeCommand(
     port: selectedPort,
     includeLegacyStandalone: true,
   });
+
+  const gatewayResult = await restartGatewayDaemon({
+    profile,
+    gatewayPort,
+    json: Boolean(opts.json),
+  });
+
   const ensureResult = await ensureManagedWebRuntime({
     stateDir,
     packageRoot,
@@ -319,6 +383,8 @@ export async function updateWebRuntimeCommand(
     skippedForeignPids: stopResult.skippedForeignPids,
     ready: ensureResult.ready,
     reason: ensureResult.reason,
+    gatewayRestarted: gatewayResult.restarted,
+    gatewayError: gatewayResult.error,
   };
 
   if (!opts.json) {
@@ -327,6 +393,10 @@ export async function updateWebRuntimeCommand(
     runtime.log(`Profile: ${profile}`);
     runtime.log(`Version: ${VERSION}`);
     runtime.log(`Web port: ${selectedPort}`);
+    runtime.log(`Gateway: ${summary.gatewayRestarted ? "restarted" : "restart failed"}`);
+    if (summary.gatewayError) {
+      runtime.log(theme.warn(`Gateway error: ${summary.gatewayError}`));
+    }
     runtime.log(`Stopped web processes: ${summary.stoppedPids.length}`);
     if (summary.skippedForeignPids.length > 0) {
       runtime.log(
@@ -437,6 +507,12 @@ export async function startWebRuntimeCommand(
     );
   }
 
+  const gatewayResult = await restartGatewayDaemon({
+    profile,
+    gatewayPort,
+    json: Boolean(opts.json),
+  });
+
   const startResult = startManagedWebRuntime({
     stateDir,
     port: selectedPort,
@@ -461,6 +537,8 @@ export async function startWebRuntimeCommand(
     skippedForeignPids: stopResult.skippedForeignPids,
     started: probe.ok,
     reason: probe.reason,
+    gatewayRestarted: gatewayResult.restarted,
+    gatewayError: gatewayResult.error,
   };
 
   if (opts.json) {
@@ -472,6 +550,10 @@ export async function startWebRuntimeCommand(
   runtime.log(theme.heading(`Dench web ${label}`));
   runtime.log(`Profile: ${profile}`);
   runtime.log(`Web port: ${selectedPort}`);
+  runtime.log(`Gateway: ${summary.gatewayRestarted ? "restarted" : "restart failed"}`);
+  if (summary.gatewayError) {
+    runtime.log(theme.warn(`Gateway error: ${summary.gatewayError}`));
+  }
   runtime.log(`Restarted managed web runtime: ${summary.started ? "yes" : "no"}`);
   if (!summary.started) {
     runtime.log(theme.warn(summary.reason));

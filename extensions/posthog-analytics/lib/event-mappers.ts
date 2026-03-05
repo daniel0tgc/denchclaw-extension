@@ -14,6 +14,34 @@ function getAnonymousId(): string {
 }
 
 /**
+ * Extract actual token counts and cost from OpenClaw's per-message usage metadata.
+ * Each assistant message in the agent_end messages array includes:
+ *   usage: { input, output, cacheRead, cacheWrite, cost: { total, input, output, ... } }
+ */
+export function extractUsageFromMessages(messages: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  totalCostUsd: number;
+} {
+  if (!Array.isArray(messages)) return { inputTokens: 0, outputTokens: 0, totalCostUsd: 0 };
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalCostUsd = 0;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+    const usage = m.usage as Record<string, unknown> | undefined;
+    if (!usage) continue;
+    if (typeof usage.input === "number") inputTokens += usage.input;
+    if (typeof usage.output === "number") outputTokens += usage.output;
+    const cost = usage.cost as Record<string, unknown> | undefined;
+    if (cost && typeof cost.total === "number") totalCostUsd += cost.total;
+  }
+  return { inputTokens, outputTokens, totalCostUsd };
+}
+
+/**
  * Extract tool call names from the messages array provided by agent_end.
  * Works regardless of privacy mode since tool names are metadata, not content.
  */
@@ -48,6 +76,63 @@ export function extractToolNamesFromMessages(messages: unknown): string[] {
     }
   }
   return [...new Set(names)];
+}
+
+/**
+ * Normalize OpenClaw's message format into OpenAI-compatible output choices
+ * so PostHog can extract tool calls for the Tools tab.
+ * Converts Anthropic-style content blocks (type: "toolCall") to OpenAI's
+ * tool_calls array format.
+ */
+export function normalizeOutputForPostHog(messages: unknown): unknown[] | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  const choices: unknown[] = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+
+    const toolCalls: unknown[] = [];
+    let textContent = "";
+
+    if (Array.isArray(m.content)) {
+      for (const block of m.content as Array<Record<string, unknown>>) {
+        if (block.type === "text" && typeof block.text === "string") {
+          textContent += block.text;
+        }
+        if (block.type === "toolCall" && typeof block.name === "string") {
+          toolCalls.push({
+            id: block.id ?? block.toolCallId,
+            type: "function",
+            function: {
+              name: block.name,
+              arguments: typeof block.arguments === "string"
+                ? block.arguments
+                : JSON.stringify(block.arguments ?? {}),
+            },
+          });
+        }
+      }
+    } else if (typeof m.content === "string") {
+      textContent = m.content;
+    }
+
+    if (Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls as Array<Record<string, unknown>>) {
+        toolCalls.push(tc);
+      }
+    }
+
+    const choice: Record<string, unknown> = {
+      role: "assistant",
+      content: textContent || null,
+    };
+    if (toolCalls.length > 0) {
+      choice.tool_calls = toolCalls;
+    }
+    choices.push(choice);
+  }
+  return choices.length > 0 ? choices : undefined;
 }
 
 /**
@@ -93,18 +178,20 @@ export function emitGeneration(
       const outputTokens = event.usage.outputTokens ?? event.usage.output_tokens;
       if (inputTokens != null && inputTokens > 0) properties.$ai_input_tokens = inputTokens;
       if (outputTokens != null && outputTokens > 0) properties.$ai_output_tokens = outputTokens;
-    }
-
-    if (event.cost) {
-      const cost = event.cost.totalUsd ?? event.cost.total_usd;
-      if (cost != null && cost > 0) {
-        properties.$ai_total_cost_usd = cost;
-      }
+      const cost = event.cost?.totalUsd ?? event.cost?.total_usd;
+      if (cost != null && cost > 0) properties.$ai_total_cost_usd = cost;
+    } else if (event.messages) {
+      const extracted = extractUsageFromMessages(event.messages);
+      if (extracted.inputTokens > 0) properties.$ai_input_tokens = extracted.inputTokens;
+      if (extracted.outputTokens > 0) properties.$ai_output_tokens = extracted.outputTokens;
+      if (extracted.totalCostUsd > 0) properties.$ai_total_cost_usd = extracted.totalCostUsd;
     }
 
     properties.$ai_input = sanitizeForCapture(trace.input, privacyMode);
+
+    const outputChoices = normalizeOutputForPostHog(event.messages);
     properties.$ai_output_choices = sanitizeForCapture(
-      event.output ?? event.messages,
+      outputChoices ?? event.output ?? event.messages,
       privacyMode,
     );
 

@@ -9,6 +9,7 @@
  *   Subagent:    /?chat=parent-id&subagent=child-key
  *   Browse:      /?browse=/abs/path&hidden=1
  *   Cron:        /?path=~cron  or  /?path=~cron/job-id
+ *   Cron views:  /?path=~cron&cronView=calendar&cronCalMode=week&cronDate=2026-03-05
  *   Object view: /?path=leads&viewType=kanban&filters=...&sort=...&search=...&page=1&pageSize=50&cols=a,b,c&view=MyView
  *   Preview:     /?path=file.md&preview=other.md
  *   Send:        /?send=install+duckdb  (consumed immediately)
@@ -17,7 +18,7 @@
  * migrateWorkspaceUrl for backward compat.
  */
 
-import type { FilterGroup, SortRule, ViewType } from "./object-filters";
+import type { CalendarMode, FilterGroup, SortRule, ViewType } from "./object-filters";
 
 // ---------------------------------------------------------------------------
 // Parsed link (simple)
@@ -30,6 +31,9 @@ export type WorkspaceLink =
 // ---------------------------------------------------------------------------
 // Full URL state
 // ---------------------------------------------------------------------------
+
+export type CronDashboardView = "overview" | "calendar" | "timeline" | "insights";
+export type CronRunStatusFilter = "all" | "ok" | "error" | "running";
 
 export type WorkspaceUrlState = {
   path: string | null;
@@ -50,11 +54,25 @@ export type WorkspaceUrlState = {
   page: number | null;
   pageSize: number | null;
   cols: string[] | null;
+  /** Cron dashboard active tab (only relevant when path is ~cron). */
+  cronView: CronDashboardView | null;
+  /** Calendar mode when cronView=calendar. */
+  cronCalMode: CalendarMode | null;
+  /** Date anchor for cron calendar/timeline view (ISO date string). */
+  cronDate: string | null;
+  /** Run status filter for cron job detail history. */
+  cronRunFilter: CronRunStatusFilter | null;
+  /** Selected run timestamp in cron job detail. */
+  cronRun: number | null;
 };
 
 const VALID_VIEW_TYPES: ViewType[] = [
   "table", "kanban", "calendar", "timeline", "gallery", "list",
 ];
+
+const VALID_CRON_VIEWS: CronDashboardView[] = ["overview", "calendar", "timeline", "insights"];
+const VALID_CRON_CAL_MODES: CalendarMode[] = ["day", "week", "month", "year"];
+const VALID_CRON_RUN_FILTERS: CronRunStatusFilter[] = ["all", "ok", "error", "running"];
 
 // ---------------------------------------------------------------------------
 // URL state codec
@@ -98,6 +116,11 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
   const colsRaw = params.get("cols");
   const viewTypeRaw = params.get("viewType") as ViewType | null;
 
+  const cronViewRaw = params.get("cronView") as CronDashboardView | null;
+  const cronCalModeRaw = params.get("cronCalMode") as CalendarMode | null;
+  const cronRunFilterRaw = params.get("cronRunFilter") as CronRunStatusFilter | null;
+  const cronRunRaw = params.get("cronRun");
+
   return {
     path: params.get("path"),
     chat: params.get("chat"),
@@ -119,6 +142,11 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
     page: pageRaw ? parseInt(pageRaw, 10) || null : null,
     pageSize: pageSizeRaw ? parseInt(pageSizeRaw, 10) || null : null,
     cols: colsRaw ? colsRaw.split(",").filter(Boolean) : null,
+    cronView: cronViewRaw && VALID_CRON_VIEWS.includes(cronViewRaw) ? cronViewRaw : null,
+    cronCalMode: cronCalModeRaw && VALID_CRON_CAL_MODES.includes(cronCalModeRaw) ? cronCalModeRaw : null,
+    cronDate: params.get("cronDate"),
+    cronRunFilter: cronRunFilterRaw && VALID_CRON_RUN_FILTERS.includes(cronRunFilterRaw) ? cronRunFilterRaw : null,
+    cronRun: cronRunRaw ? parseInt(cronRunRaw, 10) || null : null,
   };
 }
 
@@ -149,6 +177,11 @@ export function serializeUrlState(state: Partial<WorkspaceUrlState>): string {
   if (state.page != null && state.page > 1) params.set("page", String(state.page));
   if (state.pageSize != null) params.set("pageSize", String(state.pageSize));
   if (state.cols && state.cols.length > 0) params.set("cols", state.cols.join(","));
+  if (state.cronView && state.cronView !== "overview") params.set("cronView", state.cronView);
+  if (state.cronCalMode) params.set("cronCalMode", state.cronCalMode);
+  if (state.cronDate) params.set("cronDate", state.cronDate);
+  if (state.cronRunFilter && state.cronRunFilter !== "all") params.set("cronRunFilter", state.cronRunFilter);
+  if (state.cronRun != null) params.set("cronRun", String(state.cronRun));
 
   return params.toString();
 }

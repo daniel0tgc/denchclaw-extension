@@ -540,3 +540,87 @@ describe("buildUrl", () => {
     expect(url).toContain("subagent=sa1");
   });
 });
+
+// ─── Cron URL state ──────────────────────────────────────────────
+
+describe("cron URL state round-trips", () => {
+  it("parses cron dashboard view from URL", () => {
+    const state = parseUrlState("path=~cron&cronView=calendar&cronCalMode=week");
+    expect(state.path).toBe("~cron");
+    expect(state.cronView).toBe("calendar");
+    expect(state.cronCalMode).toBe("week");
+  });
+
+  it("round-trips cronView through serialize/parse", () => {
+    const qs = serializeUrlState({ path: "~cron", cronView: "insights" });
+    const parsed = parseUrlState(qs);
+    expect(parsed.cronView).toBe("insights");
+  });
+
+  it("omits cronView=overview from URL (default)", () => {
+    const qs = serializeUrlState({ path: "~cron", cronView: "overview" });
+    expect(qs).not.toContain("cronView");
+  });
+
+  it("round-trips cronCalMode through serialize/parse", () => {
+    const qs = serializeUrlState({ path: "~cron", cronView: "calendar", cronCalMode: "week" });
+    const parsed = parseUrlState(qs);
+    expect(parsed.cronCalMode).toBe("week");
+  });
+
+  it("round-trips cronDate through serialize/parse", () => {
+    const qs = serializeUrlState({ path: "~cron", cronView: "calendar", cronDate: "2026-03-05" });
+    const parsed = parseUrlState(qs);
+    expect(parsed.cronDate).toBe("2026-03-05");
+  });
+
+  it("round-trips cronRunFilter through serialize/parse", () => {
+    const qs = serializeUrlState({ path: "~cron/job-1", cronRunFilter: "error" });
+    const parsed = parseUrlState(qs);
+    expect(parsed.cronRunFilter).toBe("error");
+  });
+
+  it("omits cronRunFilter=all from URL (default)", () => {
+    const qs = serializeUrlState({ path: "~cron/job-1", cronRunFilter: "all" });
+    expect(qs).not.toContain("cronRunFilter");
+  });
+
+  it("round-trips cronRun timestamp through serialize/parse", () => {
+    const ts = 1772749020657;
+    const qs = serializeUrlState({ path: "~cron/job-1", cronRun: ts });
+    const parsed = parseUrlState(qs);
+    expect(parsed.cronRun).toBe(ts);
+  });
+
+  it("rejects invalid cronView values", () => {
+    const state = parseUrlState("cronView=bogus");
+    expect(state.cronView).toBeNull();
+  });
+
+  it("rejects invalid cronCalMode values", () => {
+    const state = parseUrlState("cronCalMode=bogus");
+    expect(state.cronCalMode).toBeNull();
+  });
+
+  it("rejects invalid cronRunFilter values", () => {
+    const state = parseUrlState("cronRunFilter=bogus");
+    expect(state.cronRunFilter).toBeNull();
+  });
+
+  it("builds full cron calendar URL", () => {
+    const url = buildUrl({ path: "~cron", cronView: "calendar", cronCalMode: "week", cronDate: "2026-03-05" });
+    const parsed = parseUrlState(url.replace("/?", ""));
+    expect(parsed.path).toBe("~cron");
+    expect(parsed.cronView).toBe("calendar");
+    expect(parsed.cronCalMode).toBe("week");
+    expect(parsed.cronDate).toBe("2026-03-05");
+  });
+
+  it("builds full cron job detail URL with run filter", () => {
+    const url = buildUrl({ path: "~cron/abc123", cronRunFilter: "error", cronRun: 12345 });
+    const parsed = parseUrlState(url.replace("/?", ""));
+    expect(parsed.path).toBe("~cron/abc123");
+    expect(parsed.cronRunFilter).toBe("error");
+    expect(parsed.cronRun).toBe(12345);
+  });
+});

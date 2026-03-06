@@ -296,38 +296,156 @@ function OverviewTab({
 
 /* ─── Calendar tab ─── */
 
-type DayEvent = { kind: "run"; run: CronRunLogEntry; job?: CronJob } | { kind: "scheduled"; job: CronJob };
+type DayEvent =
+  | { kind: "run"; run: CronRunLogEntry; job?: CronJob }
+  | { kind: "scheduled"; job: CronJob; at: number };
 
 function dayKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function buildEventsByDay(allRuns: CronRunLogEntry[], jobs: CronJob[], jobMap: Map<string, CronJob>) {
+/* ─── Schedule occurrence projection ─── */
+
+function parseCronField(field: string, min: number, max: number): number[] {
+  const values: Set<number> = new Set();
+  for (const part of field.split(",")) {
+    const stepMatch = part.match(/^(.+)\/(\d+)$/);
+    const step = stepMatch ? parseInt(stepMatch[2], 10) : 1;
+    const range = stepMatch ? stepMatch[1] : part;
+
+    if (range === "*") {
+      for (let i = min; i <= max; i += step) values.add(i);
+    } else if (range.includes("-")) {
+      const [a, b] = range.split("-").map(Number);
+      for (let i = a; i <= b; i += step) values.add(i);
+    } else {
+      values.add(parseInt(range, 10));
+    }
+  }
+  return [...values].filter((v) => v >= min && v <= max).sort((a, b) => a - b);
+}
+
+function projectCronExpr(expr: string, from: number, to: number, _tz?: string): number[] {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length < 5) return [];
+
+  const minutes = parseCronField(parts[0], 0, 59);
+  const hours = parseCronField(parts[1], 0, 23);
+  const daysOfMonth = parseCronField(parts[2], 1, 31);
+  const months = parseCronField(parts[3], 1, 12);
+  const daysOfWeek = parseCronField(parts[4], 0, 6);
+  const domWildcard = parts[2] === "*";
+  const dowWildcard = parts[4] === "*";
+
+  const results: number[] = [];
+  const cursor = new Date(from);
+  cursor.setSeconds(0, 0);
+
+  const MAX_ITERATIONS = 50_000;
+  let iter = 0;
+
+  while (cursor.getTime() <= to && iter++ < MAX_ITERATIONS) {
+    if (!months.includes(cursor.getMonth() + 1)) {
+      cursor.setMonth(cursor.getMonth() + 1, 1);
+      cursor.setHours(0, 0, 0, 0);
+      continue;
+    }
+
+    const domMatch = domWildcard || daysOfMonth.includes(cursor.getDate());
+    const dowMatch = dowWildcard || daysOfWeek.includes(cursor.getDay());
+    const dayMatch = (domWildcard && dowWildcard) || (!domWildcard && !dowWildcard ? domMatch || dowMatch : domMatch && dowMatch);
+
+    if (!dayMatch) {
+      cursor.setDate(cursor.getDate() + 1);
+      cursor.setHours(0, 0, 0, 0);
+      continue;
+    }
+
+    for (const h of hours) {
+      for (const m of minutes) {
+        const ts = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), h, m, 0, 0).getTime();
+        if (ts >= from && ts <= to) results.push(ts);
+      }
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
+    cursor.setHours(0, 0, 0, 0);
+  }
+
+  return results;
+}
+
+function projectSchedule(job: CronJob, from: number, to: number): number[] {
+  if (!job.enabled) return [];
+  const schedule = job.schedule;
+
+  switch (schedule.kind) {
+    case "at": {
+      const ts = new Date(schedule.at).getTime();
+      return (ts >= from && ts <= to) ? [ts] : [];
+    }
+    case "every": {
+      const interval = schedule.everyMs;
+      if (interval <= 0) return [];
+      const anchor = schedule.anchorMs ?? job.createdAtMs ?? from;
+      const results: number[] = [];
+      let t = anchor;
+      if (t < from) {
+        const skip = Math.floor((from - t) / interval);
+        t += skip * interval;
+      }
+      while (t <= to && results.length < 5000) {
+        if (t >= from) results.push(t);
+        t += interval;
+      }
+      return results;
+    }
+    case "cron":
+      return projectCronExpr(schedule.expr, from, to, schedule.tz);
+    default:
+      return [];
+  }
+}
+
+function buildEventsByDay(
+  allRuns: CronRunLogEntry[],
+  jobs: CronJob[],
+  jobMap: Map<string, CronJob>,
+  rangeFrom: number,
+  rangeTo: number,
+) {
   const map = new Map<string, DayEvent[]>();
+
   for (const run of allRuns) {
     const k = dayKey(new Date(run.ts));
     const arr = map.get(k) ?? [];
     arr.push({ kind: "run", run, job: jobMap.get(run.jobId) });
     map.set(k, arr);
   }
+
   for (const job of jobs) {
-    if (!job.state.nextRunAtMs) continue;
-    const k = dayKey(new Date(job.state.nextRunAtMs));
-    const arr = map.get(k) ?? [];
-    arr.push({ kind: "scheduled", job });
-    map.set(k, arr);
+    if (!job.enabled) continue;
+    const occurrences = projectSchedule(job, rangeFrom, rangeTo);
+    for (const ts of occurrences) {
+      const k = dayKey(new Date(ts));
+      const arr = map.get(k) ?? [];
+      arr.push({ kind: "scheduled", job, at: ts });
+      map.set(k, arr);
+    }
   }
+
   return map;
 }
 
 function EventChip({ ev, onSelectJob }: { ev: DayEvent; onSelectJob: (id: string) => void }) {
   if (ev.kind === "scheduled") {
+    const time = new Date(ev.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     return (
       <button type="button" onClick={() => onSelectJob(ev.job.id)}
         className="w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer"
         style={{ background: "color-mix(in srgb, var(--color-accent) 15%, transparent)", color: "var(--color-accent)" }}
-        title={`Scheduled: ${ev.job.name}`}
-      >{ev.job.name}</button>
+        title={`Scheduled: ${ev.job.name} at ${time}`}
+      >{time} {ev.job.name}</button>
     );
   }
   const c = ev.run.status === "ok" ? "var(--color-success, #22c55e)" : ev.run.status === "error" ? "var(--color-error, #ef4444)" : "var(--color-text-muted)";
@@ -377,7 +495,30 @@ function CalendarTab({
     return m;
   }, [jobs]);
 
-  const eventsByDay = useMemo(() => buildEventsByDay(allRuns, jobs, jobMap), [allRuns, jobs, jobMap]);
+  const { rangeFrom, rangeTo } = useMemo(() => {
+    const y = anchor.getFullYear();
+    const m = anchor.getMonth();
+    if (mode === "day") {
+      return { rangeFrom: new Date(y, m, anchor.getDate()).getTime(), rangeTo: new Date(y, m, anchor.getDate() + 1).getTime() };
+    }
+    if (mode === "week") {
+      const start = new Date(anchor);
+      start.setDate(start.getDate() - start.getDay());
+      return { rangeFrom: start.getTime(), rangeTo: start.getTime() + 7 * 86_400_000 };
+    }
+    if (mode === "year") {
+      return { rangeFrom: new Date(y, 0, 1).getTime(), rangeTo: new Date(y + 1, 0, 1).getTime() };
+    }
+    // month: include overflow days (6 weeks)
+    const first = new Date(y, m, 1);
+    const start = new Date(y, m, 1 - first.getDay());
+    return { rangeFrom: start.getTime(), rangeTo: start.getTime() + 42 * 86_400_000 };
+  }, [anchor, mode]);
+
+  const eventsByDay = useMemo(
+    () => buildEventsByDay(allRuns, jobs, jobMap, rangeFrom, rangeTo),
+    [allRuns, jobs, jobMap, rangeFrom, rangeTo],
+  );
 
   const headerTitle = useMemo(() => {
     if (mode === "day") return anchor.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });

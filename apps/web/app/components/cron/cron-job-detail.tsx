@@ -14,9 +14,9 @@ function formatSchedule(schedule: CronJob["schedule"]): string {
       return schedule.expr + (schedule.tz ? ` (${schedule.tz})` : "");
     case "every": {
       const ms = schedule.everyMs;
-      if (ms >= 86_400_000) {return `every ${Math.round(ms / 86_400_000)} day(s)`;}
-      if (ms >= 3_600_000) {return `every ${Math.round(ms / 3_600_000)} hour(s)`;}
-      if (ms >= 60_000) {return `every ${Math.round(ms / 60_000)} minute(s)`;}
+      if (ms >= 86_400_000) return `every ${Math.round(ms / 86_400_000)} day(s)`;
+      if (ms >= 3_600_000) return `every ${Math.round(ms / 3_600_000)} hour(s)`;
+      if (ms >= 60_000) return `every ${Math.round(ms / 60_000)} minute(s)`;
       return `every ${Math.round(ms / 1000)} second(s)`;
     }
     case "at":
@@ -27,25 +27,35 @@ function formatSchedule(schedule: CronJob["schedule"]): string {
 }
 
 function formatCountdown(ms: number): string {
-  if (ms <= 0) {return "now";}
+  if (ms <= 0) return "now";
   const totalSec = Math.ceil(ms / 1000);
-  if (totalSec < 60) {return `${totalSec}s`;}
+  if (totalSec < 60) return `${totalSec}s`;
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
-  if (min < 60) {return sec > 0 ? `${min}m ${sec}s` : `${min}m`;}
+  if (min < 60) return sec > 0 ? `${min}m ${sec}s` : `${min}m`;
   const hr = Math.floor(min / 60);
   const remMin = min % 60;
   return remMin > 0 ? `${hr}h ${remMin}m` : `${hr}h`;
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) {return `${ms}ms`;}
-  if (ms < 60_000) {return `${(ms / 1000).toFixed(1)}s`;}
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
 }
 
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 0) return "just now";
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 function payloadSummary(payload: CronJob["payload"]): string {
-  if (payload.kind === "systemEvent") {return payload.text.slice(0, 120);}
+  if (payload.kind === "systemEvent") return payload.text.slice(0, 120);
   return payload.message.slice(0, 120);
 }
 
@@ -54,13 +64,24 @@ function payloadSummary(payload: CronJob["payload"]): string {
 export function CronJobDetail({
   job,
   onBack,
+  onSendCommand,
+  runFilter = "all",
+  onRunFilterChange,
+  expandedRunTs: expandedRunTsProp,
+  onExpandedRunChange,
 }: {
   job: CronJob;
   onBack: () => void;
+  onSendCommand?: (message: string) => void;
+  runFilter?: import("@/lib/workspace-links").CronRunStatusFilter;
+  onRunFilterChange?: (filter: import("@/lib/workspace-links").CronRunStatusFilter) => void;
+  expandedRunTs?: number | null;
+  onExpandedRunChange?: (ts: number | null) => void;
 }) {
   const [runs, setRuns] = useState<CronRunLogEntry[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(true);
-  const [expandedRunTs, setExpandedRunTs] = useState<number | null>(null);
+  const expandedRunTs = expandedRunTsProp ?? null;
+  const setExpandedRunTs = onExpandedRunChange ?? (() => {});
 
   const fetchRuns = useCallback(async () => {
     try {
@@ -101,7 +122,7 @@ export function CronJobDetail({
         Back to Cron
       </button>
 
-      {/* Job header */}
+      {/* Job header + action bar */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
           <h1
@@ -113,18 +134,17 @@ export function CronJobDetail({
           <StatusBadge status={status} />
         </div>
         {job.description && (
-          <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+          <p className="text-sm mb-3" style={{ color: "var(--color-text-muted)" }}>
             {job.description}
           </p>
         )}
+        <JobActionBar job={job} onSendCommand={onSendCommand} />
       </div>
 
       {/* Config + countdown grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        {/* Next run countdown */}
         <NextRunCard job={job} />
 
-        {/* Job config */}
         <div
           className="rounded-2xl p-4"
           style={{
@@ -148,7 +168,7 @@ export function CronJobDetail({
       </div>
 
       {/* Error streak */}
-      {job.state.consecutiveErrors && job.state.consecutiveErrors > 0 && (
+      {job.state.consecutiveErrors != null && job.state.consecutiveErrors > 0 && (
         <div
           className="rounded-2xl p-4 mb-6"
           style={{
@@ -174,12 +194,31 @@ export function CronJobDetail({
 
       {/* Run history */}
       <div>
-        <h2
-          className="text-sm font-medium uppercase tracking-wider mb-3"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Run History
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2
+            className="text-sm font-medium uppercase tracking-wider"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Run History
+          </h2>
+          <div className="flex items-center gap-1 rounded-lg p-0.5" style={{ background: "var(--color-surface-hover)" }}>
+            {(["all", "ok", "error", "running"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => onRunFilterChange?.(f)}
+                className="px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer"
+                style={{
+                  background: runFilter === f ? "var(--color-surface)" : "transparent",
+                  color: runFilter === f ? "var(--color-text)" : "var(--color-text-muted)",
+                  boxShadow: runFilter === f ? "var(--shadow-sm)" : "none",
+                }}
+              >
+                {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {loadingRuns ? (
           <div className="flex items-center justify-center p-8">
@@ -202,7 +241,9 @@ export function CronJobDetail({
           </div>
         ) : (
           <div className="space-y-2">
-            {runs.toReversed().map((run) => (
+            {runs.toReversed()
+              .filter((run) => runFilter === "all" || run.status === runFilter)
+              .map((run) => (
               <RunCard
                 key={`${run.ts}-${run.jobId}`}
                 run={run}
@@ -285,6 +326,8 @@ function RunCard({
       ? "var(--color-error, #ef4444)"
       : "var(--color-warning, #f59e0b)";
 
+  const hasSession = !!run.sessionId;
+
   return (
     <div
       className="rounded-xl overflow-hidden"
@@ -307,14 +350,18 @@ function RunCard({
           style={{ background: statusColor }}
         />
 
-        {/* Timestamp */}
-        <span className="text-sm" style={{ color: "var(--color-text)" }}>
-          {new Date(run.ts).toLocaleString()}
+        {/* Relative time + absolute on hover */}
+        <span
+          className="text-sm flex-shrink-0"
+          style={{ color: "var(--color-text)" }}
+          title={new Date(run.ts).toLocaleString()}
+        >
+          {formatRelativeTime(run.ts)}
         </span>
 
         {/* Status badge */}
         <span
-          className="text-xs px-2 py-0.5 rounded-full"
+          className="text-xs px-2 py-0.5 rounded-full flex-shrink-0"
           style={{
             background: `color-mix(in srgb, ${statusColor} 12%, transparent)`,
             color: statusColor,
@@ -325,7 +372,7 @@ function RunCard({
 
         {/* Duration */}
         {run.durationMs != null && (
-          <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+          <span className="text-xs flex-shrink-0" style={{ color: "var(--color-text-muted)" }}>
             {formatDuration(run.durationMs)}
           </span>
         )}
@@ -337,10 +384,16 @@ function RunCard({
           </span>
         )}
 
-        {/* Has session indicator */}
-        {run.sessionId && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
-            chat
+        {/* Session badge */}
+        {hasSession && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1"
+            style={{ background: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            session
           </span>
         )}
 
@@ -366,10 +419,22 @@ function RunCard({
           className="px-4 pb-4"
           style={{ borderTop: "1px solid var(--color-border)" }}
         >
+          {/* Meta row */}
+          <div className="flex items-center gap-4 mt-3 mb-3 flex-wrap">
+            <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+              {new Date(run.ts).toLocaleString()}
+            </span>
+            {run.durationMs != null && (
+              <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                Duration: {formatDuration(run.durationMs)}
+              </span>
+            )}
+          </div>
+
           {/* Error message */}
           {run.error && (
             <div
-              className="mt-3 text-xs font-mono rounded-lg px-3 py-2"
+              className="text-xs font-mono rounded-lg px-3 py-2 mb-3"
               style={{
                 color: "var(--color-error, #ef4444)",
                 background: "color-mix(in srgb, var(--color-error, #ef4444) 6%, var(--color-surface))",
@@ -379,15 +444,11 @@ function RunCard({
             </div>
           )}
 
-          {/* Session transcript */}
+          {/* Session transcript preview */}
           {run.sessionId ? (
-            <div className="mt-4">
-              <CronRunChat sessionId={run.sessionId} />
-            </div>
+            <CronRunChat sessionId={run.sessionId} />
           ) : (
-            <div className="mt-4">
-              <RunTranscriptOrSummary run={run} />
-            </div>
+            <RunTranscriptOrSummary run={run} />
           )}
         </div>
       )}
@@ -425,6 +486,66 @@ function RunTranscriptOrSummary({ run }: { run: CronRunLogEntry }) {
       summary={run.summary}
       fallback={summaryFallback}
     />
+  );
+}
+
+/* ─── Action bar ─── */
+
+function JobActionBar({ job, onSendCommand }: { job: CronJob; onSendCommand?: (msg: string) => void }) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {!job.state.runningAtMs && job.enabled && (
+        <ActionButton onClick={() => onSendCommand?.(`Run cron job "${job.name}" (${job.id}) now with --force`)} accent>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="6 3 20 12 6 21 6 3" />
+          </svg>
+          Run now
+        </ActionButton>
+      )}
+      {job.state.runningAtMs && (
+        <ActionButton disabled accent>
+          <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "currentColor" }} />
+          Running...
+        </ActionButton>
+      )}
+      <ActionButton onClick={() => onSendCommand?.(`${job.enabled ? "Disable" : "Enable"} cron job "${job.name}" (${job.id})`)}>
+        {job.enabled ? "Disable" : "Enable"}
+      </ActionButton>
+      <ActionButton onClick={() => onSendCommand?.(`Delete cron job "${job.name}" (${job.id})`)} danger>
+        Delete
+      </ActionButton>
+    </div>
+  );
+}
+
+function ActionButton({ children, onClick, disabled, accent, danger }: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  accent?: boolean;
+  danger?: boolean;
+}) {
+  const bg = accent
+    ? "var(--color-accent)"
+    : danger
+      ? "color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent)"
+      : "var(--color-surface-hover)";
+  const fg = accent
+    ? "white"
+    : danger
+      ? "var(--color-error, #ef4444)"
+      : "var(--color-text-muted)";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+      style={{ background: bg, color: fg }}
+    >
+      {children}
+    </button>
   );
 }
 

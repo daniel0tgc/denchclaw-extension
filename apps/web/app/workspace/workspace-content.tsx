@@ -32,6 +32,7 @@ import { parseWorkspaceLink, isWorkspaceLink, parseUrlState, buildUrl, type Work
 import { isCodeFile } from "@/lib/report-utils";
 import { CronDashboard } from "../components/cron/cron-dashboard";
 import { CronJobDetail } from "../components/cron/cron-job-detail";
+import { CronSessionView } from "../components/cron/cron-session-view";
 import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
@@ -120,6 +121,7 @@ type ContentState =
   | { kind: "directory"; node: TreeNode }
   | { kind: "cron-dashboard" }
   | { kind: "cron-job"; jobId: string; job: CronJob }
+  | { kind: "cron-session"; jobId: string; job: CronJob; sessionId: string; run: import("../types/cron").CronRunLogEntry }
   | { kind: "duckdb-missing" }
   | { kind: "richDocument"; html: string; filePath: string; mode: "docx" | "txt" };
 
@@ -446,6 +448,13 @@ function WorkspacePageInner() {
 
   // Cron jobs state
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
+
+  // Cron URL-backed view state
+  const [cronView, setCronView] = useState<import("@/lib/workspace-links").CronDashboardView>("overview");
+  const [cronCalMode, setCronCalMode] = useState<import("@/lib/object-filters").CalendarMode>("month");
+  const [cronDate, setCronDate] = useState<string | null>(null);
+  const [cronRunFilter, setCronRunFilter] = useState<import("@/lib/workspace-links").CronRunStatusFilter>("all");
+  const [cronRun, setCronRun] = useState<number | null>(null);
 
   // Entry detail modal state
   const [entryModal, setEntryModal] = useState<{
@@ -1162,6 +1171,16 @@ function WorkspacePageInner() {
       const entry = current.get("entry");
       if (entry) params.set("entry", entry);
       if (fileChatSessionId) params.set("fileChat", fileChatSessionId);
+
+      // Cron-specific URL params (only when on a cron path)
+      if (activePath === "~cron") {
+        if (cronView !== "overview") params.set("cronView", cronView);
+        if (cronView === "calendar" && cronCalMode !== "month") params.set("cronCalMode", cronCalMode);
+        if ((cronView === "calendar" || cronView === "timeline") && cronDate) params.set("cronDate", cronDate);
+      } else if (activePath.startsWith("~cron/")) {
+        if (cronRunFilter !== "all") params.set("cronRunFilter", cronRunFilter);
+        if (cronRun != null) params.set("cronRun", String(cronRun));
+      }
     } else if (activeSessionId) {
       params.set("chat", activeSessionId);
       if (activeSubagentKey) params.set("subagent", activeSubagentKey);
@@ -1179,7 +1198,7 @@ function WorkspacePageInner() {
       router.push(url, { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop
-  }, [activePath, activeSessionId, activeSubagentKey, fileChatSessionId, browseDir, showHidden, chatSidebarPreview, router]);
+  }, [activePath, activeSessionId, activeSubagentKey, fileChatSessionId, browseDir, showHidden, chatSidebarPreview, router, cronView, cronCalMode, cronDate, cronRunFilter, cronRun]);
 
   // Open entry modal handler
   const handleOpenEntry = useCallback(
@@ -1217,11 +1236,14 @@ function WorkspacePageInner() {
       } else if (urlState.path === "~cron") {
         setActivePath("~cron");
         setContent({ kind: "cron-dashboard" });
+        if (urlState.cronView) setCronView(urlState.cronView);
+        if (urlState.cronCalMode) setCronCalMode(urlState.cronCalMode);
+        if (urlState.cronDate) setCronDate(urlState.cronDate);
       } else if (urlState.path.startsWith("~cron/")) {
-        // Set the path immediately; the job detail will be resolved
-        // by a separate effect once cronJobs have loaded.
         setActivePath(urlState.path);
         setContent({ kind: "cron-dashboard" });
+        if (urlState.cronRunFilter) setCronRunFilter(urlState.cronRunFilter);
+        if (urlState.cronRun != null) setCronRun(urlState.cronRun);
       } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
         const name = urlState.path.split("/").pop() || urlState.path;
         const syntheticNode: TreeNode = { name, path: urlState.path, type: "file" };
@@ -1439,8 +1461,18 @@ function WorkspacePageInner() {
   const handleBackToCronDashboard = useCallback(() => {
     setActivePath("~cron");
     setContent({ kind: "cron-dashboard" });
+    setCronRunFilter("all");
+    setCronRun(null);
     router.replace("/", { scroll: false });
   }, [router]);
+
+  const handleCronSendCommand = useCallback((message: string) => {
+    setActivePath(null);
+    setContent({ kind: "none" });
+    requestAnimationFrame(() => {
+      void chatRef.current?.sendNewMessage(message);
+    });
+  }, []);
 
   // Derive the active session's title for the header / right sidebar
   const activeSessionTitle = useMemo(() => {
@@ -1797,6 +1829,17 @@ function WorkspacePageInner() {
                   searchFn={searchIndex}
                   onSelectCronJob={handleSelectCronJob}
                   onBackToCronDashboard={handleBackToCronDashboard}
+                  cronView={cronView}
+                  onCronViewChange={setCronView}
+                  cronCalMode={cronCalMode}
+                  onCronCalModeChange={setCronCalMode}
+                  cronDate={cronDate}
+                  onCronDateChange={setCronDate}
+                  cronRunFilter={cronRunFilter}
+                  onCronRunFilterChange={setCronRunFilter}
+                  cronRun={cronRun}
+                  onCronRunChange={setCronRun}
+                  onSendCommand={handleCronSendCommand}
                 />
               </div>
 
@@ -2201,15 +2244,24 @@ function ContentRenderer({
   searchFn,
   onSelectCronJob,
   onBackToCronDashboard,
+  cronView,
+  onCronViewChange,
+  cronCalMode,
+  onCronCalModeChange,
+  cronDate,
+  onCronDateChange,
+  cronRunFilter,
+  onCronRunFilterChange,
+  cronRun,
+  onCronRunChange,
+  onSendCommand,
 }: {
   content: ContentState;
   workspaceExists: boolean;
   expectedPath?: string | null;
   tree: TreeNode[];
   activePath: string | null;
-  /** Current browse directory (absolute path), or null in workspace mode. */
   browseDir?: string | null;
-  /** Whether the tree is currently being fetched. */
   treeLoading?: boolean;
   members?: Array<{ id: string; name: string; email: string; role: string }>;
   onNodeSelect: (node: TreeNode) => void;
@@ -2221,6 +2273,17 @@ function ContentRenderer({
   searchFn: (query: string, limit?: number) => import("@/lib/search-index").SearchIndexItem[];
   onSelectCronJob: (jobId: string) => void;
   onBackToCronDashboard: () => void;
+  cronView: import("@/lib/workspace-links").CronDashboardView;
+  onCronViewChange: (view: import("@/lib/workspace-links").CronDashboardView) => void;
+  cronCalMode: import("@/lib/object-filters").CalendarMode;
+  onCronCalModeChange: (mode: import("@/lib/object-filters").CalendarMode) => void;
+  cronDate: string | null;
+  onCronDateChange: (date: string | null) => void;
+  cronRunFilter: import("@/lib/workspace-links").CronRunStatusFilter;
+  onCronRunFilterChange: (filter: import("@/lib/workspace-links").CronRunStatusFilter) => void;
+  cronRun: number | null;
+  onCronRunChange: (run: number | null) => void;
+  onSendCommand: (message: string) => void;
 }) {
   switch (content.kind) {
     case "loading":
@@ -2342,6 +2405,13 @@ function ContentRenderer({
       return (
         <CronDashboard
           onSelectJob={onSelectCronJob}
+          onSendCommand={onSendCommand}
+          activeView={cronView}
+          onViewChange={onCronViewChange}
+          calendarMode={cronCalMode}
+          onCalendarModeChange={onCronCalModeChange}
+          calendarDate={cronDate}
+          onCalendarDateChange={onCronDateChange}
         />
       );
 
@@ -2350,6 +2420,22 @@ function ContentRenderer({
         <CronJobDetail
           job={content.job}
           onBack={onBackToCronDashboard}
+          onSendCommand={onSendCommand}
+          runFilter={cronRunFilter}
+          onRunFilterChange={onCronRunFilterChange}
+          expandedRunTs={cronRun}
+          onExpandedRunChange={onCronRunChange}
+        />
+      );
+
+    case "cron-session":
+      return (
+        <CronSessionView
+          job={content.job}
+          run={content.run}
+          sessionId={content.sessionId}
+          onBack={() => onBackToCronDashboard()}
+          onBackToJob={() => onSelectCronJob(content.jobId)}
         />
       );
 

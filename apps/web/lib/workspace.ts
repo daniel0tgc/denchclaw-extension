@@ -1016,8 +1016,9 @@ export function writeObjectYaml(objectDir: string, config: ObjectYamlConfig): vo
 
 /**
  * Find the filesystem directory for an object by name.
- * Walks the workspace tree looking for a directory containing a .object.yaml
- * or a directory matching the object name inside the workspace.
+ * Recursively walks the workspace tree looking for a directory containing a
+ * .object.yaml matching the given object name. This ensures objects nested
+ * inside category folders (e.g. marketing/influencer) are discovered correctly.
  */
 export function findObjectDir(objectName: string): string | null {
   const root = resolveWorkspaceRoot();
@@ -1029,21 +1030,31 @@ export function findObjectDir(objectName: string): string | null {
     return direct;
   }
 
-  // Search one level deep for a matching .object.yaml
-  try {
-    const entries = readdirSync(root, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {continue;}
-      const subDir = join(root, entry.name);
-      if (entry.name === objectName && existsSync(join(subDir, ".object.yaml"))) {
-        return subDir;
+  // Recursively search for a directory named {objectName} containing .object.yaml.
+  // Depth-limited to avoid traversing heavy subtrees.
+  const MAX_DEPTH = 4;
+  const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "tmp", "exports"]);
+
+  function search(dir: string, depth: number): string | null {
+    if (depth > MAX_DEPTH) {return null;}
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) {continue;}
+        const subDir = join(dir, entry.name);
+        if (entry.name === objectName && existsSync(join(subDir, ".object.yaml"))) {
+          return subDir;
+        }
+        const found = search(subDir, depth + 1);
+        if (found) {return found;}
       }
+    } catch {
+      // ignore read errors (permission denied, etc.)
     }
-  } catch {
-    // ignore read errors
+    return null;
   }
 
-  return null;
+  return search(root, 1);
 }
 
 /**

@@ -1,21 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("node:child_process", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:child_process")>();
-	return {
-		...actual,
-		spawn: vi.fn(),
-	};
-});
 vi.mock("./workspace", () => ({
 	resolveActiveAgentId: () => "main",
-	getEffectiveProfile: () => undefined,
-	resolveWorkspaceRoot: () => undefined,
 	resolveOpenClawStateDir: () => "/tmp/__agent_runner_test_state",
 }));
-const spawnMock = vi.mocked(spawn);
 
 // Valid client IDs the Gateway accepts (from ui/src/ui/contracts/gateway-client-info.ts).
 // Hardcoded here so the test breaks if our code drifts from the Gateway's enum.
@@ -145,39 +134,6 @@ async function waitFor(
 	throw new Error("Condition not met in waitFor");
 }
 
-/** Minimal mock ChildProcess for legacy CLI tests. */
-function mockChildProcess() {
-	const events: Record<string, ((...args: unknown[]) => void)[]> = {};
-	const child = {
-		exitCode: null as number | null,
-		killed: false,
-		pid: 12345,
-		stdout: {
-			on: vi.fn(),
-			[Symbol.asyncIterator]: vi.fn(),
-		},
-		stderr: { on: vi.fn() },
-		on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-			events[event] = events[event] || [];
-			events[event].push(cb);
-			return child;
-		}),
-		once: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
-			events[event] = events[event] || [];
-			events[event].push(cb);
-			return child;
-		}),
-		kill: vi.fn(),
-		_emit(event: string, ...args: unknown[]) {
-			for (const cb of events[event] || []) {
-				cb(...args);
-			}
-		},
-	};
-	spawnMock.mockReturnValue(child as unknown as ChildProcess);
-	return child;
-}
-
 describe("agent-runner", () => {
 	const originalEnv = { ...process.env };
 
@@ -185,13 +141,6 @@ describe("agent-runner", () => {
 		vi.resetModules();
 		vi.restoreAllMocks();
 		process.env = { ...originalEnv };
-		vi.mock("node:child_process", async (importOriginal) => {
-			const actual = await importOriginal<typeof import("node:child_process")>();
-			return {
-				...actual,
-				spawn: vi.fn(),
-			};
-		});
 	});
 
 	afterEach(() => {
@@ -278,7 +227,6 @@ describe("agent-runner", () => {
 	describe("spawnAgentProcess", () => {
 		it("connects via ws module with Origin header matching the gateway URL (prevents origin rejection)", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentProcess("hello", "sess-1");
@@ -304,7 +252,6 @@ describe("agent-runner", () => {
 
 		it("sets wss: origin to https: (prevents origin mismatch on TLS gateways)", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			process.env.OPENCLAW_GATEWAY_URL = "wss://gateway.example.com:443";
 			const { spawnAgentProcess } = await import("./agent-runner.js");
 
@@ -319,7 +266,6 @@ describe("agent-runner", () => {
 
 		it("falls back to config gateway port when env port is stale", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			process.env.OPENCLAW_HOME = "/tmp/__ironclaw_agent_runner_test_no_config";
 			process.env.OPENCLAW_GATEWAY_PORT = "19001";
 			MockWs.failOpenForUrls.add("ws://127.0.0.1:19001/");
@@ -347,66 +293,11 @@ describe("agent-runner", () => {
 			proc.kill("SIGTERM");
 		});
 
-		it("does not use child_process.spawn for WebSocket transport", async () => {
-			installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
-			const { spawn: mockSpawn } = await import("node:child_process");
-			vi.mocked(mockSpawn).mockClear();
-			const { spawnAgentProcess } = await import("./agent-runner.js");
-
-			const proc = spawnAgentProcess("msg");
-			await new Promise((r) => setTimeout(r, 50));
-
-			expect(vi.mocked(mockSpawn)).not.toHaveBeenCalled();
-			proc.kill("SIGTERM");
-		});
-
-		it("falls back to CLI spawn when DENCHCLAW_WEB_FORCE_LEGACY_STREAM is set", async () => {
-			process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM = "1";
-			const { spawn: mockSpawn } = await import("node:child_process");
-			const child = mockChildProcess();
-			vi.mocked(mockSpawn).mockReturnValue(child as unknown as ChildProcess);
-
-			const { spawnAgentProcess } = await import("./agent-runner.js");
-			spawnAgentProcess("hello");
-
-			expect(vi.mocked(mockSpawn)).toHaveBeenCalledWith(
-				"openclaw",
-				expect.arrayContaining(["agent", "--agent", "main", "--message", "hello", "--stream-json"]),
-				expect.objectContaining({
-					stdio: ["ignore", "pipe", "pipe"],
-				}),
-			);
-		});
-
-		it("includes session-key and lane args in legacy CLI mode", async () => {
-			process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM = "1";
-			const { spawn: mockSpawn } = await import("node:child_process");
-			const child = mockChildProcess();
-			vi.mocked(mockSpawn).mockReturnValue(child as unknown as ChildProcess);
-
-			const { spawnAgentProcess } = await import("./agent-runner.js");
-			spawnAgentProcess("msg", "session-123");
-
-			expect(vi.mocked(mockSpawn)).toHaveBeenCalledWith(
-				"openclaw",
-				expect.arrayContaining([
-					"--session-key",
-					"agent:main:web:session-123",
-					"--lane",
-					"web",
-					"--channel",
-					"webchat",
-				]),
-				expect.anything(),
-			);
-		});
 	});
 
 	describe("spawnAgentSubscribeProcess", () => {
 		it("subscribes via connect -> sessions.patch -> agent.subscribe", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentSubscribeProcess("agent:main:web:sess-sub", 12);
@@ -433,7 +324,6 @@ describe("agent-runner", () => {
 
 		it("uses payload.globalSeq (not frame seq) for cursor filtering", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentSubscribeProcess("agent:main:web:sess-gseq", 5);
@@ -496,7 +386,6 @@ describe("agent-runner", () => {
 
 		it("keeps subscribe workers alive across lifecycle end events", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentSubscribeProcess("agent:main:web:sess-sticky", 0);
@@ -552,7 +441,6 @@ describe("agent-runner", () => {
 
 		it("drops subscribe events missing a matching session key", async () => {
 			const MockWs = installMockWsModule();
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentSubscribeProcess("agent:main:web:sess-filter", 0);
@@ -609,7 +497,6 @@ describe("agent-runner", () => {
 				ok: false,
 				error: { message: "unknown method: agent.subscribe" },
 			});
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const proc = spawnAgentSubscribeProcess("agent:main:web:sess-passive", 0);
@@ -650,7 +537,6 @@ describe("agent-runner", () => {
 				ok: false,
 				error: { message: "unknown method: agent.subscribe" },
 			});
-			delete process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM;
 			const { spawnAgentSubscribeProcess } = await import("./agent-runner.js");
 
 			const first = spawnAgentSubscribeProcess("agent:main:web:sess-cache", 0);

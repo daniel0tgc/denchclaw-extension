@@ -1,16 +1,12 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import NodeWebSocket from "ws";
 import {
-	getEffectiveProfile,
 	resolveActiveAgentId,
 	resolveOpenClawStateDir,
-	resolveWorkspaceRoot,
 } from "./workspace";
 
 export type AgentEvent = {
@@ -33,38 +29,6 @@ export type AgentEvent = {
 export type ToolResult = {
 	text?: string;
 	details?: Record<string, unknown>;
-};
-
-export type AgentCallback = {
-	onTextDelta: (delta: string) => void;
-	onThinkingDelta: (delta: string) => void;
-	onToolStart: (
-		toolCallId: string,
-		toolName: string,
-		args?: Record<string, unknown>,
-	) => void;
-	onToolEnd: (
-		toolCallId: string,
-		toolName: string,
-		isError: boolean,
-		result?: ToolResult,
-	) => void;
-	/** Called when the agent run is picked up and starts executing. */
-	onLifecycleStart?: () => void;
-	onLifecycleEnd: () => void;
-	/** Called when session auto-compaction begins. */
-	onCompactionStart?: () => void;
-	/** Called when session auto-compaction finishes. */
-	onCompactionEnd?: (willRetry: boolean) => void;
-	/** Called when a running tool emits a progress update. */
-	onToolUpdate?: (
-		toolCallId: string,
-		toolName: string,
-	) => void;
-	onError: (error: Error) => void;
-	onClose: (code: number | null) => void;
-	/** Called when the agent encounters an API or runtime error (402, rate limit, etc.) */
-	onAgentError?: (message: string) => void;
 };
 
 /**
@@ -114,11 +78,6 @@ export function extractToolResult(
 
 	return { text, details };
 }
-
-export type RunAgentOptions = {
-	/** When set, the agent runs in an isolated web chat session. */
-	sessionId?: string;
-};
 
 export type AgentProcessHandle = {
 	stdout: NodeJS.ReadableStream | null;
@@ -630,11 +589,13 @@ class GatewayProcessHandle
 				throw new Error(frameErrorMessage(connectRes));
 			}
 
-			if (this.params.sessionKey) {
-				await this.ensureFullToolVerbose(this.params.sessionKey);
-			}
-
 			if (this.params.mode === "start") {
+				// Pre-patch verbose for existing sessions (best-effort; new
+				// sessions don't exist yet so this may fail — we retry below).
+				if (this.params.sessionKey) {
+					await this.ensureFullToolVerbose(this.params.sessionKey);
+				}
+
 				const sessionKey = this.params.sessionKey;
 				const startRes = await this.client.request("agent", {
 					message: this.params.message ?? "",
@@ -652,11 +613,19 @@ class GatewayProcessHandle
 				const runId =
 					payload && typeof payload.runId === "string" ? payload.runId : null;
 				this.runId = runId;
+
+				// Retry verbose patch now that the agent RPC has created the
+				// session.  This is the critical path for first-message-in-chat
+				// where the pre-patch above failed.
+				if (sessionKey) {
+					await this.ensureFullToolVerbose(sessionKey);
+				}
 			} else {
 				const sessionKey = this.params.sessionKey;
 				if (!sessionKey) {
 					throw new Error("Missing session key for subscribe mode");
 				}
+				await this.ensureFullToolVerbose(sessionKey);
 				if (cachedAgentSubscribeSupport !== "unsupported") {
 					const subscribeRes = await this.client.request("agent.subscribe", {
 						sessionKey,
@@ -879,11 +848,6 @@ class GatewayProcessHandle
 	}
 }
 
-function shouldForceLegacyStream(): boolean {
-	const raw = process.env.DENCHCLAW_WEB_FORCE_LEGACY_STREAM?.trim().toLowerCase();
-	return raw === "1" || raw === "true" || raw === "yes";
-}
-
 export async function callGatewayRpc(
 	method: string,
 	params?: Record<string, unknown>,
@@ -919,16 +883,12 @@ export async function callGatewayRpc(
 }
 
 /**
- * Spawn an agent child process and return the ChildProcess handle.
- * Shared between `runAgent` (legacy callback API) and the ActiveRunManager.
+ * Start an agent run via the Gateway WebSocket and return a process handle.
  */
 export function spawnAgentProcess(
 	message: string,
 	agentSessionId?: string,
 ): AgentProcessHandle {
-	if (shouldForceLegacyStream()) {
-		return spawnLegacyAgentProcess(message, agentSessionId);
-	}
 	const agentId = resolveActiveAgentId();
 	const sessionKey = agentSessionId
 		? `agent:${agentId}:web:${agentSessionId}`
@@ -941,44 +901,6 @@ export function spawnAgentProcess(
 	});
 }
 
-function spawnLegacyAgentProcess(
-	message: string,
-	agentSessionId?: string,
-): ReturnType<typeof spawn> {
-	return spawnCliAgentProcess(message, agentSessionId);
-}
-
-function spawnCliAgentProcess(
-	message: string,
-	agentSessionId?: string,
-): ReturnType<typeof spawn> {
-	const cliAgentId = resolveActiveAgentId();
-	const args = [
-		"agent",
-		"--agent",
-		cliAgentId,
-		"--message",
-		message,
-		"--stream-json",
-	];
-
-	if (agentSessionId) {
-		const sessionKey = `agent:${cliAgentId}:web:${agentSessionId}`;
-		args.push("--session-key", sessionKey, "--lane", "web", "--channel", "webchat");
-	}
-
-	const profile = getEffectiveProfile();
-	const workspace = resolveWorkspaceRoot();
-	return spawn("openclaw", args, {
-		env: {
-			...process.env,
-			...(profile ? { OPENCLAW_PROFILE: profile } : {}),
-			...(workspace ? { OPENCLAW_WORKSPACE: workspace } : {}),
-		},
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-}
-
 /**
  * Spawn a subscribe-only agent child process that tails a session key's events.
  * Uses the same runtime/env wiring as spawnAgentProcess.
@@ -987,9 +909,6 @@ export function spawnAgentSubscribeProcess(
 	sessionKey: string,
 	afterSeq = 0,
 ): AgentProcessHandle {
-	if (shouldForceLegacyStream()) {
-		return spawnLegacyAgentSubscribeProcess(sessionKey, afterSeq);
-	}
 	return new GatewayProcessHandle({
 		mode: "subscribe",
 		sessionKey,
@@ -1012,31 +931,6 @@ export function spawnAgentStartForSession(
 		sessionKey,
 		afterSeq: 0,
 		lane: "subagent",
-	});
-}
-
-function spawnLegacyAgentSubscribeProcess(
-	sessionKey: string,
-	afterSeq = 0,
-): ReturnType<typeof spawn> {
-	const args = [
-		"agent",
-		"--stream-json",
-		"--subscribe-session-key",
-		sessionKey,
-		"--after-seq",
-		String(Math.max(0, Number.isFinite(afterSeq) ? afterSeq : 0)),
-	];
-
-	const profile = getEffectiveProfile();
-	const workspace = resolveWorkspaceRoot();
-	return spawn("openclaw", args, {
-		env: {
-			...process.env,
-			...(profile ? { OPENCLAW_PROFILE: profile } : {}),
-			...(workspace ? { OPENCLAW_WORKSPACE: workspace } : {}),
-		},
-		stdio: ["ignore", "pipe", "pipe"],
 	});
 }
 
@@ -1072,222 +966,6 @@ export function buildToolOutput(
 		}
 	}
 	return out;
-}
-
-/**
- * Spawn the openclaw agent and stream its output.
- * Pass an AbortSignal to kill the child process when the caller cancels.
- *
- * When `options.sessionId` is set the child process gets `--session-id <id>`,
- * which creates an isolated agent session that won't interfere with the main
- * agent or other sidebar chats.
- */
-export async function runAgent(
-	message: string,
-	signal: AbortSignal | undefined,
-	callback: AgentCallback,
-	options?: RunAgentOptions,
-): Promise<void> {
-	return new Promise<void>((resolve) => {
-		const child = spawnAgentProcess(message, options?.sessionId);
-
-		// Kill the child process if the caller aborts (e.g. user hit stop).
-		if (signal) {
-			const onAbort = () => child.kill("SIGTERM");
-			if (signal.aborted) {
-				child.kill("SIGTERM");
-			} else {
-				signal.addEventListener("abort", onAbort, { once: true });
-				child.on("close", () =>
-					signal.removeEventListener("abort", onAbort),
-				);
-			}
-		}
-
-		// Collect stderr so we can surface errors to the UI
-		const stderrChunks: string[] = [];
-		let agentErrorReported = false;
-
-		const rl = createInterface({ input: child.stdout! });
-
-		// Prevent unhandled 'error' events when the child process fails
-		// to start (e.g. ENOENT). The child's own 'error' handler below
-		// surfaces the real error to the caller.
-		rl.on("error", () => { /* handled by child error/close */ });
-
-		rl.on("line", (line: string) => {
-			if (!line.trim()) {return;}
-
-			let event: AgentEvent;
-			try {
-				event = JSON.parse(line) as AgentEvent;
-			} catch {
-				console.log("[agent-runner] Non-JSON line:", line);
-				return; // skip non-JSON lines
-			}
-
-			// Handle assistant text deltas
-			if (event.event === "agent" && event.stream === "assistant") {
-				const delta =
-					typeof event.data?.delta === "string"
-						? event.data.delta
-						: undefined;
-				if (delta) {
-					callback.onTextDelta(delta);
-				}
-				// Forward media URLs (images, files generated by the agent)
-				const mediaUrls = event.data?.mediaUrls;
-				if (Array.isArray(mediaUrls)) {
-					for (const url of mediaUrls) {
-						if (typeof url === "string" && url.trim()) {
-							callback.onTextDelta(`\n![media](${url.trim()})\n`);
-						}
-					}
-				}
-			}
-
-			// Handle thinking/reasoning deltas
-			if (event.event === "agent" && event.stream === "thinking") {
-				const delta =
-					typeof event.data?.delta === "string"
-						? event.data.delta
-						: undefined;
-				if (delta) {
-					callback.onThinkingDelta(delta);
-				}
-			}
-
-			// Handle tool execution events
-			if (event.event === "agent" && event.stream === "tool") {
-				const phase =
-					typeof event.data?.phase === "string"
-						? event.data.phase
-						: undefined;
-				const toolCallId =
-					typeof event.data?.toolCallId === "string"
-						? event.data.toolCallId
-						: "";
-				const toolName =
-					typeof event.data?.name === "string"
-						? event.data.name
-						: "";
-
-				if (phase === "start") {
-					const args =
-						event.data?.args &&
-						typeof event.data.args === "object"
-							? (event.data.args as Record<string, unknown>)
-							: undefined;
-					callback.onToolStart(toolCallId, toolName, args);
-				} else if (phase === "update") {
-					callback.onToolUpdate?.(toolCallId, toolName);
-				} else if (phase === "result") {
-					const isError = event.data?.isError === true;
-					const result = extractToolResult(event.data?.result);
-					callback.onToolEnd(toolCallId, toolName, isError, result);
-				}
-			}
-
-			// Handle lifecycle start
-			if (
-				event.event === "agent" &&
-				event.stream === "lifecycle" &&
-				event.data?.phase === "start"
-			) {
-				callback.onLifecycleStart?.();
-			}
-
-			// Handle lifecycle end
-			if (
-				event.event === "agent" &&
-				event.stream === "lifecycle" &&
-				event.data?.phase === "end"
-			) {
-				callback.onLifecycleEnd();
-			}
-
-			// Handle session compaction events
-			if (event.event === "agent" && event.stream === "compaction") {
-				const phase =
-					typeof event.data?.phase === "string"
-						? event.data.phase
-						: undefined;
-				if (phase === "start") {
-					callback.onCompactionStart?.();
-				} else if (phase === "end") {
-					const willRetry = event.data?.willRetry === true;
-					callback.onCompactionEnd?.(willRetry);
-				}
-			}
-
-			// ── Surface agent-level errors (API 402, rate limits, etc.) ──
-
-			// Lifecycle error phase
-			if (
-				event.event === "agent" &&
-				event.stream === "lifecycle" &&
-				event.data?.phase === "error"
-			) {
-				const msg = parseAgentErrorMessage(event.data);
-				if (msg && !agentErrorReported) {
-					agentErrorReported = true;
-					callback.onAgentError?.(msg);
-				}
-			}
-
-			// Top-level error events
-			if (event.event === "error") {
-				const msg = parseAgentErrorMessage(event.data ?? event);
-				if (msg && !agentErrorReported) {
-					agentErrorReported = true;
-					callback.onAgentError?.(msg);
-				}
-			}
-
-			// Messages with stopReason "error" (some agents inline errors this way)
-			if (
-				event.event === "agent" &&
-				event.stream === "assistant" &&
-				typeof event.data?.stopReason === "string" &&
-				event.data.stopReason === "error" &&
-				typeof event.data?.errorMessage === "string"
-			) {
-				if (!agentErrorReported) {
-					agentErrorReported = true;
-					callback.onAgentError?.(
-						parseErrorBody(event.data.errorMessage),
-					);
-				}
-			}
-		});
-
-		child.on("close", (code) => {
-			// If no error was reported yet, check stderr for useful info
-			if (!agentErrorReported && stderrChunks.length > 0) {
-				const stderr = stderrChunks.join("").trim();
-				const msg = parseErrorFromStderr(stderr);
-				if (msg) {
-					agentErrorReported = true;
-					callback.onAgentError?.(msg);
-				}
-			}
-			callback.onClose(code);
-			resolve();
-		});
-
-		child.on("error", (err) => {
-			const error = err instanceof Error ? err : new Error(String(err));
-			callback.onError(error);
-			resolve();
-		});
-
-		// Capture stderr for debugging + error surfacing
-		child.stderr?.on("data", (chunk: Buffer) => {
-			const text = chunk.toString();
-			stderrChunks.push(text);
-			console.error("[denchclaw stderr]", text);
-		});
-	});
 }
 
 // ── Error message extraction helpers ──

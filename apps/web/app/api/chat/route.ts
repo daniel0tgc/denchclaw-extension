@@ -134,6 +134,7 @@ export async function POST(req: Request) {
 	const encoder = new TextEncoder();
 	let closed = false;
 	let unsubscribe: (() => void) | null = null;
+	let keepalive: ReturnType<typeof setInterval> | null = null;
 
 	const stream = new ReadableStream({
 		start(controller) {
@@ -142,12 +143,20 @@ export async function POST(req: Request) {
 				return;
 			}
 
+			keepalive = setInterval(() => {
+				if (closed) {return;}
+				try {
+					controller.enqueue(encoder.encode(": keepalive\n\n"));
+				} catch { /* ignore enqueue errors on closed stream */ }
+			}, 15_000);
+
 			unsubscribe = subscribeToRun(
 				runKey,
 				(event: SseEvent | null) => {
 					if (closed) {return;}
 					if (event === null) {
 						closed = true;
+						if (keepalive) { clearInterval(keepalive); keepalive = null; }
 						try { controller.close(); } catch { /* already closed */ }
 						return;
 					}
@@ -164,11 +173,13 @@ export async function POST(req: Request) {
 
 			if (!unsubscribe) {
 				closed = true;
+				if (keepalive) { clearInterval(keepalive); keepalive = null; }
 				controller.close();
 			}
 		},
 		cancel() {
 			closed = true;
+			if (keepalive) { clearInterval(keepalive); keepalive = null; }
 			unsubscribe?.();
 		},
 	});

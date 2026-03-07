@@ -1098,16 +1098,238 @@ describe("active-runs", () => {
 	// ── multiple concurrent runs ─────────────────────────────────────
 
 	describe("multiple concurrent runs", () => {
+		let concurrentCounter = 0;
+
+		async function setupConcurrent() {
+			concurrentCounter += 1;
+			const prefix = `conc-${concurrentCounter}`;
+			const childA = createMockChild();
+			const childB = createMockChild();
+
+			const { spawnAgentProcess } = await import("./agent-runner.js");
+			vi.mocked(spawnAgentProcess)
+				.mockReturnValueOnce(childA as unknown as ChildProcess)
+				.mockReturnValueOnce(childB as unknown as ChildProcess);
+
+			const mod = await import("./active-runs.js");
+			return { childA, childB, prefix, ...mod };
+		}
+
 		it("tracks multiple sessions independently", async () => {
-			const { startRun, hasActiveRun, getActiveRun } = await setup();
+			const { childA, childB, prefix, startRun, abortRun, hasActiveRun, getActiveRun } =
+				await setupConcurrent();
 
-			startRun({ sessionId: "s-a", message: "first", agentSessionId: "s-a" });
-			startRun({ sessionId: "s-b", message: "second", agentSessionId: "s-b" });
+			const idA = `${prefix}-track-a`;
+			const idB = `${prefix}-track-b`;
 
-			expect(hasActiveRun("s-a")).toBe(true);
-			expect(hasActiveRun("s-b")).toBe(true);
-			expect(getActiveRun("s-a")?.status).toBe("running");
-			expect(getActiveRun("s-b")?.status).toBe("running");
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			expect(hasActiveRun(idA)).toBe(true);
+			expect(hasActiveRun(idB)).toBe(true);
+			expect(getActiveRun(idA)?.status).toBe("running");
+			expect(getActiveRun(idB)?.status).toBe("running");
+
+			abortRun(idA);
+			abortRun(idB);
+		});
+
+		it("delivers events to the correct session without cross-contamination", async () => {
+			const { childA, childB, prefix, startRun, abortRun, subscribeToRun } =
+				await setupConcurrent();
+
+			const idA = `${prefix}-iso-a`;
+			const idB = `${prefix}-iso-b`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			const eventsA: SseEvent[] = [];
+			const eventsB: SseEvent[] = [];
+			subscribeToRun(idA, (e) => { if (e) eventsA.push(e); }, { replay: false });
+			subscribeToRun(idB, (e) => { if (e) eventsB.push(e); }, { replay: false });
+
+			childA._writeLine({
+				event: "agent", stream: "assistant",
+				data: { delta: "Hello from A" },
+			});
+			childB._writeLine({
+				event: "agent", stream: "assistant",
+				data: { delta: "Hello from B" },
+			});
+
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(eventsA.some((e) => e.type === "text-delta" && e.delta === "Hello from A")).toBe(true);
+			expect(eventsA.some((e) => e.type === "text-delta" && e.delta === "Hello from B")).toBe(false);
+
+			expect(eventsB.some((e) => e.type === "text-delta" && e.delta === "Hello from B")).toBe(true);
+			expect(eventsB.some((e) => e.type === "text-delta" && e.delta === "Hello from A")).toBe(false);
+
+			childA.stdout.end();
+			childB.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childA._emit("close", 0);
+			childB._emit("close", 0);
+		});
+
+		it("completing one session does not affect the other", async () => {
+			const { childA, childB, prefix, startRun, abortRun, hasActiveRun, getActiveRun } =
+				await setupConcurrent();
+
+			const idA = `${prefix}-comp-a`;
+			const idB = `${prefix}-comp-b`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			childA.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childA._emit("close", 0);
+
+			expect(hasActiveRun(idA)).toBe(false);
+			expect(getActiveRun(idA)?.status).toBe("completed");
+
+			expect(hasActiveRun(idB)).toBe(true);
+			expect(getActiveRun(idB)?.status).toBe("running");
+
+			childB.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childB._emit("close", 0);
+		});
+
+		it("aborting one session does not affect the other", async () => {
+			const { prefix, startRun, abortRun, hasActiveRun, getActiveRun } =
+				await setupConcurrent();
+
+			const idA = `${prefix}-abt-a`;
+			const idB = `${prefix}-abt-b`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			abortRun(idA);
+
+			expect(hasActiveRun(idA)).toBe(false);
+			expect(getActiveRun(idA)?.status).toBe("error");
+
+			expect(hasActiveRun(idB)).toBe(true);
+			expect(getActiveRun(idB)?.status).toBe("running");
+
+			abortRun(idB);
+		});
+
+		it("session B can still receive events after session A completes", async () => {
+			const { childA, childB, prefix, startRun, subscribeToRun, hasActiveRun } =
+				await setupConcurrent();
+
+			const idA = `${prefix}-cont-a`;
+			const idB = `${prefix}-cont-b`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			const eventsB: SseEvent[] = [];
+			subscribeToRun(idB, (e) => { if (e) eventsB.push(e); }, { replay: false });
+
+			childA.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childA._emit("close", 0);
+			expect(hasActiveRun(idA)).toBe(false);
+
+			childB._writeLine({
+				event: "agent", stream: "assistant",
+				data: { delta: "Still running on B" },
+			});
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(eventsB.some(
+				(e) => e.type === "text-delta" && e.delta === "Still running on B",
+			)).toBe(true);
+
+			childB.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childB._emit("close", 0);
+		});
+
+		it("both sessions can stream tools concurrently", async () => {
+			const { childA, childB, prefix, startRun, subscribeToRun } =
+				await setupConcurrent();
+
+			const idA = `${prefix}-tool-a`;
+			const idB = `${prefix}-tool-b`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			const eventsA: SseEvent[] = [];
+			const eventsB: SseEvent[] = [];
+			subscribeToRun(idA, (e) => { if (e) eventsA.push(e); }, { replay: false });
+			subscribeToRun(idB, (e) => { if (e) eventsB.push(e); }, { replay: false });
+
+			childA._writeLine({
+				event: "agent", stream: "tool",
+				data: { phase: "start", toolCallId: "tc-a-1", name: "search", args: { q: "query A" } },
+			});
+			childB._writeLine({
+				event: "agent", stream: "tool",
+				data: { phase: "start", toolCallId: "tc-b-1", name: "browser", args: { url: "example.com" } },
+			});
+
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(eventsA.some(
+				(e) => e.type === "tool-input-start" && e.toolCallId === "tc-a-1",
+			)).toBe(true);
+			expect(eventsA.some(
+				(e) => e.type === "tool-input-start" && e.toolCallId === "tc-b-1",
+			)).toBe(false);
+
+			expect(eventsB.some(
+				(e) => e.type === "tool-input-start" && e.toolCallId === "tc-b-1",
+			)).toBe(true);
+			expect(eventsB.some(
+				(e) => e.type === "tool-input-start" && e.toolCallId === "tc-a-1",
+			)).toBe(false);
+
+			childA.stdout.end();
+			childB.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			childA._emit("close", 0);
+			childB._emit("close", 0);
+		});
+
+		it("duplicate run is rejected per-session, not globally", async () => {
+			const { prefix, startRun, abortRun, hasActiveRun } =
+				await setupConcurrent();
+			const { spawnAgentProcess } = await import("./agent-runner.js");
+
+			const idA = `${prefix}-dup-a`;
+			const idB = `${prefix}-dup-b`;
+			const idC = `${prefix}-dup-c`;
+
+			startRun({ sessionId: idA, message: "first", agentSessionId: idA });
+			startRun({ sessionId: idB, message: "second", agentSessionId: idB });
+
+			expect(hasActiveRun(idA)).toBe(true);
+			expect(hasActiveRun(idB)).toBe(true);
+
+			const childC = createMockChild();
+			vi.mocked(spawnAgentProcess).mockReturnValueOnce(
+				childC as unknown as ChildProcess,
+			);
+			expect(() =>
+				startRun({ sessionId: idC, message: "third", agentSessionId: idC }),
+			).not.toThrow();
+			expect(hasActiveRun(idC)).toBe(true);
+
+			expect(() =>
+				startRun({ sessionId: idA, message: "dupe", agentSessionId: idA }),
+			).toThrow("Active run already exists");
+
+			abortRun(idA);
+			abortRun(idB);
+			abortRun(idC);
 		});
 	});
 

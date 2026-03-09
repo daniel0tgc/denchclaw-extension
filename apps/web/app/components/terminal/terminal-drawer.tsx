@@ -192,7 +192,6 @@ function TerminalViewport({
         } catch {
           return;
         }
-
         if (msg.type === "output" && msg.data) {
           terminal.write(msg.data);
         } else if (msg.type === "exit") {

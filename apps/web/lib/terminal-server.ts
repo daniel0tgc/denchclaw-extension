@@ -54,21 +54,35 @@ function shellArgs(shell: string): string[] {
 function spawnTerminal(ws: WebSocket, cols: number, rows: number, cwd?: string) {
   ensureSpawnHelperExecutable();
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const nodePty = require("node-pty") as typeof import("node-pty");
+  let nodePty: typeof import("node-pty");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    nodePty = require("node-pty") as typeof import("node-pty");
+  } catch {
+    ws.send(JSON.stringify({ type: "exit", exitCode: 1, signal: null }));
+    return;
+  }
 
   const shell = defaultShell();
-  const pty = nodePty.spawn(shell, shellArgs(shell), {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: cwd || process.env.HOME || process.cwd(),
-    env: Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([, v]) => v !== undefined,
-      ),
-    ) as Record<string, string>,
-  });
+  const spawnCwd = cwd || process.env.HOME || process.cwd();
+
+  let pty: import("node-pty").IPty;
+  try {
+    pty = nodePty.spawn(shell, shellArgs(shell), {
+      name: "xterm-256color",
+      cols,
+      rows,
+      cwd: spawnCwd,
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([, v]) => v !== undefined,
+        ),
+      ) as Record<string, string>,
+    });
+  } catch {
+    ws.send(JSON.stringify({ type: "exit", exitCode: 1, signal: null }));
+    return;
+  }
 
   const session: TerminalSession = { pty, ws };
   sessions.set(ws, session);

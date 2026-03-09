@@ -141,6 +141,7 @@ function TerminalViewport({
     if (!mount) return;
 
     let disposed = false;
+    let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const fitAddon = new FitAddon();
     const terminal = new Terminal({
@@ -154,59 +155,88 @@ function TerminalViewport({
     });
     terminal.loadAddon(fitAddon);
     terminal.open(mount);
-    fitAddon.fit();
 
     termRef.current = terminal;
     fitRef.current = fitAddon;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//127.0.0.1:${WS_PORT}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
+    const connectWs = () => {
       if (disposed) return;
-      ws.send(
-        JSON.stringify({
-          type: "spawn",
-          cols: terminal.cols,
-          rows: terminal.rows,
-          ...(cwd ? { cwd } : {}),
-        }),
-      );
-    };
 
-    ws.onmessage = (ev) => {
-      if (disposed) return;
-      let msg: { type: string; data?: string; exitCode?: number; signal?: number };
-      try {
-        msg = JSON.parse(ev.data as string);
-      } catch {
-        return;
-      }
+      // Fit now that the container has layout dimensions
+      fitAddon.fit();
+      const cols = terminal.cols > 0 ? terminal.cols : 80;
+      const rows = terminal.rows > 0 ? terminal.rows : 24;
 
-      if (msg.type === "output" && msg.data) {
-        terminal.write(msg.data);
-      } else if (msg.type === "exit") {
-        terminal.write(`\r\n[process exited]\r\n`);
-        onExitedRef.current();
-      } else if (msg.type === "ready") {
-        if (active) {
-          window.requestAnimationFrame(() => terminal.focus());
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//127.0.0.1:${WS_PORT}`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (disposed) return;
+        ws.send(
+          JSON.stringify({
+            type: "spawn",
+            cols,
+            rows,
+            ...(cwd ? { cwd } : {}),
+          }),
+        );
+      };
+
+      ws.onmessage = (ev) => {
+        if (disposed) return;
+        let msg: { type: string; data?: string; exitCode?: number; signal?: number };
+        try {
+          msg = JSON.parse(ev.data as string);
+        } catch {
+          return;
         }
-      }
+
+        if (msg.type === "output" && msg.data) {
+          terminal.write(msg.data);
+        } else if (msg.type === "exit") {
+          terminal.write(`\r\n[process exited]\r\n`);
+          onExitedRef.current();
+        } else if (msg.type === "ready") {
+          // Re-fit and send correct dimensions now that the shell is alive
+          window.requestAnimationFrame(() => {
+            if (disposed) return;
+            fitAddon.fit();
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }));
+            }
+            if (active) terminal.focus();
+          });
+        }
+      };
+
+      ws.onerror = () => {
+        if (disposed) return;
+        terminal.write("\r\n\x1b[31m[terminal] connection failed — is the server running?\x1b[0m\r\n");
+      };
+
+      ws.onclose = () => {
+        if (disposed) return;
+        terminal.write("\r\n[connection closed]\r\n");
+      };
+
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data }));
+        }
+      });
     };
 
-    ws.onclose = () => {
-      if (disposed) return;
-      terminal.write("\r\n[connection closed]\r\n");
-    };
+    // Defer WS connection until the container has been laid out (next frame + small buffer)
+    connectTimer = setTimeout(connectWs, 50);
 
-    terminal.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "input", data }));
+    const sendToWs = (data: string) => {
+      const w = wsRef.current;
+      if (w && w.readyState === WebSocket.OPEN) {
+        w.send(JSON.stringify({ type: "input", data }));
       }
-    });
+    };
 
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
@@ -218,9 +248,7 @@ function TerminalViewport({
         (key === "l" && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)
       ) {
         event.preventDefault();
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data: "\u000c" }));
-        }
+        sendToWs("\u000c");
         return false;
       }
 
@@ -236,34 +264,14 @@ function TerminalViewport({
 
       // Option+Left/Right — word navigation
       if (isMac() && event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
-        if (key === "arrowleft") {
-          event.preventDefault();
-          ws.readyState === WebSocket.OPEN &&
-            ws.send(JSON.stringify({ type: "input", data: "\x1bb" }));
-          return false;
-        }
-        if (key === "arrowright") {
-          event.preventDefault();
-          ws.readyState === WebSocket.OPEN &&
-            ws.send(JSON.stringify({ type: "input", data: "\x1bf" }));
-          return false;
-        }
+        if (key === "arrowleft") { event.preventDefault(); sendToWs("\x1bb"); return false; }
+        if (key === "arrowright") { event.preventDefault(); sendToWs("\x1bf"); return false; }
       }
 
       // Cmd+Left/Right — line start/end
       if (isMac() && event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey) {
-        if (key === "arrowleft") {
-          event.preventDefault();
-          ws.readyState === WebSocket.OPEN &&
-            ws.send(JSON.stringify({ type: "input", data: "\x01" }));
-          return false;
-        }
-        if (key === "arrowright") {
-          event.preventDefault();
-          ws.readyState === WebSocket.OPEN &&
-            ws.send(JSON.stringify({ type: "input", data: "\x05" }));
-          return false;
-        }
+        if (key === "arrowleft") { event.preventDefault(); sendToWs("\x01"); return false; }
+        if (key === "arrowright") { event.preventDefault(); sendToWs("\x05"); return false; }
       }
 
       return true;
@@ -297,10 +305,11 @@ function TerminalViewport({
 
     return () => {
       disposed = true;
+      if (connectTimer !== null) clearTimeout(connectTimer);
       themeObserver.disconnect();
       colorSchemeQuery.removeEventListener("change", applyTheme);
       if (themeFrame !== null) cancelAnimationFrame(themeFrame);
-      ws.close();
+      if (wsRef.current) wsRef.current.close();
       wsRef.current = null;
       termRef.current = null;
       fitRef.current = null;

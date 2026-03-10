@@ -186,7 +186,7 @@ async function runCommandWithTimeout(
   return await new Promise<SpawnResult>((resolve, reject) => {
     const child = spawn(resolveCommandForPlatform(command), args, {
       cwd: options.cwd,
-      env: options.env ? { ...process.env, ...options.env } : process.env,
+      env: options.env ?? process.env,
       stdio,
     });
     let stdout = "";
@@ -831,6 +831,30 @@ function createOpenClawSetupProgress(params: {
   };
 }
 
+/**
+ * Returns a copy of `process.env` with `npm_config_*`, `npm_package_*`, and
+ * npm lifecycle variables stripped. When denchclaw is launched via `npx`, npm
+ * injects environment variables (most critically `npm_config_prefix`) that
+ * redirect `npm install -g` and `npm ls -g` to a temporary npx-managed
+ * prefix instead of the user's real global npm directory. Stripping these
+ * ensures child npm processes use the user's actual configuration.
+ */
+function cleanNpmGlobalEnv(): NodeJS.ProcessEnv {
+  const cleaned: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (
+      key.startsWith("npm_config_") ||
+      key.startsWith("npm_package_") ||
+      key === "npm_lifecycle_event" ||
+      key === "npm_lifecycle_script"
+    ) {
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 async function detectGlobalOpenClawInstall(
   onOutputLine?: OutputLineHandler,
 ): Promise<{ installed: boolean; version?: string }> {
@@ -839,6 +863,7 @@ async function detectGlobalOpenClawInstall(
     {
       timeoutMs: 15_000,
       onOutputLine,
+      env: cleanNpmGlobalEnv(),
     },
   ).catch(() => null);
 
@@ -858,6 +883,7 @@ async function resolveNpmGlobalBinDir(
 ): Promise<string | undefined> {
   const result = await runCommandWithTimeout(["npm", "prefix", "-g"], {
     timeoutMs: 8_000,
+    env: cleanNpmGlobalEnv(),
     onOutputLine,
   }).catch(() => null);
   if (!result || result.code !== 0) {
@@ -946,6 +972,7 @@ async function ensureOpenClawCliAvailable(params: {
   if (!globalBefore.installed) {
     const install = await runCommandWithTimeout(["npm", "install", "-g", "openclaw@latest"], {
       timeoutMs: 10 * 60_000,
+      env: cleanNpmGlobalEnv(),
       onOutputLine: (line) => {
         progress.output(`npm install: ${line}`);
       },
@@ -1021,7 +1048,9 @@ async function probeGateway(
   profile: string,
   gatewayPort?: number,
 ): Promise<{ ok: boolean; detail?: string }> {
-  const env = gatewayPort ? { OPENCLAW_GATEWAY_PORT: String(gatewayPort) } : undefined;
+  const env = gatewayPort
+    ? { ...process.env, OPENCLAW_GATEWAY_PORT: String(gatewayPort) }
+    : undefined;
   const result = await runOpenClaw(
     openclawCommand,
     ["--profile", profile, "health", "--json"],

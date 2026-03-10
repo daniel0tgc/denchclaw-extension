@@ -50,7 +50,7 @@ vi.mock("./web-runtime.js", async (importOriginal) => {
 type SpawnCall = {
   command: string;
   args: string[];
-  options?: { stdio?: unknown };
+  options?: { stdio?: unknown; env?: NodeJS.ProcessEnv };
 };
 
 function createWebProfilesResponse(params?: {
@@ -1104,5 +1104,49 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(summary.gatewayAutoFix?.attempted).toBe(true);
     expect(logMessages).toContain("Likely gateway cause:");
     expect(logMessages).toContain("gateway.err.log");
+  });
+
+  it("strips npm_config_* env vars from npm global commands (prevents npx prefix hijack)", async () => {
+    process.env.npm_config_prefix = "/tmp/npx-fake-prefix";
+    process.env.npm_config_global_prefix = "/tmp/npx-fake-global";
+    process.env.npm_package_name = "denchclaw";
+    process.env.npm_lifecycle_event = "npx";
+
+    const runtime: RuntimeEnv = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+
+    await bootstrapCommand(
+      {
+        nonInteractive: true,
+        noOpen: true,
+        skipUpdate: true,
+      },
+      runtime,
+    );
+
+    const npmGlobalCalls = spawnCalls.filter(
+      (call) =>
+        call.command === "npm" &&
+        (call.args.includes("-g") || call.args.includes("--global")),
+    );
+
+    expect(npmGlobalCalls.length).toBeGreaterThan(0);
+    for (const call of npmGlobalCalls) {
+      const env = call.options?.env;
+      expect(env).toBeDefined();
+      if (env) {
+        const leakedKeys = Object.keys(env).filter(
+          (key) =>
+            key.startsWith("npm_config_") ||
+            key.startsWith("npm_package_") ||
+            key === "npm_lifecycle_event" ||
+            key === "npm_lifecycle_script",
+        );
+        expect(leakedKeys).toEqual([]);
+      }
+    }
   });
 });

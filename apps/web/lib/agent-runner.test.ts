@@ -36,7 +36,7 @@ const VALID_GATEWAY_CLIENT_MODES = new Set([
 /**
  * Mock that replaces the `ws` module's default export.
  * Mimics the ws package's EventEmitter-based API (.on, .once, .emit)
- * and tracks constructor args so we can assert on Origin header.
+ * and tracks constructor args so we can assert on connection parameters.
  */
 function installMockWsModule() {
 	type ReqFrame = {
@@ -225,7 +225,7 @@ describe("agent-runner", () => {
 	// ── spawnAgentProcess (ws transport) ─────────────────────────────
 
 	describe("spawnAgentProcess", () => {
-		it("connects via ws module with Origin header matching the gateway URL (prevents origin rejection)", async () => {
+		it("connects via ws module and issues connect, sessions.patch, agent RPCs in order", async () => {
 			const MockWs = installMockWsModule();
 			const { spawnAgentProcess } = await import("./agent-runner.js");
 
@@ -234,14 +234,7 @@ describe("agent-runner", () => {
 
 			const ws = MockWs.instances[0];
 			expect(ws).toBeDefined();
-
-			const headers = ws.constructorOpts.headers as Record<string, string>;
-			expect(headers?.Origin).toMatch(/^http:\/\//);
 			expect(ws.constructorUrl).toMatch(/^ws:\/\//);
-			// Origin must be the HTTP equivalent of the ws URL
-			expect(headers.Origin).toBe(
-				ws.constructorUrl.replace(/^ws:/, "http:").replace(/^wss:/, "https:"),
-			);
 
 			expect(ws.methods).toContain("connect");
 			expect(ws.methods).toContain("sessions.patch");
@@ -250,7 +243,7 @@ describe("agent-runner", () => {
 			proc.kill("SIGTERM");
 		});
 
-		it("sets wss: origin to https: (prevents origin mismatch on TLS gateways)", async () => {
+		it("connects to wss: URL for TLS gateways", async () => {
 			const MockWs = installMockWsModule();
 			process.env.OPENCLAW_GATEWAY_URL = "wss://gateway.example.com:443";
 			const { spawnAgentProcess } = await import("./agent-runner.js");
@@ -259,8 +252,7 @@ describe("agent-runner", () => {
 			await waitFor(() =>  MockWs.instances[0]?.methods.includes("connect"));
 
 			const ws = MockWs.instances[0];
-			const headers = ws.constructorOpts.headers as Record<string, string>;
-			expect(headers.Origin).toMatch(/^https:\/\//);
+			expect(ws.constructorUrl).toMatch(/^wss:\/\/gateway\.example\.com/);
 			proc.kill("SIGTERM");
 		});
 

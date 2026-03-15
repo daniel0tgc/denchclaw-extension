@@ -555,12 +555,7 @@ class GatewayWsClient {
 		if (this.ws) {
 			return;
 		}
-		const gatewayOrigin = this.settings.url
-			.replace(/^ws:/, "http:")
-			.replace(/^wss:/, "https:");
-		const ws = new NodeWebSocket(this.settings.url, {
-			headers: { Origin: gatewayOrigin },
-		});
+		const ws = new NodeWebSocket(this.settings.url);
 		this.ws = ws;
 
 		await new Promise<void>((resolve, reject) => {

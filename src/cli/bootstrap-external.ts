@@ -747,7 +747,10 @@ async function runOpenClawOrThrow(params: {
     return result;
   }
   const detail = firstNonEmptyLine(result.stderr, result.stdout);
-  throw new Error(detail ? `${params.errorMessage}\n${detail}` : params.errorMessage);
+  const parts = [params.errorMessage];
+  if (detail) parts.push(detail);
+  else if (result.code != null) parts.push(`(exit code ${result.code})`);
+  throw new Error(parts.join("\n"));
 }
 
 /**
@@ -770,7 +773,10 @@ async function runOpenClawInteractiveOrThrow(params: {
     return result;
   }
   const detail = firstNonEmptyLine(result.stderr, result.stdout);
-  throw new Error(detail ? `${params.errorMessage}\n${detail}` : params.errorMessage);
+  const parts = [params.errorMessage];
+  if (detail) parts.push(detail);
+  else if (result.code != null) parts.push(`(exit code ${result.code})`);
+  throw new Error(parts.join("\n"));
 }
 
 /**
@@ -2223,6 +2229,9 @@ export async function bootstrapCommand(
 
   // Pin OpenClaw to the managed default workspace before onboarding so bootstrap
   // never drifts into creating/using legacy workspace-* paths.
+  // The directory must exist before `openclaw config set` — some OpenClaw builds
+  // validate the workspace path on disk before accepting the value.
+  mkdirSync(workspaceDir, { recursive: true });
   preCloudSpinner?.message("Configuring default workspace…");
   await ensureDefaultWorkspacePath(openclawCommand, profile, workspaceDir);
 

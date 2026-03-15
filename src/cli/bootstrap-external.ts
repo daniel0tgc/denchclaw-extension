@@ -692,6 +692,27 @@ async function ensureDefaultWorkspacePath(
   });
 }
 
+/**
+ * Write `agents.defaults.workspace` directly into `stateDir/openclaw.json`
+ * without going through the OpenClaw CLI.  On a fresh install the "dench"
+ * profile doesn't exist yet (it's created by `openclaw onboard`), so the
+ * CLI-based `config set` fails.  Writing the file directly sidesteps this
+ * while still ensuring the workspace is pinned before onboard runs.
+ */
+function pinWorkspaceInConfigFile(stateDir: string, workspaceDir: string): void {
+  const raw = readBootstrapConfig(stateDir) ?? {};
+  const agents = { ...(asRecord(raw.agents) ?? {}) };
+  const defaults = { ...(asRecord(agents.defaults) ?? {}) };
+  defaults.workspace = workspaceDir;
+  agents.defaults = defaults;
+  raw.agents = agents;
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(
+    path.join(stateDir, "openclaw.json"),
+    `${JSON.stringify(raw, null, 2)}\n`,
+  );
+}
+
 async function ensureSubagentDefaults(openclawCommand: string, profile: string): Promise<void> {
   const settings: Array<[string, string]> = [
     ["agents.defaults.subagents.maxConcurrent", "8"],
@@ -2229,11 +2250,13 @@ export async function bootstrapCommand(
 
   // Pin OpenClaw to the managed default workspace before onboarding so bootstrap
   // never drifts into creating/using legacy workspace-* paths.
-  // The directory must exist before `openclaw config set` — some OpenClaw builds
-  // validate the workspace path on disk before accepting the value.
+  // On a fresh install the "dench" profile doesn't exist yet (created by
+  // `openclaw onboard`), so `openclaw config set` fails.  Write the value
+  // directly into the JSON config file instead — the CLI-based re-application
+  // happens post-onboard alongside gateway mode/port.
   mkdirSync(workspaceDir, { recursive: true });
   preCloudSpinner?.message("Configuring default workspace…");
-  await ensureDefaultWorkspacePath(openclawCommand, profile, workspaceDir);
+  pinWorkspaceInConfigFile(stateDir, workspaceDir);
 
   preCloudSpinner?.stop("Gateway ready.");
 
@@ -2369,8 +2392,12 @@ export async function bootstrapCommand(
   const postOnboardSpinner = !opts.json ? spinner() : null;
   postOnboardSpinner?.start("Finalizing configuration…");
 
-  // Re-apply gateway settings after onboard so interactive/wizard flows cannot
-  // drift DenchClaw away from its required local gateway and selected port.
+  // Re-apply settings after onboard so interactive/wizard flows cannot
+  // drift DenchClaw away from its required configuration.  The workspace path
+  // was written directly to the JSON file pre-onboard (profile didn't exist
+  // yet); now that the profile is live we also push it through the CLI.
+  await ensureDefaultWorkspacePath(openclawCommand, profile, workspaceDir);
+  postOnboardSpinner?.message("Configuring gateway…");
   await ensureGatewayModeLocal(openclawCommand, profile);
   postOnboardSpinner?.message("Configuring gateway port…");
   await ensureGatewayPort(openclawCommand, profile, gatewayPort);

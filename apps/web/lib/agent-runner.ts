@@ -386,7 +386,7 @@ export function buildConnectParams(
 			)
 		: DEFAULT_GATEWAY_CLIENT_CAPS;
 	const clientMode = options?.clientMode ?? "backend";
-	const clientId = "gateway-client";
+	const clientId = process.env.OPENCLAW_GATEWAY_CLIENT_ID || "gateway-client";
 	const role = "operator";
 	const scopes = ["operator.read", "operator.write", "operator.admin"];
 

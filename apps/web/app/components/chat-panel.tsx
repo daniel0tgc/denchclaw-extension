@@ -988,8 +988,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			status === "submitted" ||
 			isReconnecting;
 
+		const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
+		onRuntimeStateChangeRef.current = onRuntimeStateChange;
+
 		useEffect(() => {
-			onRuntimeStateChange?.({
+			onRuntimeStateChangeRef.current?.({
 				sessionId: currentSessionId,
 				sessionKey: subagentSessionKey ?? null,
 				isStreaming,
@@ -1004,7 +1007,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			status,
 			isReconnecting,
 			loadingSession,
-			onRuntimeStateChange,
 		]);
 
 		// Stream stall detection: if we stay in "submitted" (no first

@@ -31,6 +31,25 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){
+  var k='__chunk_reload';
+  if(sessionStorage.getItem(k)){sessionStorage.removeItem(k);return}
+  function reload(){sessionStorage.setItem(k,'1');window.location.reload()}
+  window.addEventListener('error',function(e){
+    var t=e.target;
+    if(t&&(t.tagName==='SCRIPT'||t.tagName==='LINK')){
+      var s=t.src||t.href||'';
+      if(s.indexOf('_next/static')!==-1)reload();
+    }
+  },true);
+  window.addEventListener('unhandledrejection',function(e){
+    if(e.reason&&e.reason.name==='ChunkLoadError')reload();
+  });
+})();`,
+          }}
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="preconnect"

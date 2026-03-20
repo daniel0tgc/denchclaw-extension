@@ -724,6 +724,31 @@ function ensureStaticAssets(runtimeAppDir: string, packageRoot: string): void {
   }
 }
 
+/**
+ * After installing a new build, merge the previous build's `.next/static`
+ * into the new one (without overwriting).  This keeps old chunk / CSS files
+ * available so that browser tabs still running the previous version can
+ * finish loading lazily-imported routes instead of hitting 400s.
+ */
+function preservePreviousStaticAssets(
+  backupDir: string,
+  runtimeAppDir: string,
+): void {
+  const oldStatic = path.join(backupDir, ".next", "static");
+  const newStatic = path.join(runtimeAppDir, ".next", "static");
+  if (!existsSync(oldStatic) || !existsSync(newStatic)) return;
+  try {
+    cpSync(oldStatic, newStatic, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+      dereference: true,
+    });
+  } catch {
+    // best-effort — stale clients will reload via the chunk-error handler
+  }
+}
+
 export function installManagedWebRuntime(params: {
   stateDir: string;
   packageRoot: string;
@@ -765,6 +790,7 @@ export function installManagedWebRuntime(params: {
 
   dereferenceRuntimeNodeModules(runtimeAppDir, standaloneDir);
   ensureStaticAssets(runtimeAppDir, params.packageRoot);
+  preservePreviousStaticAssets(backupDir, runtimeAppDir);
   ensureSeedAssets(runtimeAppDir, params.packageRoot);
 
   const manifest: ManagedWebRuntimeManifest = {

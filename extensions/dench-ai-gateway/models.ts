@@ -118,30 +118,9 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-opus-4.6";
+
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
-  {
-    id: "gpt-5.4",
-    stableId: "gpt-5.4",
-    displayName: "GPT-5.4",
-    provider: "openai",
-    transportProvider: "openai",
-    api: "openai-completions",
-    input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 128000,
-    maxTokens: 128000,
-    supportsStreaming: true,
-    supportsImages: true,
-    supportsResponses: true,
-    supportsReasoning: false,
-    cost: {
-      input: markupCost(2.5),
-      output: markupCost(15),
-      cacheRead: 0,
-      cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
-    },
-  },
   {
     id: "claude-opus-4.6",
     stableId: "anthropic.claude-opus-4-6-v1",
@@ -160,6 +139,29 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     cost: {
       input: markupCost(5),
       output: markupCost(25),
+      cacheRead: 0,
+      cacheWrite: 0,
+      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+    },
+  },
+  {
+    id: "gpt-5.4",
+    stableId: "gpt-5.4",
+    displayName: "GPT-5.4",
+    provider: "openai",
+    transportProvider: "openai",
+    api: "openai-completions",
+    input: ["text", "image"],
+    reasoning: false,
+    contextWindow: 128000,
+    maxTokens: 128000,
+    supportsStreaming: true,
+    supportsImages: true,
+    supportsResponses: true,
+    supportsReasoning: false,
+    cost: {
+      input: markupCost(2.5),
+      output: markupCost(15),
       cacheRead: 0,
       cacheWrite: 0,
       marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
@@ -306,7 +308,10 @@ export function resolveDenchCloudModel(
 ): DenchCloudCatalogModel | undefined {
   const normalized = requestedId?.trim();
   if (!normalized) {
-    return models[0];
+    return (
+      models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) ||
+      models[0]
+    );
   }
 
   return models.find((model) => model.id === normalized || model.stableId === normalized);
@@ -315,5 +320,6 @@ export function resolveDenchCloudModel(
 export function formatDenchCloudModelHint(model: DenchCloudCatalogModel): string {
   const parts: string[] = [model.provider];
   if (model.reasoning) parts.push("reasoning");
+  if (model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) parts.push("recommended");
   return parts.join(" · ");
 }

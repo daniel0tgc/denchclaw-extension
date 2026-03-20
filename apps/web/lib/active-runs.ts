@@ -9,7 +9,7 @@
  *  - New HTTP connections can re-attach to a running stream.
  */
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { join, resolve, basename } from "node:path";
 import {
 	readFileSync,
 	writeFileSync,
@@ -207,13 +207,26 @@ const activeRuns: Map<string, ActiveRun> =
 
 const fileMutationQueues = new Map<string, Promise<void>>();
 
-async function pathExistsAsync(path: string): Promise<boolean> {
+async function pathExistsAsync(filePath: string): Promise<boolean> {
 	try {
-		await access(path);
+		await access(filePath);
 		return true;
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Build a `.jsonl` path for `sessionId` that is guaranteed to live inside
+ * `webChatDir()`.  `basename()` strips any directory-traversal segments.
+ */
+function safeSessionFilePath(sessionId: string): string {
+	const dir = resolve(webChatDir());
+	const safe = resolve(dir, basename(sessionId) + ".jsonl");
+	if (!safe.startsWith(dir + "/")) {
+		throw new Error("Invalid session id");
+	}
+	return safe;
 }
 
 async function queueFileMutation<T>(
@@ -425,7 +438,7 @@ export async function persistSubscribeUserMessage(
 	// Write the user message to the session JSONL (same as persistUserMessage
 	// does for parent sessions) so it survives page reloads.
 	try {
-		const fp = join(webChatDir(), `${sessionKey}.jsonl`);
+		const fp = safeSessionFilePath(sessionKey);
 		await ensureDir();
 		await queueFileMutation(fp, async () => {
 			if (!await pathExistsAsync(fp)) {await writeFile(fp, "");}
@@ -1248,7 +1261,7 @@ function deferredTranscriptEnrich(sessionKey: string, pinnedAgentId?: string): v
 		if (textToTools.size === 0) {return;}
 
 		// Read and enrich web-chat JSONL
-		const fp = join(webChatDir(), `${sessionKey}.jsonl`);
+		const fp = safeSessionFilePath(sessionKey);
 		if (!existsSync(fp)) {return;}
 		const lines = readFileSync(fp, "utf-8").split("\n").filter((l) => l.trim());
 		const messages = lines.map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return null; } }).filter(Boolean) as Array<Record<string, unknown>>;
@@ -1296,7 +1309,7 @@ export async function persistUserMessage(
 	msg: { id: string; content: string; parts?: unknown[]; html?: string },
 ): Promise<void> {
 	await ensureDir();
-	const filePath = join(webChatDir(), `${sessionId}.jsonl`);
+	const filePath = safeSessionFilePath(sessionId);
 
 	const line = JSON.stringify({
 		id: msg.id,
@@ -2218,7 +2231,7 @@ async function upsertMessage(
 	message: Record<string, unknown>,
 ) {
 	await ensureDir();
-	const fp = join(webChatDir(), `${sessionId}.jsonl`);
+	const fp = safeSessionFilePath(sessionId);
 	const msgId = message.id as string;
 	let found = false;
 	await queueFileMutation(fp, async () => {

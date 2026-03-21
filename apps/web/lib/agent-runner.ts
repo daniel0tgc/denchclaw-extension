@@ -556,7 +556,7 @@ class GatewayWsClient {
 		if (this.ws) {
 			return;
 		}
-		const ws = new NodeWebSocket(this.settings.url);
+		const ws = new NodeWebSocket(this.settings.url, { origin: this.settings.url });
 		this.ws = ws;
 
 		// Attach message/close handlers BEFORE awaiting "open" so that

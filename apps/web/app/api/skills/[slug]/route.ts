@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,11 @@ export async function DELETE(
     return Response.json({ ok: false, error: "Workspace root not found" }, { status: 500 });
   }
 
-  const skillDir = join(workspaceRoot, "skills", slug);
+  const skillsDir = join(workspaceRoot, "skills");
+  const skillDir = resolve(skillsDir, slug);
+  if (!skillDir.startsWith(skillsDir + "/")) {
+    return Response.json({ ok: false, error: "Invalid skill slug" }, { status: 400 });
+  }
   if (!existsSync(skillDir)) {
     return Response.json({ ok: false, error: "Skill not found" }, { status: 404 });
   }

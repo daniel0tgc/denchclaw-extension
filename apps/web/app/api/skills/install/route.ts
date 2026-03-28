@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -31,7 +31,10 @@ export async function POST(req: Request) {
   }
 
   const skillsDir = join(workspaceRoot, "skills");
-  const targetDir = join(skillsDir, slug);
+  const targetDir = resolve(skillsDir, slug);
+  if (!targetDir.startsWith(skillsDir + "/")) {
+    return Response.json({ ok: false, error: "Invalid skill slug" }, { status: 400 });
+  }
 
   try {
     let downloadUrl = `${CLAWHUB_BASE}/download?slug=${encodeURIComponent(slug)}`;

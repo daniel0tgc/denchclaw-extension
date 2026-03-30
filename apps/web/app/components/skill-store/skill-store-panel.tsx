@@ -162,7 +162,7 @@ export function SkillStorePanel() {
 
       {/* Tab bar */}
       <div
-        className="flex items-center gap-1 mb-6 rounded-xl p-1"
+        className="flex w-fit items-center gap-1 mb-6 rounded-xl p-1"
         style={{ background: "var(--color-surface-hover)" }}
       >
         {TABS.map((tab) => (

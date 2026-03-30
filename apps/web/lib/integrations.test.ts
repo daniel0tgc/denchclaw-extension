@@ -330,4 +330,112 @@ describe("integrations state", () => {
       provider: "duckduckgo",
     });
   });
+
+  it("hard-enables Apollo when the plugin asset is present", async () => {
+    const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+    const mockWrite = vi.mocked(writeFileSync);
+    let openClawJson = JSON.stringify({
+      plugins: {
+        entries: {},
+      },
+    });
+
+    mockExists.mockImplementation((path) => {
+      const value = String(path);
+      return value.endsWith("openclaw.json") || value === "/home/testuser/.openclaw-dench/extensions/apollo-enrichment";
+    });
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return openClawJson as never;
+      }
+      return "" as never;
+    });
+    mockWrite.mockImplementation((path, data) => {
+      if (String(path).endsWith("openclaw.json")) {
+        openClawJson = String(data);
+      }
+    });
+
+    const { setApolloIntegrationEnabled } = await import("./integrations.js");
+    const result = setApolloIntegrationEnabled(true);
+
+    expect(result.changed).toBe(true);
+    const writtenConfig = JSON.parse(openClawJson);
+    expect(writtenConfig.plugins.allow).toEqual(["apollo-enrichment"]);
+    expect(writtenConfig.plugins.entries["apollo-enrichment"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.load.paths).toEqual([
+      "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+    ]);
+    expect(writtenConfig.plugins.installs["apollo-enrichment"]).toEqual({
+      installPath: "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+      sourcePath: expect.any(String),
+    });
+  });
+
+  it("removes and restores the Dench ElevenLabs override", async () => {
+    const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+    const mockWrite = vi.mocked(writeFileSync);
+    let openClawJson = JSON.stringify({
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dench-key",
+          },
+        },
+      },
+      messages: {
+        tts: {
+          elevenlabs: {
+            baseUrl: "https://gateway.merseoriginals.com",
+            apiKey: "dench-key",
+            voiceId: "voice_123",
+          },
+        },
+      },
+      plugins: {
+        entries: {
+          "dench-ai-gateway": {
+            enabled: true,
+            config: {
+              gatewayUrl: "https://gateway.merseoriginals.com",
+            },
+          },
+        },
+      },
+    });
+
+    mockExists.mockImplementation((path) => String(path).endsWith("openclaw.json"));
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return openClawJson as never;
+      }
+      return "" as never;
+    });
+    mockWrite.mockImplementation((path, data) => {
+      if (String(path).endsWith("openclaw.json")) {
+        openClawJson = String(data);
+      }
+    });
+
+    const { setElevenLabsIntegrationEnabled } = await import("./integrations.js");
+    const disabled = setElevenLabsIntegrationEnabled(false);
+    expect(disabled.changed).toBe(true);
+    let writtenConfig = JSON.parse(openClawJson);
+    expect(writtenConfig.messages.tts.elevenlabs).toEqual({
+      voiceId: "voice_123",
+    });
+
+    const enabled = setElevenLabsIntegrationEnabled(true);
+    expect(enabled.changed).toBe(true);
+    writtenConfig = JSON.parse(openClawJson);
+    expect(writtenConfig.messages.tts.elevenlabs).toEqual({
+      voiceId: "voice_123",
+      baseUrl: "https://gateway.merseoriginals.com",
+      apiKey: "dench-key",
+    });
+  });
 });

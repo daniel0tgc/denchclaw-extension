@@ -370,6 +370,30 @@ function resolveDenchAuth(config: OpenClawConfig): IntegrationAuthSummary {
   return { configured: false, source: "missing" };
 }
 
+function resolveDenchApiKey(config: OpenClawConfig): string | null {
+  const provider = asRecord(asRecord(config.models?.providers)?.["dench-cloud"]);
+  if (readString(provider?.apiKey)) {
+    return readString(provider?.apiKey) ?? null;
+  }
+  if (process.env.DENCH_CLOUD_API_KEY?.trim()) {
+    return process.env.DENCH_CLOUD_API_KEY.trim();
+  }
+  if (process.env.DENCH_API_KEY?.trim()) {
+    return process.env.DENCH_API_KEY.trim();
+  }
+  return null;
+}
+
+function ensureTtsConfig(config: OpenClawConfig): Record<string, unknown> {
+  if (!config.messages) {
+    config.messages = {};
+  }
+  if (!config.messages.tts) {
+    config.messages.tts = {};
+  }
+  return config.messages.tts;
+}
+
 function readPluginState(config: OpenClawConfig, pluginId: string): IntegrationPluginState {
   const entries = asRecord(config.plugins?.entries);
   const installs = asRecord(config.plugins?.installs);
@@ -588,6 +612,76 @@ export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleRes
   if (JSON.stringify(nextMetadata) !== JSON.stringify(metadata)) {
     writeIntegrationsMetadata(nextMetadata);
     changed = true;
+  }
+
+  if (changed) {
+    writeOpenClawConfigForIntegrations(config);
+  }
+
+  return {
+    state: getIntegrationsState(),
+    changed,
+  };
+}
+
+export function setApolloIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
+  const config = readOpenClawConfigForIntegrations();
+  let changed = false;
+
+  if (enabled) {
+    changed = ensurePluginRegistration(config, APOLLO_PLUGIN_ID) || changed;
+    changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, true) || changed;
+  } else {
+    changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, false) || changed;
+  }
+
+  if (changed) {
+    writeOpenClawConfigForIntegrations(config);
+  }
+
+  return {
+    state: getIntegrationsState(),
+    changed,
+  };
+}
+
+export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
+  const config = readOpenClawConfigForIntegrations();
+  const tts = ensureTtsConfig(config);
+  const gatewayBaseUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
+  const denchApiKey = resolveDenchApiKey(config);
+  let changed = false;
+
+  if (enabled) {
+    const existing = asRecord(tts.elevenlabs);
+    if (!existing) {
+      tts.elevenlabs = {};
+    }
+    const elevenlabs = asRecord(tts.elevenlabs);
+    if (elevenlabs && elevenlabs.baseUrl !== gatewayBaseUrl) {
+      elevenlabs.baseUrl = gatewayBaseUrl;
+      changed = true;
+    }
+    if (elevenlabs && denchApiKey && elevenlabs.apiKey !== denchApiKey) {
+      elevenlabs.apiKey = denchApiKey;
+      changed = true;
+    }
+  } else {
+    const elevenlabs = asRecord(tts.elevenlabs);
+    if (elevenlabs) {
+      if (elevenlabs.baseUrl === gatewayBaseUrl || elevenlabs.baseUrl === DEFAULT_GATEWAY_URL) {
+        delete elevenlabs.baseUrl;
+        changed = true;
+      }
+      if (denchApiKey && elevenlabs.apiKey === denchApiKey) {
+        delete elevenlabs.apiKey;
+        changed = true;
+      }
+      if (Object.keys(elevenlabs).length === 0) {
+        delete tts.elevenlabs;
+        changed = true;
+      }
+    }
   }
 
   if (changed) {

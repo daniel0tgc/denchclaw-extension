@@ -1,5 +1,7 @@
 import {
   type DenchIntegrationId,
+  setApolloIntegrationEnabled,
+  setElevenLabsIntegrationEnabled,
   setExaIntegrationEnabled,
 } from "@/lib/integrations";
 
@@ -34,14 +36,32 @@ export async function POST(
     return Response.json({ error: "Field 'enabled' must be a boolean." }, { status: 400 });
   }
 
-  if (id !== "exa") {
-    return Response.json({ error: `Integration '${id}' is not writable yet.` }, { status: 409 });
+  switch (id) {
+    case "exa": {
+      const result = setExaIntegrationEnabled(body.enabled);
+      return Response.json({
+        integration: id,
+        changed: result.changed,
+        ...result.state,
+      });
+    }
+    case "apollo": {
+      const result = setApolloIntegrationEnabled(body.enabled);
+      return Response.json({
+        integration: id,
+        changed: result.changed,
+        ...result.state,
+      });
+    }
+    case "elevenlabs": {
+      const result = setElevenLabsIntegrationEnabled(body.enabled);
+      return Response.json({
+        integration: id,
+        changed: result.changed,
+        ...result.state,
+      });
+    }
+    default:
+      return Response.json({ error: `Integration '${id}' is not writable yet.` }, { status: 409 });
   }
-
-  const result = setExaIntegrationEnabled(body.enabled);
-  return Response.json({
-    integration: id,
-    changed: result.changed,
-    ...result.state,
-  });
 }

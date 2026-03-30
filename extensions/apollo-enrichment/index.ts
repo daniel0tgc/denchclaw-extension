@@ -1,4 +1,3 @@
-import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 export const id = "apollo-enrichment";
@@ -57,71 +56,37 @@ function jsonResult(payload: unknown) {
   };
 }
 
-function stringEnum<T extends readonly string[]>(
-  values: T,
-  description: string,
-) {
-  return Type.Unsafe<T[number]>({
-    type: "string",
-    enum: [...values],
-    description,
-  });
-}
-
-const ApolloEnrichParameters = Type.Object(
-  {
-    action: stringEnum(
-      APOLLO_ACTIONS,
-      'Action to perform: "people", "company", or "people_search".',
-    ),
-    email: Type.Optional(Type.String({ description: "Email for people enrichment." })),
-    linkedinUrl: Type.Optional(
-      Type.String({ description: "LinkedIn URL for people enrichment." }),
-    ),
-    firstName: Type.Optional(Type.String({ description: "Person first name." })),
-    lastName: Type.Optional(Type.String({ description: "Person last name." })),
-    domain: Type.Optional(
-      Type.String({ description: "Company domain such as acme.com." }),
-    ),
-    organizationName: Type.Optional(
-      Type.String({ description: "Organization name hint for people enrichment." }),
-    ),
-    personTitles: Type.Optional(
-      Type.Array(Type.String(), { description: "Job titles for people search." }),
-    ),
-    personLocations: Type.Optional(
-      Type.Array(Type.String(), { description: "Locations for people search." }),
-    ),
-    organizationDomains: Type.Optional(
-      Type.Array(Type.String(), { description: "Organization domains for people search." }),
-    ),
-    page: Type.Optional(Type.Number({ description: "People search page number." })),
-    perPage: Type.Optional(Type.Number({ description: "People search page size." })),
-    first_name: Type.Optional(
-      Type.String({ description: "Legacy alias for firstName." }),
-    ),
-    last_name: Type.Optional(
-      Type.String({ description: "Legacy alias for lastName." }),
-    ),
-    organization_name: Type.Optional(
-      Type.String({ description: "Legacy alias for organizationName." }),
-    ),
-    linkedin_url: Type.Optional(
-      Type.String({ description: "Legacy alias for linkedinUrl." }),
-    ),
-    person_titles: Type.Optional(
-      Type.Array(Type.String(), { description: "Legacy alias for personTitles." }),
-    ),
-    person_locations: Type.Optional(
-      Type.Array(Type.String(), { description: "Legacy alias for personLocations." }),
-    ),
-    organization_domains: Type.Optional(
-      Type.Array(Type.String(), { description: "Legacy alias for organizationDomains." }),
-    ),
-    per_page: Type.Optional(Type.Number({ description: "Legacy alias for perPage." })),
+const ApolloEnrichParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    action: {
+      type: "string",
+      enum: [...APOLLO_ACTIONS],
+      description: 'Action to perform: "people", "company", or "people_search".',
+    },
+    email: { type: "string", description: "Email for people enrichment." },
+    linkedinUrl: { type: "string", description: "LinkedIn URL for people enrichment." },
+    firstName: { type: "string", description: "Person first name." },
+    lastName: { type: "string", description: "Person last name." },
+    domain: { type: "string", description: "Company domain such as acme.com." },
+    organizationName: { type: "string", description: "Organization name hint for people enrichment." },
+    personTitles: { type: "array", items: { type: "string" }, description: "Job titles for people search." },
+    personLocations: { type: "array", items: { type: "string" }, description: "Locations for people search." },
+    organizationDomains: { type: "array", items: { type: "string" }, description: "Organization domains for people search." },
+    page: { type: "number", description: "People search page number." },
+    perPage: { type: "number", description: "People search page size." },
+    first_name: { type: "string", description: "Legacy alias for firstName." },
+    last_name: { type: "string", description: "Legacy alias for lastName." },
+    organization_name: { type: "string", description: "Legacy alias for organizationName." },
+    linkedin_url: { type: "string", description: "Legacy alias for linkedinUrl." },
+    person_titles: { type: "array", items: { type: "string" }, description: "Legacy alias for personTitles." },
+    person_locations: { type: "array", items: { type: "string" }, description: "Legacy alias for personLocations." },
+    organization_domains: { type: "array", items: { type: "string" }, description: "Legacy alias for organizationDomains." },
+    per_page: { type: "number", description: "Legacy alias for perPage." },
   },
-  { additionalProperties: false },
-);
+  required: ["action"],
+};
 
 function buildPeopleBody(params: Record<string, unknown>) {
   const body: Record<string, unknown> = {};
@@ -289,18 +254,15 @@ export default function register(api: OpenClawPluginApi) {
     return;
   }
 
-  api.registerTool(
-    {
-      name: "apollo_enrich",
-      label: "Apollo Enrichment",
-      description:
-        "Look up Apollo people, companies, or people search results through the Dench Cloud gateway. " +
-        'Use action "people" for an individual profile, "company" for company enrichment by domain, ' +
-        'or "people_search" to search people with filters such as titles, locations, and company domains.',
-      parameters: ApolloEnrichParameters,
-      execute: (toolCallId: string, params: Record<string, unknown>) =>
-        executeApolloEnrich(gatewayUrl, apiKey, toolCallId, params),
-    } as AnyAgentTool,
-    { optional: true },
-  );
+  api.registerTool({
+    name: "apollo_enrich",
+    label: "Apollo Enrichment",
+    description:
+      "Look up Apollo people, companies, or people search results through the Dench Cloud gateway. " +
+      'Use action "people" for an individual profile, "company" for company enrichment by domain, ' +
+      'or "people_search" to search people with filters such as titles, locations, and company domains.',
+    parameters: ApolloEnrichParameters,
+    execute: (toolCallId: string, params: Record<string, unknown>) =>
+      executeApolloEnrich(gatewayUrl, apiKey, toolCallId, params),
+  } as AnyAgentTool);
 }

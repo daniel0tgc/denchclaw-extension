@@ -1,4 +1,3 @@
-import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 export const id = "exa-search";
@@ -55,17 +54,6 @@ function jsonResult(payload: unknown) {
   };
 }
 
-function stringEnum<T extends readonly string[]>(
-  values: T,
-  description: string,
-) {
-  return Type.Unsafe<T[number]>({
-    type: "string",
-    enum: [...values],
-    description,
-  });
-}
-
 const SEARCH_TYPES = [
   "auto",
   "neural",
@@ -83,66 +71,52 @@ const SEARCH_CATEGORIES = [
   "people",
 ] as const;
 
-const ExaSearchParameters = Type.Object(
-  {
-    query: Type.String({ description: "Search query." }),
-    searchType: Type.Optional(stringEnum(SEARCH_TYPES, "Exa search type.")),
-    category: Type.Optional(stringEnum(SEARCH_CATEGORIES, "Exa search category.")),
-    numResults: Type.Optional(Type.Number({ description: "Maximum number of results." })),
-    includeDomains: Type.Optional(
-      Type.Array(Type.String(), { description: "Only search these domains." }),
-    ),
-    excludeDomains: Type.Optional(
-      Type.Array(Type.String(), { description: "Exclude these domains." }),
-    ),
-    startPublishedDate: Type.Optional(
-      Type.String({ description: "ISO date lower bound for published date." }),
-    ),
-    endPublishedDate: Type.Optional(
-      Type.String({ description: "ISO date upper bound for published date." }),
-    ),
-    text: Type.Optional(Type.Boolean({ description: "Include extracted page text." })),
-    textMaxCharacters: Type.Optional(
-      Type.Number({ description: "Maximum characters of extracted text." }),
-    ),
-    highlights: Type.Optional(Type.Boolean({ description: "Include highlights." })),
-    highlightsMaxCharacters: Type.Optional(
-      Type.Number({ description: "Maximum characters in highlights." }),
-    ),
-    summary: Type.Optional(Type.Boolean({ description: "Include a summary." })),
-    summaryQuery: Type.Optional(
-      Type.String({ description: "Summary query prompt to send upstream." }),
-    ),
+const ExaSearchParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    query: { type: "string", description: "Search query." },
+    searchType: { type: "string", enum: [...SEARCH_TYPES], description: "Exa search type." },
+    category: { type: "string", enum: [...SEARCH_CATEGORIES], description: "Exa search category." },
+    numResults: { type: "number", description: "Maximum number of results." },
+    includeDomains: { type: "array", items: { type: "string" }, description: "Only search these domains." },
+    excludeDomains: { type: "array", items: { type: "string" }, description: "Exclude these domains." },
+    startPublishedDate: { type: "string", description: "ISO date lower bound for published date." },
+    endPublishedDate: { type: "string", description: "ISO date upper bound for published date." },
+    text: { type: "boolean", description: "Include extracted page text." },
+    textMaxCharacters: { type: "number", description: "Maximum characters of extracted text." },
+    highlights: { type: "boolean", description: "Include highlights." },
+    highlightsMaxCharacters: { type: "number", description: "Maximum characters in highlights." },
+    summary: { type: "boolean", description: "Include a summary." },
+    summaryQuery: { type: "string", description: "Summary query prompt to send upstream." },
   },
-  { additionalProperties: false },
-);
+  required: ["query"],
+};
 
-const ExaContentsParameters = Type.Object(
-  {
-    urls: Type.Array(Type.String(), { description: "URLs to fetch content for." }),
-    text: Type.Optional(Type.Boolean({ description: "Include extracted page text." })),
-    textMaxCharacters: Type.Optional(
-      Type.Number({ description: "Maximum characters of extracted text." }),
-    ),
-    highlights: Type.Optional(Type.Boolean({ description: "Include highlights." })),
-    highlightsMaxCharacters: Type.Optional(
-      Type.Number({ description: "Maximum characters in highlights." }),
-    ),
-    summary: Type.Optional(Type.Boolean({ description: "Include a summary." })),
-    summaryQuery: Type.Optional(
-      Type.String({ description: "Summary query prompt to send upstream." }),
-    ),
+const ExaContentsParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    urls: { type: "array", items: { type: "string" }, description: "URLs to fetch content for." },
+    text: { type: "boolean", description: "Include extracted page text." },
+    textMaxCharacters: { type: "number", description: "Maximum characters of extracted text." },
+    highlights: { type: "boolean", description: "Include highlights." },
+    highlightsMaxCharacters: { type: "number", description: "Maximum characters in highlights." },
+    summary: { type: "boolean", description: "Include a summary." },
+    summaryQuery: { type: "string", description: "Summary query prompt to send upstream." },
   },
-  { additionalProperties: false },
-);
+  required: ["urls"],
+};
 
-const ExaAnswerParameters = Type.Object(
-  {
-    query: Type.String({ description: "Question to answer." }),
-    text: Type.Optional(Type.Boolean({ description: "Include extra answer text fields." })),
+const ExaAnswerParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    query: { type: "string", description: "Question to answer." },
+    text: { type: "boolean", description: "Include extra answer text fields." },
   },
-  { additionalProperties: false },
-);
+  required: ["query"],
+};
 
 function buildTextOption(params: Record<string, unknown>) {
   if (typeof params.textMaxCharacters === "number") {
@@ -383,7 +357,7 @@ export default function register(api: OpenClawPluginApi) {
     return;
   }
 
-  api.registerTool(createExaSearchTool(gatewayUrl, apiKey), { optional: true });
-  api.registerTool(createExaContentsTool(gatewayUrl, apiKey), { optional: true });
-  api.registerTool(createExaAnswerTool(gatewayUrl, apiKey), { optional: true });
+  api.registerTool(createExaSearchTool(gatewayUrl, apiKey));
+  api.registerTool(createExaContentsTool(gatewayUrl, apiKey));
+  api.registerTool(createExaAnswerTool(gatewayUrl, apiKey));
 }

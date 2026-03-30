@@ -92,6 +92,11 @@ function IntegrationCard({
 }) {
   const Icon = INTEGRATION_ICONS[integration.id];
   const description = INTEGRATION_DESCRIPTIONS[integration.id];
+  const statusText = isSaving
+    ? "Saving..."
+    : integration.locked
+      ? "Unavailable until Dench Cloud is ready"
+      : description;
 
   return (
     <div
@@ -111,15 +116,26 @@ function IntegrationCard({
           <div className="truncate text-sm font-medium text-foreground">
             {integration.label}
           </div>
-          <div className="text-[11px] leading-4 text-muted-foreground">
-            {isSaving ? "Saving..." : description}
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] leading-4 text-muted-foreground">
+            <span>{statusText}</span>
+            {integration.lockBadge && (
+              <span
+                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+                style={{
+                  background: "var(--color-surface-hover)",
+                  color: "var(--color-text)",
+                }}
+              >
+                {integration.lockBadge}
+              </span>
+            )}
           </div>
         </div>
       </div>
       <Switch
         aria-label={`Toggle ${integration.label}`}
         checked={integration.enabled}
-        disabled={isSaving}
+        disabled={isSaving || integration.locked}
         onCheckedChange={(checked) => onToggle(integration, checked)}
       />
     </div>

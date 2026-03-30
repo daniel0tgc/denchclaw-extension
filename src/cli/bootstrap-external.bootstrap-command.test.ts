@@ -754,6 +754,28 @@ describe("bootstrapCommand always-onboard behavior", () => {
         installPath: expect.stringContaining(path.join("extensions", "dench-ai-gateway")),
       }),
     );
+    expect(updatedConfig.plugins.entries["exa-search"]).toEqual(
+      expect.objectContaining({ enabled: true }),
+    );
+    expect(updatedConfig.plugins.entries["apollo-enrichment"]).toEqual(
+      expect.objectContaining({ enabled: true }),
+    );
+    expect(updatedConfig.tools.web.search.enabled).toBe(false);
+    expect(updatedConfig.tools.deny).toContain("web_search");
+    expect(updatedConfig.messages.tts.provider).toBe("elevenlabs");
+    expect(updatedConfig.messages.tts.providers.elevenlabs).toEqual(
+      expect.objectContaining({
+        baseUrl: "https://gateway.merseoriginals.com",
+        apiKey: "dench_live_key",
+      }),
+    );
+    const integrationsMetadata = JSON.parse(
+      readFileSync(path.join(stateDir, ".dench-integrations.json"), "utf-8"),
+    );
+    expect(integrationsMetadata.exa).toEqual({
+      ownsSearch: true,
+      fallbackProvider: "duckduckgo",
+    });
     expect(existsSync(path.join(stateDir, "extensions", "dench-cloud-provider"))).toBe(false);
   });
 
@@ -806,6 +828,44 @@ describe("bootstrapCommand always-onboard behavior", () => {
         expect.objectContaining({ id: "anthropic.claude-sonnet-4-6-v1" }),
       ]),
     );
+  });
+
+  it("keeps Dench-only integrations off when Dench Cloud is declined", async () => {
+    promptMocks.confirmDecision = false;
+    const runtime: RuntimeEnv = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+
+    await withForcedStdinTty(true, async () => {
+      await bootstrapCommand(
+        {
+          noOpen: true,
+          skipUpdate: true,
+        },
+        runtime,
+      );
+    });
+
+    const updatedConfig = JSON.parse(readFileSync(path.join(stateDir, "openclaw.json"), "utf-8"));
+    expect(updatedConfig.plugins.entries["exa-search"]).toEqual(
+      expect.objectContaining({ enabled: false }),
+    );
+    expect(updatedConfig.plugins.entries["apollo-enrichment"]).toEqual(
+      expect.objectContaining({ enabled: false }),
+    );
+    expect(updatedConfig.tools.web.search.enabled).toBe(true);
+    expect(updatedConfig.tools.deny ?? []).not.toContain("web_search");
+    expect(updatedConfig.messages?.tts?.provider).toBeUndefined();
+    expect(updatedConfig.messages?.tts?.providers?.elevenlabs).toBeUndefined();
+    const integrationsMetadata = JSON.parse(
+      readFileSync(path.join(stateDir, ".dench-integrations.json"), "utf-8"),
+    );
+    expect(integrationsMetadata.exa).toEqual({
+      ownsSearch: false,
+      fallbackProvider: "duckduckgo",
+    });
   });
 
   it("re-prompts for Dench Cloud every bootstrap and pre-fills the saved key and model", async () => {

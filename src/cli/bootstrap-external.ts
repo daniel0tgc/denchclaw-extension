@@ -520,6 +520,124 @@ async function setOpenClawConfigJson(params: {
   });
 }
 
+function readDenchIntegrationsMetadata(stateDir: string): Record<string, unknown> | undefined {
+  const metadataPath = path.join(stateDir, ".dench-integrations.json");
+  if (!existsSync(metadataPath)) {
+    return undefined;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(metadataPath, "utf-8"));
+    return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function disableDenchElevenLabsOverride(tts: Record<string, unknown>, gatewayUrl?: string, apiKey?: string): void {
+  const providers = asRecord(tts.providers);
+  const elevenlabs = asRecord(providers?.elevenlabs);
+  if (elevenlabs) {
+    if (
+      typeof elevenlabs.baseUrl === "string" &&
+      (!gatewayUrl || elevenlabs.baseUrl === gatewayUrl)
+    ) {
+      delete elevenlabs.baseUrl;
+    }
+    if (
+      typeof elevenlabs.apiKey === "string" &&
+      (!apiKey || elevenlabs.apiKey === apiKey)
+    ) {
+      delete elevenlabs.apiKey;
+    }
+    if (Object.keys(elevenlabs).length === 0 && providers) {
+      delete providers.elevenlabs;
+    }
+  }
+  if (tts.provider === "elevenlabs") {
+    delete tts.provider;
+  }
+  if (providers && Object.keys(providers).length === 0) {
+    delete tts.providers;
+  }
+}
+
+function applyDenchManagedIntegrationDefaults(params: {
+  stateDir: string;
+  denchEnabled: boolean;
+  gatewayUrl?: string;
+  apiKey?: string;
+}): void {
+  const rawConfig = readBootstrapConfig(params.stateDir) ?? {};
+  const nextConfig = { ...rawConfig };
+
+  const plugins = { ...(asRecord(nextConfig.plugins) ?? {}) };
+  const entries = { ...(asRecord(plugins.entries) ?? {}) };
+  entries["exa-search"] = {
+    ...(asRecord(entries["exa-search"]) ?? {}),
+    enabled: params.denchEnabled,
+  };
+  entries["apollo-enrichment"] = {
+    ...(asRecord(entries["apollo-enrichment"]) ?? {}),
+    enabled: params.denchEnabled,
+  };
+  plugins.entries = entries;
+  nextConfig.plugins = plugins;
+
+  const tools = { ...(asRecord(nextConfig.tools) ?? {}) };
+  const deny = Array.isArray(tools.deny)
+    ? (tools.deny.filter((value): value is string => typeof value === "string"))
+    : [];
+  const web = { ...(asRecord(tools.web) ?? {}) };
+  const search = { ...(asRecord(web.search) ?? {}) };
+  search.enabled = !params.denchEnabled;
+  web.search = search;
+  tools.web = web;
+  tools.deny = params.denchEnabled
+    ? uniqueStrings([...deny, "web_search"])
+    : deny.filter((value) => value !== "web_search");
+  nextConfig.tools = tools;
+
+  const messages = { ...(asRecord(nextConfig.messages) ?? {}) };
+  const tts = { ...(asRecord(messages.tts) ?? {}) };
+  const providers = { ...(asRecord(tts.providers) ?? {}) };
+  const elevenlabs = { ...(asRecord(providers.elevenlabs) ?? {}) };
+  if (params.denchEnabled && params.gatewayUrl && params.apiKey) {
+    tts.provider = "elevenlabs";
+    elevenlabs.baseUrl = params.gatewayUrl;
+    elevenlabs.apiKey = params.apiKey;
+    providers.elevenlabs = elevenlabs;
+    tts.providers = providers;
+  } else {
+    tts.providers = providers;
+    disableDenchElevenLabsOverride(tts, params.gatewayUrl, params.apiKey);
+  }
+  messages.tts = tts;
+  nextConfig.messages = messages;
+
+  writeFileSync(
+    path.join(params.stateDir, "openclaw.json"),
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+  );
+
+  const currentMetadata = readDenchIntegrationsMetadata(params.stateDir) ?? {};
+  const nextMetadata = {
+    ...currentMetadata,
+    schemaVersion: 1,
+    exa: {
+      ...(asRecord(currentMetadata.exa) ?? {}),
+      ownsSearch: params.denchEnabled,
+      fallbackProvider:
+        typeof asRecord(currentMetadata.exa)?.fallbackProvider === "string"
+          ? asRecord(currentMetadata.exa)?.fallbackProvider
+          : "duckduckgo",
+    },
+  };
+  writeFileSync(
+    path.join(params.stateDir, ".dench-integrations.json"),
+    `${JSON.stringify(nextMetadata, null, 2)}\n`,
+  );
+}
+
 async function syncBundledPlugins(params: {
   openclawCommand: string;
   profile: string;
@@ -2360,12 +2478,12 @@ export async function bootstrapCommand(
     {
       pluginId: "apollo-enrichment",
       sourceDirName: "apollo-enrichment",
-      enabled: true,
+      enabled: denchCloudSelection.enabled,
     },
     {
       pluginId: "exa-search",
       sourceDirName: "exa-search",
-      enabled: true,
+      enabled: denchCloudSelection.enabled,
     },
   ];
 
@@ -2481,6 +2599,14 @@ export async function bootstrapCommand(
 
   postOnboardSpinner?.message("Configuring agent defaults…");
   await ensureAgentDefaults(openclawCommand, profile);
+
+  postOnboardSpinner?.message("Applying Dench integration defaults…");
+  applyDenchManagedIntegrationDefaults({
+    stateDir,
+    denchEnabled: denchCloudSelection.enabled,
+    gatewayUrl: denchCloudSelection.gatewayUrl,
+    apiKey: denchCloudSelection.apiKey,
+  });
 
   // ── Gateway daemon restart + readiness verification ──
   // Skipped entirely in daemonless mode — the user manages the gateway process

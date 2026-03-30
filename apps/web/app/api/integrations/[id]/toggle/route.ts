@@ -1,5 +1,6 @@
 import {
   type DenchIntegrationId,
+  normalizeLockedDenchIntegrations,
   refreshIntegrationsRuntime,
   setApolloIntegrationEnabled,
   setElevenLabsIntegrationEnabled,
@@ -37,6 +38,28 @@ export async function POST(
     return Response.json({ error: "Field 'enabled' must be a boolean." }, { status: 400 });
   }
 
+  const normalized = normalizeLockedDenchIntegrations();
+  const target = normalized.state.integrations.find((integration) => integration.id === id);
+  if (body.enabled && target?.locked) {
+    const refresh = normalized.changed
+      ? await refreshIntegrationsRuntime()
+      : {
+        attempted: false,
+        restarted: false,
+        error: null,
+        profile: "default",
+      };
+    return Response.json({
+      error: target.lockReason === "missing_dench_key"
+        ? "This integration requires a Dench Cloud API key."
+        : "This integration requires Dench Cloud to be the primary provider.",
+      integration: id,
+      changed: normalized.changed,
+      refresh,
+      ...normalized.state,
+    }, { status: 409 });
+  }
+
   let result;
   switch (id) {
     case "exa": {
@@ -53,6 +76,21 @@ export async function POST(
     }
     default:
       return Response.json({ error: `Integration '${id}' is not writable yet.` }, { status: 409 });
+  }
+
+  if (result.error) {
+    return Response.json({
+      error: result.error,
+      integration: id,
+      changed: result.changed,
+      refresh: {
+        attempted: false,
+        restarted: false,
+        error: null,
+        profile: "default",
+      },
+      ...result.state,
+    }, { status: 409 });
   }
 
   const refresh = result.changed

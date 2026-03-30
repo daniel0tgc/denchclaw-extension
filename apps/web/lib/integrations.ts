@@ -26,6 +26,10 @@ export type IntegrationAuthSummary = {
   source: "config" | "env" | "missing";
 };
 
+export type DenchIntegrationLockReason =
+  | "missing_dench_key"
+  | "dench_not_primary";
+
 export type IntegrationPluginState = {
   pluginId: string;
   configured: boolean;
@@ -55,6 +59,9 @@ export type DenchIntegrationState = {
   label: string;
   enabled: boolean;
   available: boolean;
+  locked: boolean;
+  lockReason: DenchIntegrationLockReason | null;
+  lockBadge: string | null;
   gatewayBaseUrl: string | null;
   auth: IntegrationAuthSummary;
   plugin: IntegrationPluginState | null;
@@ -78,6 +85,11 @@ export type BuiltInSearchState = {
 };
 
 export type IntegrationsState = {
+  denchCloud: {
+    hasKey: boolean;
+    isPrimaryProvider: boolean;
+    primaryModel: string | null;
+  };
   metadata: DenchIntegrationMetadata;
   search: {
     builtIn: BuiltInSearchState;
@@ -89,6 +101,7 @@ export type IntegrationsState = {
 export type IntegrationToggleResult = {
   state: IntegrationsState;
   changed: boolean;
+  error: string | null;
 };
 
 export type IntegrationRuntimeRefresh = {
@@ -112,6 +125,15 @@ export type IntegrationsRepairResult = {
   repairs: IntegrationRepairEntry[];
   repairedIds: Array<IntegrationRepairEntry["id"]>;
   state: IntegrationsState;
+};
+
+type DenchCloudEligibility = {
+  hasKey: boolean;
+  isPrimaryProvider: boolean;
+  primaryModel: string | null;
+  locked: boolean;
+  lockReason: DenchIntegrationLockReason | null;
+  lockBadge: string | null;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -473,6 +495,63 @@ function resolveDenchApiKey(config: OpenClawConfig): string | null {
   return null;
 }
 
+function resolvePrimaryModel(config: OpenClawConfig): string | null {
+  const agents = asRecord(config.agents);
+  const defaults = asRecord(agents?.defaults);
+  const model = defaults?.model;
+  if (typeof model === "string") {
+    return readString(model) ?? null;
+  }
+  return readString(asRecord(model)?.primary) ?? null;
+}
+
+function resolveDenchCloudEligibility(
+  config: OpenClawConfig,
+  auth: IntegrationAuthSummary,
+): DenchCloudEligibility {
+  const primaryModel = resolvePrimaryModel(config);
+  const isPrimaryProvider = Boolean(primaryModel?.startsWith("dench-cloud/"));
+  if (!auth.configured) {
+    return {
+      hasKey: false,
+      isPrimaryProvider,
+      primaryModel,
+      locked: true,
+      lockReason: "missing_dench_key",
+      lockBadge: "Get Dench Cloud API Key",
+    };
+  }
+  if (!isPrimaryProvider) {
+    return {
+      hasKey: true,
+      isPrimaryProvider: false,
+      primaryModel,
+      locked: true,
+      lockReason: "dench_not_primary",
+      lockBadge: "Use Dench Cloud",
+    };
+  }
+  return {
+    hasKey: true,
+    isPrimaryProvider: true,
+    primaryModel,
+    locked: false,
+    lockReason: null,
+    lockBadge: null,
+  };
+}
+
+function getLockErrorMessage(lockReason: DenchIntegrationLockReason | null): string {
+  switch (lockReason) {
+    case "missing_dench_key":
+      return "This integration requires a Dench Cloud API key.";
+    case "dench_not_primary":
+      return "This integration requires Dench Cloud to be the primary provider.";
+    default:
+      return "This integration is currently locked.";
+  }
+}
+
 function ensureTtsConfig(config: OpenClawConfig): UnknownRecord {
   const messages = ensureRecord(config, "messages");
   return ensureRecord(messages, "tts");
@@ -520,6 +599,82 @@ function readBuiltInSearchState(config: OpenClawConfig): BuiltInSearchState {
   };
 }
 
+function disableElevenLabsOverride(config: OpenClawConfig): boolean {
+  const tts = ensureTtsConfig(config);
+  const providers = ensureTtsProviders(config);
+  const gatewayBaseUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
+  const denchApiKey = resolveDenchApiKey(config);
+  let changed = false;
+
+  const elevenlabs = asRecord(providers.elevenlabs);
+  if (elevenlabs) {
+    const shouldClearApiKey =
+      (denchApiKey && elevenlabs.apiKey === denchApiKey) ||
+      elevenlabs.baseUrl === gatewayBaseUrl ||
+      elevenlabs.baseUrl === DEFAULT_GATEWAY_URL;
+    if (elevenlabs.baseUrl === gatewayBaseUrl || elevenlabs.baseUrl === DEFAULT_GATEWAY_URL) {
+      delete elevenlabs.baseUrl;
+      changed = true;
+    }
+    if (shouldClearApiKey && elevenlabs.apiKey !== undefined) {
+      delete elevenlabs.apiKey;
+      changed = true;
+    }
+    if (Object.keys(elevenlabs).length === 0) {
+      delete providers.elevenlabs;
+      changed = true;
+    }
+  }
+
+  if (tts.provider === "elevenlabs") {
+    delete tts.provider;
+    changed = true;
+  }
+  if (Object.keys(providers).length === 0 && tts.providers !== undefined) {
+    delete tts.providers;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function normalizeMetadataForDisabledDenchIntegrations(
+  metadata: DenchIntegrationMetadata,
+): DenchIntegrationMetadata {
+  return {
+    ...metadata,
+    schemaVersion: 1,
+    exa: {
+      ownsSearch: false,
+      fallbackProvider: metadata.exa?.fallbackProvider ?? DEFAULT_FALLBACK_PROVIDER,
+    },
+  };
+}
+
+function buildNormalizedLockedState(params: {
+  config: OpenClawConfig;
+  metadata: DenchIntegrationMetadata;
+  eligibility: DenchCloudEligibility;
+}): { changed: boolean; nextMetadata: DenchIntegrationMetadata } {
+  if (!params.eligibility.locked) {
+    return {
+      changed: false,
+      nextMetadata: params.metadata,
+    };
+  }
+
+  let changed = false;
+  changed = setPluginEnabled(params.config, EXA_PLUGIN_ID, false) || changed;
+  changed = setPluginEnabled(params.config, APOLLO_PLUGIN_ID, false) || changed;
+  changed = setWebSearchPolicy(params.config, { enabled: true, denied: false }) || changed;
+  changed = disableElevenLabsOverride(params.config) || changed;
+
+  return {
+    changed,
+    nextMetadata: normalizeMetadataForDisabledDenchIntegrations(params.metadata),
+  };
+}
+
 function resolveEffectiveSearchOwner(params: {
   exaState: DenchIntegrationState;
   builtInSearch: BuiltInSearchState;
@@ -555,6 +710,7 @@ function buildExaState(
   config: OpenClawConfig,
   gatewayBaseUrl: string | null,
   auth: IntegrationAuthSummary,
+  eligibility: DenchCloudEligibility,
   builtInSearch: BuiltInSearchState,
 ): DenchIntegrationState {
   const plugin = readPluginState(config, "exa-search");
@@ -571,8 +727,9 @@ function buildExaState(
     healthIssues.push("built_in_search_still_enabled");
   }
 
-  const enabled = plugin.configured && plugin.enabled;
+  const enabled = !eligibility.locked && plugin.configured && plugin.enabled;
   const available =
+    !eligibility.locked &&
     enabled &&
     plugin.allowlisted &&
     plugin.loadPathConfigured &&
@@ -586,6 +743,9 @@ function buildExaState(
     label: "Exa Search",
     enabled,
     available,
+    locked: eligibility.locked,
+    lockReason: eligibility.lockReason,
+    lockBadge: eligibility.lockBadge,
     gatewayBaseUrl,
     auth,
     plugin,
@@ -599,6 +759,7 @@ function buildApolloState(
   config: OpenClawConfig,
   gatewayBaseUrl: string | null,
   auth: IntegrationAuthSummary,
+  eligibility: DenchCloudEligibility,
 ): DenchIntegrationState {
   const plugin = readPluginState(config, APOLLO_PLUGIN_ID);
   const healthIssues: IntegrationHealthIssue[] = [];
@@ -611,8 +772,9 @@ function buildApolloState(
   if (!auth.configured) healthIssues.push("missing_auth");
   if (!gatewayBaseUrl) healthIssues.push("missing_gateway");
 
-  const enabled = plugin.configured && plugin.enabled;
+  const enabled = !eligibility.locked && plugin.configured && plugin.enabled;
   const available =
+    !eligibility.locked &&
     enabled &&
     plugin.allowlisted &&
     plugin.loadPathConfigured &&
@@ -626,6 +788,9 @@ function buildApolloState(
     label: "Apollo Enrichment",
     enabled,
     available,
+    locked: eligibility.locked,
+    lockReason: eligibility.lockReason,
+    lockBadge: eligibility.lockBadge,
     gatewayBaseUrl,
     auth,
     plugin,
@@ -639,6 +804,7 @@ function buildElevenLabsState(
   config: OpenClawConfig,
   gatewayBaseUrl: string | null,
   auth: IntegrationAuthSummary,
+  eligibility: DenchCloudEligibility,
 ): DenchIntegrationState {
   const messages = asRecord(config.messages);
   const tts = asRecord(messages?.tts);
@@ -660,8 +826,11 @@ function buildElevenLabsState(
   return {
     id: "elevenlabs",
     label: "ElevenLabs",
-    enabled: overrideActive,
-    available: auth.configured && Boolean(gatewayBaseUrl),
+    enabled: !eligibility.locked && overrideActive,
+    available: !eligibility.locked && auth.configured && Boolean(gatewayBaseUrl),
+    locked: eligibility.locked,
+    lockReason: eligibility.lockReason,
+    lockBadge: eligibility.lockBadge,
     gatewayBaseUrl: overrideBaseUrl ?? gatewayBaseUrl,
     auth,
     plugin: null,
@@ -677,12 +846,18 @@ export function getIntegrationsState(): IntegrationsState {
   const metadata = readIntegrationsMetadata();
   const gatewayBaseUrl = resolveGatewayBaseUrl(config);
   const auth = resolveDenchAuth(config);
+  const eligibility = resolveDenchCloudEligibility(config, auth);
   const builtInSearch = readBuiltInSearchState(config);
-  const exa = buildExaState(config, gatewayBaseUrl, auth, builtInSearch);
-  const apollo = buildApolloState(config, gatewayBaseUrl, auth);
-  const elevenlabs = buildElevenLabsState(config, gatewayBaseUrl, auth);
+  const exa = buildExaState(config, gatewayBaseUrl, auth, eligibility, builtInSearch);
+  const apollo = buildApolloState(config, gatewayBaseUrl, auth, eligibility);
+  const elevenlabs = buildElevenLabsState(config, gatewayBaseUrl, auth, eligibility);
 
   return {
+    denchCloud: {
+      hasKey: eligibility.hasKey,
+      isPrimaryProvider: eligibility.isPrimaryProvider,
+      primaryModel: eligibility.primaryModel,
+    },
     metadata: {
       schemaVersion: 1,
       exa: {
@@ -698,6 +873,35 @@ export function getIntegrationsState(): IntegrationsState {
       effectiveOwner: resolveEffectiveSearchOwner({ exaState: exa, builtInSearch }),
     },
     integrations: [exa, apollo, elevenlabs],
+  };
+}
+
+export function normalizeLockedDenchIntegrations(): {
+  changed: boolean;
+  state: IntegrationsState;
+} {
+  const config = readOpenClawConfigForIntegrations();
+  const metadata = readIntegrationsMetadata();
+  const auth = resolveDenchAuth(config);
+  const eligibility = resolveDenchCloudEligibility(config, auth);
+  const normalized = buildNormalizedLockedState({
+    config,
+    metadata,
+    eligibility,
+  });
+
+  let changed = normalized.changed;
+  if (JSON.stringify(normalized.nextMetadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(normalized.nextMetadata);
+    changed = true;
+  }
+  if (normalized.changed) {
+    writeOpenClawConfigForIntegrations(config);
+  }
+
+  return {
+    changed,
+    state: getIntegrationsState(),
   };
 }
 
@@ -769,6 +973,25 @@ export async function refreshIntegrationsRuntime(): Promise<IntegrationRuntimeRe
   }
 }
 
+function rejectLockedEnable(
+  config: OpenClawConfig,
+  enabled: boolean,
+): IntegrationToggleResult | null {
+  if (!enabled) {
+    return null;
+  }
+  const auth = resolveDenchAuth(config);
+  const eligibility = resolveDenchCloudEligibility(config, auth);
+  if (!eligibility.locked) {
+    return null;
+  }
+  return {
+    state: getIntegrationsState(),
+    changed: false,
+    error: getLockErrorMessage(eligibility.lockReason),
+  };
+}
+
 export function repairOlderIntegrationsProfile(): IntegrationsRepairResult {
   const config = readOpenClawConfigForIntegrations();
   const repairs = [
@@ -794,6 +1017,10 @@ export function repairOlderIntegrationsProfile(): IntegrationsRepairResult {
 export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
   const metadata = readIntegrationsMetadata();
+  const blocked = rejectLockedEnable(config, enabled);
+  if (blocked) {
+    return blocked;
+  }
   let changed = false;
 
   if (enabled) {
@@ -825,11 +1052,16 @@ export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleRes
   return {
     state: getIntegrationsState(),
     changed,
+    error: null,
   };
 }
 
 export function setApolloIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
+  const blocked = rejectLockedEnable(config, enabled);
+  if (blocked) {
+    return blocked;
+  }
   let changed = false;
 
   if (enabled) {
@@ -846,11 +1078,16 @@ export function setApolloIntegrationEnabled(enabled: boolean): IntegrationToggle
   return {
     state: getIntegrationsState(),
     changed,
+    error: null,
   };
 }
 
 export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
+  const blocked = rejectLockedEnable(config, enabled);
+  if (blocked) {
+    return blocked;
+  }
   const tts = ensureTtsConfig(config);
   const providers = ensureTtsProviders(config);
   const gatewayBaseUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
@@ -876,25 +1113,7 @@ export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationTo
       changed = true;
     }
   } else {
-    const elevenlabs = asRecord(providers.elevenlabs);
-    if (elevenlabs) {
-      if (elevenlabs.baseUrl === gatewayBaseUrl || elevenlabs.baseUrl === DEFAULT_GATEWAY_URL) {
-        delete elevenlabs.baseUrl;
-        changed = true;
-      }
-      if (denchApiKey && elevenlabs.apiKey === denchApiKey) {
-        delete elevenlabs.apiKey;
-        changed = true;
-      }
-      if (Object.keys(elevenlabs).length === 0) {
-        delete providers.elevenlabs;
-        changed = true;
-      }
-    }
-    if (tts.provider === "elevenlabs") {
-      delete tts.provider;
-      changed = true;
-    }
+    changed = disableElevenLabsOverride(config) || changed;
   }
 
   if (changed) {
@@ -904,5 +1123,6 @@ export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationTo
   return {
     state: getIntegrationsState(),
     changed,
+    error: null,
   };
 }

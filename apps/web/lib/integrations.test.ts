@@ -47,6 +47,13 @@ describe("integrations state", () => {
       const value = String(path);
       if (value.endsWith("openclaw.json")) {
         return JSON.stringify({
+          agents: {
+            defaults: {
+              model: {
+                primary: "dench-cloud/claude-sonnet-4.6",
+              },
+            },
+          },
           models: {
             providers: {
               "dench-cloud": {
@@ -228,12 +235,163 @@ describe("integrations state", () => {
     });
   });
 
+  it("locks Dench integrations without a Dench key", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+
+    mockExists.mockImplementation((path) => String(path).endsWith("openclaw.json"));
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return JSON.stringify({
+          agents: {
+            defaults: {
+              model: {
+                primary: "anthropic/claude-4",
+              },
+            },
+          },
+          plugins: {
+            entries: {
+              "exa-search": { enabled: true },
+              "apollo-enrichment": { enabled: true },
+            },
+          },
+          messages: {
+            tts: {
+              provider: "elevenlabs",
+              providers: {
+                elevenlabs: {
+                  baseUrl: "https://gateway.merseoriginals.com",
+                },
+              },
+            },
+          },
+        }) as never;
+      }
+
+      return "" as never;
+    });
+
+    const { getIntegrationsState } = await import("./integrations.js");
+    const state = getIntegrationsState();
+    expect(state.denchCloud).toEqual({
+      hasKey: false,
+      isPrimaryProvider: false,
+      primaryModel: "anthropic/claude-4",
+    });
+    for (const integration of state.integrations) {
+      expect(integration.locked).toBe(true);
+      expect(integration.lockReason).toBe("missing_dench_key");
+      expect(integration.lockBadge).toBe("Get Dench Cloud API Key");
+      expect(integration.enabled).toBe(false);
+    }
+  });
+
+  it("locks Dench integrations when Dench Cloud is not primary", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+
+    mockExists.mockImplementation((path) => String(path).endsWith("openclaw.json"));
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return JSON.stringify({
+          agents: {
+            defaults: {
+              model: {
+                primary: "anthropic/claude-4",
+              },
+            },
+          },
+          models: {
+            providers: {
+              "dench-cloud": {
+                apiKey: "dench-key",
+              },
+            },
+          },
+          plugins: {
+            entries: {
+              "exa-search": { enabled: true },
+            },
+          },
+        }) as never;
+      }
+
+      return "" as never;
+    });
+
+    const { getIntegrationsState } = await import("./integrations.js");
+    const state = getIntegrationsState();
+    expect(state.denchCloud).toEqual({
+      hasKey: true,
+      isPrimaryProvider: false,
+      primaryModel: "anthropic/claude-4",
+    });
+    const exa = state.integrations.find((integration) => integration.id === "exa");
+    expect(exa).toMatchObject({
+      locked: true,
+      lockReason: "dench_not_primary",
+      lockBadge: "Use Dench Cloud",
+      enabled: false,
+    });
+  });
+
+  it("rejects enabling Exa when Dench Cloud is locked", async () => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+
+    mockExists.mockImplementation((path) => String(path).endsWith("openclaw.json"));
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return JSON.stringify({
+          agents: {
+            defaults: {
+              model: {
+                primary: "anthropic/claude-4",
+              },
+            },
+          },
+          models: {
+            providers: {
+              "dench-cloud": {
+                apiKey: "dench-key",
+              },
+            },
+          },
+        }) as never;
+      }
+      return "" as never;
+    });
+
+    const { setExaIntegrationEnabled } = await import("./integrations.js");
+    const result = setExaIntegrationEnabled(true);
+    expect(result.changed).toBe(false);
+    expect(result.error).toBe("This integration requires Dench Cloud to be the primary provider.");
+  });
+
   it("enables Exa and suppresses built-in web search", async () => {
     const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
     const mockExists = vi.mocked(existsSync);
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
     let openClawJson = JSON.stringify({
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/claude-sonnet-4.6",
+          },
+        },
+      },
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dench-key",
+          },
+        },
+      },
       plugins: {
         entries: {},
       },
@@ -300,6 +458,20 @@ describe("integrations state", () => {
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
     let openClawJson = JSON.stringify({
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/claude-sonnet-4.6",
+          },
+        },
+      },
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dench-key",
+          },
+        },
+      },
       plugins: {
         allow: ["exa-search"],
         entries: {
@@ -371,6 +543,20 @@ describe("integrations state", () => {
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
     let openClawJson = JSON.stringify({
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/claude-sonnet-4.6",
+          },
+        },
+      },
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dench-key",
+          },
+        },
+      },
       plugins: {
         entries: {},
       },
@@ -414,6 +600,13 @@ describe("integrations state", () => {
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
     let openClawJson = JSON.stringify({
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/claude-sonnet-4.6",
+          },
+        },
+      },
       models: {
         providers: {
           "dench-cloud": {

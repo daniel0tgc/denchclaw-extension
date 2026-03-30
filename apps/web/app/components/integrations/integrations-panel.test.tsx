@@ -337,4 +337,70 @@ describe("IntegrationsPanel", () => {
       expect(screen.getByText("Repair completed for exa and the dench gateway restarted successfully.")).toBeInTheDocument();
     });
   });
+
+  it("shows Dench Cloud badges and disables locked toggles", async () => {
+    const initialPayload = {
+      denchCloud: {
+        hasKey: false,
+        isPrimaryProvider: false,
+        primaryModel: "anthropic/claude-4",
+      },
+      metadata: {
+        schemaVersion: 1,
+        exa: {
+          ownsSearch: false,
+          fallbackProvider: "duckduckgo",
+        },
+      },
+      search: {
+        builtIn: {
+          enabled: true,
+          denied: false,
+          provider: "duckduckgo",
+        },
+        effectiveOwner: "web_search",
+      },
+      integrations: [
+        {
+          id: "exa",
+          label: "Exa Search",
+          enabled: false,
+          available: false,
+          locked: true,
+          lockReason: "missing_dench_key",
+          lockBadge: "Get Dench Cloud API Key",
+          gatewayBaseUrl: "https://gateway.merseoriginals.com",
+          auth: { configured: false, source: "missing" },
+          plugin: null,
+          managedByDench: true,
+          healthIssues: ["missing_auth"],
+          health: {
+            status: "disabled",
+            pluginMissing: false,
+            pluginInstalledButDisabled: false,
+            configMismatch: false,
+            missingAuth: true,
+            missingGatewayOverride: false,
+          },
+        },
+      ],
+    };
+
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as URL).href;
+      const method = init?.method ?? "GET";
+      if (url === "/api/integrations" && method === "GET") {
+        return new Response(JSON.stringify(initialPayload));
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    }) as typeof fetch;
+
+    render(<IntegrationsPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Get Dench Cloud API Key")).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText("Toggle Exa Search")).toBeDisabled();
+  });
 });

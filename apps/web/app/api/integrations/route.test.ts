@@ -1,29 +1,40 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/integrations", () => ({
-  getIntegrationsState: vi.fn(() => ({
-    metadata: { schemaVersion: 1, exa: { ownsSearch: true, fallbackProvider: "duckduckgo" } },
-    search: {
-      builtIn: {
-        enabled: false,
-        denied: true,
-        provider: "duckduckgo",
+  normalizeLockedDenchIntegrations: vi.fn(() => ({
+    changed: false,
+    state: {
+      denchCloud: {
+        hasKey: true,
+        isPrimaryProvider: true,
+        primaryModel: "dench-cloud/claude-sonnet-4.6",
       },
-      effectiveOwner: "exa",
+      metadata: { schemaVersion: 1, exa: { ownsSearch: true, fallbackProvider: "duckduckgo" } },
+      search: {
+        builtIn: {
+          enabled: false,
+          denied: true,
+          provider: "duckduckgo",
+        },
+        effectiveOwner: "exa",
+      },
+      integrations: [
+        {
+          id: "exa",
+          label: "Exa Search",
+          enabled: true,
+          available: true,
+          locked: false,
+          lockReason: null,
+          lockBadge: null,
+          gatewayBaseUrl: "https://gateway.merseoriginals.com",
+          auth: { configured: true, source: "config" },
+          plugin: null,
+          managedByDench: true,
+          healthIssues: [],
+        },
+      ],
     },
-    integrations: [
-      {
-        id: "exa",
-        label: "Exa Search",
-        enabled: true,
-        available: true,
-        gatewayBaseUrl: "https://gateway.merseoriginals.com",
-        auth: { configured: true, source: "config" },
-        plugin: null,
-        managedByDench: true,
-        healthIssues: [],
-      },
-    ],
   })),
 }));
 

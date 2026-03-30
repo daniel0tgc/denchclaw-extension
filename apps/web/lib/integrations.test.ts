@@ -189,4 +189,145 @@ describe("integrations state", () => {
       expect.arrayContaining(["missing_auth", "missing_override"]),
     );
   });
+
+  it("enables Exa and suppresses built-in web search", async () => {
+    const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+    const mockWrite = vi.mocked(writeFileSync);
+    let openClawJson = JSON.stringify({
+      plugins: {
+        entries: {},
+      },
+    });
+    let metadataJson = "";
+
+    mockExists.mockImplementation((path) => {
+      const value = String(path);
+      return (
+        value.endsWith("openclaw.json") ||
+        (value.endsWith(".dench-integrations.json") && metadataJson.length > 0) ||
+        value === "/home/testuser/.openclaw-dench/extensions/exa-search"
+      );
+    });
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return openClawJson as never;
+      }
+      if (String(path).endsWith(".dench-integrations.json")) {
+        return metadataJson as never;
+      }
+      return "" as never;
+    });
+    mockWrite.mockImplementation((path, data) => {
+      if (String(path).endsWith("openclaw.json")) {
+        openClawJson = String(data);
+      }
+      if (String(path).endsWith(".dench-integrations.json")) {
+        metadataJson = String(data);
+      }
+    });
+
+    const { setExaIntegrationEnabled } = await import("./integrations.js");
+    const result = setExaIntegrationEnabled(true);
+
+    expect(result.changed).toBe(true);
+    expect(result.state.search.builtIn).toEqual({
+      enabled: false,
+      denied: true,
+      provider: null,
+    });
+    expect(result.state.metadata.exa).toEqual({
+      ownsSearch: true,
+      fallbackProvider: "duckduckgo",
+    });
+    expect(mockWrite).toHaveBeenCalledTimes(2);
+    const writtenConfig = JSON.parse(openClawJson);
+    expect(writtenConfig.plugins.allow).toEqual(["exa-search"]);
+    expect(writtenConfig.plugins.entries["exa-search"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.load.paths).toEqual([
+      "/home/testuser/.openclaw-dench/extensions/exa-search",
+    ]);
+    expect(writtenConfig.plugins.installs["exa-search"]).toEqual({
+      installPath: "/home/testuser/.openclaw-dench/extensions/exa-search",
+      sourcePath: expect.any(String),
+    });
+    expect(writtenConfig.tools.deny).toEqual(["web_search"]);
+    expect(writtenConfig.tools.web.search).toEqual({ enabled: false });
+  });
+
+  it("disables Exa and restores duckduckgo fallback", async () => {
+    const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+    const mockWrite = vi.mocked(writeFileSync);
+    let openClawJson = JSON.stringify({
+      plugins: {
+        allow: ["exa-search"],
+        entries: {
+          "exa-search": {
+            enabled: true,
+          },
+        },
+      },
+      tools: {
+        deny: ["web_search"],
+        web: {
+          search: {
+            enabled: false,
+            provider: "brave",
+          },
+        },
+      },
+    });
+    let metadataJson = JSON.stringify({
+      schemaVersion: 1,
+      exa: {
+        ownsSearch: true,
+        fallbackProvider: "duckduckgo",
+      },
+    });
+
+    mockExists.mockImplementation((path) => {
+      const value = String(path);
+      return value.endsWith("openclaw.json") || value.endsWith(".dench-integrations.json");
+    });
+    mockRead.mockImplementation((path) => {
+      const value = String(path);
+      if (value.endsWith("openclaw.json")) {
+        return openClawJson as never;
+      }
+      if (value.endsWith(".dench-integrations.json")) {
+        return metadataJson as never;
+      }
+      return "" as never;
+    });
+    mockWrite.mockImplementation((path, data) => {
+      if (String(path).endsWith("openclaw.json")) {
+        openClawJson = String(data);
+      }
+      if (String(path).endsWith(".dench-integrations.json")) {
+        metadataJson = String(data);
+      }
+    });
+
+    const { setExaIntegrationEnabled } = await import("./integrations.js");
+    const result = setExaIntegrationEnabled(false);
+
+    expect(result.changed).toBe(true);
+    expect(result.state.search.effectiveOwner).toBe("web_search");
+    expect(result.state.search.builtIn).toEqual({
+      enabled: true,
+      denied: false,
+      provider: "duckduckgo",
+    });
+
+    const writtenConfig = JSON.parse(openClawJson);
+    expect(writtenConfig.plugins.entries["exa-search"]).toEqual({ enabled: false });
+    expect(writtenConfig.tools.deny).toEqual([]);
+    expect(writtenConfig.tools.web.search).toEqual({
+      enabled: true,
+      provider: "duckduckgo",
+    });
+  });
 });

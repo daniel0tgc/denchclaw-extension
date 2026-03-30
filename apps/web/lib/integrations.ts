@@ -76,6 +76,11 @@ export type IntegrationsState = {
   integrations: DenchIntegrationState[];
 };
 
+export type IntegrationToggleResult = {
+  state: IntegrationsState;
+  changed: boolean;
+};
+
 type UnknownRecord = Record<string, unknown>;
 
 type OpenClawConfig = {
@@ -104,9 +109,15 @@ type OpenClawConfig = {
   };
 };
 
+type WebSearchConfig = NonNullable<
+  NonNullable<NonNullable<OpenClawConfig["tools"]>["web"]>["search"]
+>;
+
 const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
 const DEFAULT_FALLBACK_PROVIDER = "duckduckgo";
 const METADATA_FILENAME = ".dench-integrations.json";
+const EXA_PLUGIN_ID = "exa-search";
+const APOLLO_PLUGIN_ID = "apollo-enrichment";
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -154,6 +165,15 @@ export function readOpenClawConfigForIntegrations(): OpenClawConfig {
   return readJsonFile<OpenClawConfig>(openClawConfigPath(), {});
 }
 
+export function writeOpenClawConfigForIntegrations(config: OpenClawConfig): void {
+  const configPath = openClawConfigPath();
+  const dirPath = resolveOpenClawStateDir();
+  if (!existsSync(dirPath)) {
+    mkdirSync(dirPath, { recursive: true });
+  }
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
+
 export function readIntegrationsMetadata(): DenchIntegrationMetadata {
   const parsed = readJsonFile<DenchIntegrationMetadata | UnknownRecord>(
     integrationsMetadataPath(),
@@ -187,6 +207,156 @@ function resolveGatewayBaseUrl(config: OpenClawConfig): string | null {
     process.env.DENCH_GATEWAY_URL?.trim() ||
     DEFAULT_GATEWAY_URL
   );
+}
+
+function ensurePluginsConfig(config: OpenClawConfig): NonNullable<OpenClawConfig["plugins"]> {
+  if (!config.plugins) {
+    config.plugins = {};
+  }
+  return config.plugins;
+}
+
+function ensureToolsConfig(config: OpenClawConfig): NonNullable<OpenClawConfig["tools"]> {
+  if (!config.tools) {
+    config.tools = {};
+  }
+  return config.tools;
+}
+
+function ensureWebSearchConfig(config: OpenClawConfig): WebSearchConfig {
+  const tools = ensureToolsConfig(config);
+  if (!tools.web) {
+    tools.web = {};
+  }
+  if (!tools.web.search) {
+    tools.web.search = {};
+  }
+  return tools.web.search;
+}
+
+function ensureStringList(target: unknown): string[] {
+  return Array.isArray(target) ? readStringList(target) : [];
+}
+
+function setStringList(target: string[], nextValues: string[]): boolean {
+  const next = Array.from(new Set(nextValues.filter(Boolean)));
+  if (target.length === next.length && target.every((value, index) => value === next[index])) {
+    return false;
+  }
+  target.length = 0;
+  target.push(...next);
+  return true;
+}
+
+function addUnique(list: string[], value: string): boolean {
+  if (list.includes(value)) {
+    return false;
+  }
+  list.push(value);
+  return true;
+}
+
+function removeValue(list: string[], value: string): boolean {
+  const next = list.filter((item) => item !== value);
+  return setStringList(list, next);
+}
+
+function ensurePluginRegistration(config: OpenClawConfig, pluginId: string): boolean {
+  const plugins = ensurePluginsConfig(config);
+  const allow = ensureStringList(plugins.allow);
+  const loadPaths = ensureStringList(plugins.load?.paths);
+  plugins.allow = allow;
+  if (!plugins.load) {
+    plugins.load = {};
+  }
+  plugins.load.paths = loadPaths;
+  if (!plugins.entries) {
+    plugins.entries = {};
+  }
+  if (!plugins.installs) {
+    plugins.installs = {};
+  }
+
+  let changed = false;
+  const installPath = join(resolveOpenClawStateDir(), "extensions", pluginId);
+  const sourcePath = join(process.cwd(), "extensions", pluginId);
+  const pluginExists = existsSync(installPath);
+
+  changed = addUnique(allow, pluginId) || changed;
+
+  if (!plugins.entries[pluginId] || !asRecord(plugins.entries[pluginId])) {
+    plugins.entries[pluginId] = { enabled: true };
+    changed = true;
+  }
+  const entry = asRecord(plugins.entries[pluginId]);
+  if (entry && entry.enabled !== true) {
+    entry.enabled = true;
+    changed = true;
+  }
+
+  if (pluginExists) {
+    changed = addUnique(loadPaths, installPath) || changed;
+    const install = asRecord(plugins.installs[pluginId]);
+    if (!install) {
+      plugins.installs[pluginId] = { installPath, sourcePath };
+      changed = true;
+    } else {
+      if (install.installPath !== installPath) {
+        install.installPath = installPath;
+        changed = true;
+      }
+      if (install.sourcePath !== sourcePath) {
+        install.sourcePath = sourcePath;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+function setPluginEnabled(config: OpenClawConfig, pluginId: string, enabled: boolean): boolean {
+  const plugins = ensurePluginsConfig(config);
+  if (!plugins.entries) {
+    plugins.entries = {};
+  }
+  let changed = false;
+  const existing = asRecord(plugins.entries[pluginId]);
+  if (!existing) {
+    plugins.entries[pluginId] = { enabled };
+    changed = true;
+  } else if (existing.enabled !== enabled) {
+    existing.enabled = enabled;
+    changed = true;
+  }
+  return changed;
+}
+
+function setWebSearchPolicy(config: OpenClawConfig, params: {
+  enabled: boolean;
+  denied: boolean;
+  provider?: string;
+}): boolean {
+  let changed = false;
+  const tools = ensureToolsConfig(config);
+  const deny = ensureStringList(tools.deny);
+  tools.deny = deny;
+  const webSearch = ensureWebSearchConfig(config);
+
+  if (webSearch.enabled !== params.enabled) {
+    webSearch.enabled = params.enabled;
+    changed = true;
+  }
+  if (params.provider && webSearch.provider !== params.provider) {
+    webSearch.provider = params.provider;
+    changed = true;
+  }
+  if (params.denied) {
+    changed = addUnique(deny, "web_search") || changed;
+  } else {
+    changed = removeValue(deny, "web_search") || changed;
+  }
+  return changed;
 }
 
 function resolveDenchAuth(config: OpenClawConfig): IntegrationAuthSummary {
@@ -294,7 +464,7 @@ function buildApolloState(
   gatewayBaseUrl: string | null,
   auth: IntegrationAuthSummary,
 ): DenchIntegrationState {
-  const plugin = readPluginState(config, "apollo-enrichment");
+  const plugin = readPluginState(config, APOLLO_PLUGIN_ID);
   const healthIssues: IntegrationHealthIssue[] = [];
   if (!plugin.configured) healthIssues.push("missing_plugin_entry");
   if (plugin.configured && !plugin.enabled) healthIssues.push("plugin_disabled");
@@ -387,4 +557,45 @@ export function getIntegrationsState(): IntegrationsState {
 
 export function getIntegrationState(id: DenchIntegrationId): DenchIntegrationState | undefined {
   return getIntegrationsState().integrations.find((integration) => integration.id === id);
+}
+
+export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
+  const config = readOpenClawConfigForIntegrations();
+  const metadata = readIntegrationsMetadata();
+  let changed = false;
+
+  if (enabled) {
+    changed = ensurePluginRegistration(config, EXA_PLUGIN_ID) || changed;
+    changed = setPluginEnabled(config, EXA_PLUGIN_ID, true) || changed;
+    changed = setWebSearchPolicy(config, { enabled: false, denied: true }) || changed;
+  } else {
+    changed = setPluginEnabled(config, EXA_PLUGIN_ID, false) || changed;
+    changed = setWebSearchPolicy(config, {
+      enabled: true,
+      denied: false,
+      provider: DEFAULT_FALLBACK_PROVIDER,
+    }) || changed;
+  }
+
+  const nextMetadata: DenchIntegrationMetadata = {
+    ...metadata,
+    schemaVersion: 1,
+    exa: {
+      ownsSearch: enabled,
+      fallbackProvider: DEFAULT_FALLBACK_PROVIDER,
+    },
+  };
+  if (JSON.stringify(nextMetadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(nextMetadata);
+    changed = true;
+  }
+
+  if (changed) {
+    writeOpenClawConfigForIntegrations(config);
+  }
+
+  return {
+    state: getIntegrationsState(),
+    changed,
+  };
 }

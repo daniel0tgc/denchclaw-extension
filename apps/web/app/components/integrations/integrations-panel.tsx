@@ -11,6 +11,7 @@ import type {
   IntegrationRuntimeRefresh,
   IntegrationsState,
 } from "@/lib/integrations";
+import { ComposioAppsSection } from "./composio-apps-section";
 
 type ActionNotice = {
   tone: "success" | "warning";
@@ -348,6 +349,17 @@ export function IntegrationsPanel({ embedded }: { embedded?: boolean } = {}) {
               />
             ))}
           </div>
+
+          <ComposioAppsSection
+            eligible={Boolean(data.denchCloud.hasKey && data.denchCloud.isPrimaryProvider)}
+            lockBadge={
+              !data.denchCloud.hasKey
+                ? "Get Dench Cloud API Key"
+                : !data.denchCloud.isPrimaryProvider
+                  ? "Use Dench Cloud"
+                  : null
+            }
+          />
         </div>
       )}
     </div>

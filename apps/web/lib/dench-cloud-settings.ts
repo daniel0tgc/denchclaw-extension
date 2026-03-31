@@ -11,7 +11,7 @@ import {
   buildDenchCloudConfigPatch,
   readConfiguredDenchCloudSettings,
   RECOMMENDED_DENCH_CLOUD_MODEL_ID,
-} from "../../../src/cli/dench-cloud.js";
+} from "../../../src/cli/dench-cloud";
 import { refreshIntegrationsRuntime, type IntegrationRuntimeRefresh } from "./integrations";
 
 type UnknownRecord = Record<string, unknown>;

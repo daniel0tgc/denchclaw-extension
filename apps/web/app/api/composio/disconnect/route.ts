@@ -4,6 +4,7 @@ import {
   resolveComposioEligibility,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
+import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,7 +52,17 @@ export async function POST(request: Request) {
 
   try {
     const data = await disconnectComposioApp(gatewayUrl, apiKey, body.connection_id.trim());
-    return Response.json(data);
+    const rebuild = await rebuildComposioToolIndexIfReady();
+    return Response.json({
+      ...data,
+      tool_index_rebuild: rebuild.ok
+        ? {
+            ok: true as const,
+            generated_at: rebuild.generated_at,
+            connected_apps: rebuild.connected_apps,
+          }
+        : { ok: false as const, error: rebuild.reason },
+    });
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : "Failed to disconnect." },

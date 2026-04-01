@@ -1,4 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import { buildIdentityPrompt, resolveWorkspaceDir } from "./index.ts";
 import register from "./index.ts";
 import path from "node:path";
@@ -48,6 +50,56 @@ describe("buildIdentityPrompt", () => {
     const prompt = buildIdentityPrompt(workspaceDir);
     expect(prompt).toContain("You are **DenchClaw**");
     expect(prompt).toContain("always use **DenchClaw** (not OpenClaw)");
+  });
+});
+
+describe("buildIdentityPrompt composio-tool-index", () => {
+  let tmp: string;
+
+  afterEach(() => {
+    if (tmp) {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("includes Gmail tool names from composio-tool-index.json so the agent skips catalog discovery", () => {
+    tmp = path.join(
+      os.tmpdir(),
+      `dench-identity-composio-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmp, { recursive: true });
+    writeFileSync(
+      path.join(tmp, "composio-tool-index.json"),
+      JSON.stringify({
+        generated_at: "2026-04-01T00:00:00.000Z",
+        connected_apps: [
+          {
+            toolkit_slug: "gmail",
+            toolkit_name: "Gmail",
+            account_count: 1,
+            tools: [
+              {
+                name: "GMAIL_FETCH_EMAILS",
+                title: "Fetch emails",
+                description_short: "List inbox messages.",
+                required_args: [],
+                arg_hints: {
+                  label_ids: 'Use ["INBOX"] as JSON array.',
+                },
+              },
+            ],
+            recipes: { "Read recent emails": "GMAIL_FETCH_EMAILS" },
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const prompt = buildIdentityPrompt(tmp);
+    expect(prompt).toContain("Connected App Tools (via Composio MCP)");
+    expect(prompt).toContain("GMAIL_FETCH_EMAILS");
+    expect(prompt).toContain("Read recent emails");
+    expect(prompt).toContain("label_ids");
   });
 });
 

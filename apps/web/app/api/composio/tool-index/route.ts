@@ -1,61 +1,38 @@
-import {
-  resolveComposioApiKey,
-  resolveComposioEligibility,
-  resolveComposioGatewayUrl,
-} from "@/lib/composio";
-import { buildComposioToolIndex } from "@/lib/composio-tool-index";
-import { resolveWorkspaceRoot } from "@/lib/workspace";
+import { resolveComposioEligibility } from "@/lib/composio";
+import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function errorStatus(reason: string): number {
+  if (reason === "Dench Cloud API key is required.") {
+    return 403;
+  }
+  if (reason === "Dench Cloud must be the primary provider.") {
+    return 403;
+  }
+  if (reason.startsWith("Workspace root not found")) {
+    return 400;
+  }
+  return 502;
+}
+
 export async function POST() {
-  const apiKey = resolveComposioApiKey();
-  if (!apiKey) {
-    return Response.json(
-      { error: "Dench Cloud API key is required." },
-      { status: 403 },
-    );
+  const result = await rebuildComposioToolIndexIfReady();
+  if (!result.ok) {
+    const body: Record<string, unknown> = { error: result.reason };
+    if (result.reason === "Dench Cloud must be the primary provider.") {
+      const eligibility = resolveComposioEligibility();
+      body.lockReason = eligibility.lockReason;
+      body.lockBadge = eligibility.lockBadge;
+    }
+    return Response.json(body, { status: errorStatus(result.reason) });
   }
 
-  const eligibility = resolveComposioEligibility();
-  if (!eligibility.eligible) {
-    return Response.json(
-      {
-        error: "Dench Cloud must be the primary provider.",
-        lockReason: eligibility.lockReason,
-        lockBadge: eligibility.lockBadge,
-      },
-      { status: 403 },
-    );
-  }
-
-  const workspaceRoot = resolveWorkspaceRoot();
-  if (!workspaceRoot) {
-    return Response.json(
-      { error: "Workspace root not found. Set OPENCLAW_WORKSPACE or open a workspace in the UI." },
-      { status: 400 },
-    );
-  }
-
-  const gatewayUrl = resolveComposioGatewayUrl();
-
-  try {
-    const index = await buildComposioToolIndex({
-      workspaceDir: workspaceRoot,
-      gatewayUrl,
-      apiKey,
-    });
-    return Response.json({
-      ok: true,
-      generated_at: index.generated_at,
-      connected_apps: index.connected_apps.length,
-      path: `${workspaceRoot}/composio-tool-index.json`,
-    });
-  } catch (err) {
-    return Response.json(
-      { error: err instanceof Error ? err.message : "Failed to rebuild tool index." },
-      { status: 502 },
-    );
-  }
+  return Response.json({
+    ok: true,
+    generated_at: result.generated_at,
+    connected_apps: result.connected_apps,
+    path: `${result.workspaceDir}/composio-tool-index.json`,
+  });
 }

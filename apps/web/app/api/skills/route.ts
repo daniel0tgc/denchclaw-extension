@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { ensureComposioAppsSkillInWorkspaces } from "@/lib/ensure-composio-apps-skill";
 import { resolveOpenClawStateDir, resolveWorkspaceRoot } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,7 @@ function scanSkillDir(dir: string, source: string): SkillEntry[] {
 
 export async function GET() {
   const stateDir = resolveOpenClawStateDir();
+  ensureComposioAppsSkillInWorkspaces();
   const workspaceRoot = resolveWorkspaceRoot() ?? join(stateDir, "workspace");
 
   const managedSkills = scanSkillDir(join(stateDir, "skills"), "managed");

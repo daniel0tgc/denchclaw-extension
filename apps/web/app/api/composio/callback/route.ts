@@ -1,3 +1,5 @@
+import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -13,6 +15,9 @@ export async function GET(request: Request) {
   const targetOrigin = url.origin;
 
   const success = status === "success";
+  if (success) {
+    await rebuildComposioToolIndexIfReady();
+  }
   const payloadJson = serializeForInlineScript({
     type: "composio-callback",
     status,

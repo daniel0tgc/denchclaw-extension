@@ -3,8 +3,12 @@ import { join } from "node:path";
 import {
   fetchComposioConnections,
   fetchComposioMcpToolsList,
+  resolveComposioApiKey,
+  resolveComposioEligibility,
+  resolveComposioGatewayUrl,
   type ComposioMcpTool,
 } from "@/lib/composio";
+import { resolveWorkspaceRoot } from "@/lib/workspace";
 import {
   extractComposioConnections,
   normalizeComposioConnections,
@@ -156,6 +160,15 @@ export type BuildComposioToolIndexParams = {
   apiKey: string;
 };
 
+export type RebuildComposioToolIndexResult =
+  | {
+      ok: true;
+      workspaceDir: string;
+      generated_at: string;
+      connected_apps: number;
+    }
+  | { ok: false; reason: string };
+
 /**
  * Fetches active connections and MCP tools, builds a compact index, writes
  * `<workspaceDir>/composio-tool-index.json`, and returns the in-memory index.
@@ -241,4 +254,50 @@ export async function buildComposioToolIndex(
   writeFileSync(outPath, JSON.stringify(index, null, 2) + "\n", "utf-8");
 
   return index;
+}
+
+/**
+ * Rebuild the index using local openclaw config + active workspace (same rules
+ * as POST /api/composio/tool-index). Used from OAuth callback, disconnect, etc.
+ */
+export async function rebuildComposioToolIndexIfReady(): Promise<RebuildComposioToolIndexResult> {
+  const apiKey = resolveComposioApiKey();
+  if (!apiKey) {
+    return { ok: false, reason: "Dench Cloud API key is required." };
+  }
+
+  const eligibility = resolveComposioEligibility();
+  if (!eligibility.eligible) {
+    return {
+      ok: false,
+      reason: "Dench Cloud must be the primary provider.",
+    };
+  }
+
+  const workspaceDir = resolveWorkspaceRoot();
+  if (!workspaceDir) {
+    return {
+      ok: false,
+      reason: "Workspace root not found. Set OPENCLAW_WORKSPACE or open a workspace in the UI.",
+    };
+  }
+
+  try {
+    const index = await buildComposioToolIndex({
+      workspaceDir,
+      gatewayUrl: resolveComposioGatewayUrl(),
+      apiKey,
+    });
+    return {
+      ok: true,
+      workspaceDir,
+      generated_at: index.generated_at,
+      connected_apps: index.connected_apps.length,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Failed to rebuild tool index.",
+    };
+  }
 }

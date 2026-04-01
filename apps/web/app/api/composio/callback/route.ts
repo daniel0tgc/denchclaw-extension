@@ -1,12 +1,24 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function serializeForInlineScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
+  const url = new URL(request.url);
+  const { searchParams } = url;
   const status = searchParams.get("status") ?? "unknown";
   const connectedAccountId = searchParams.get("connected_account_id") ?? "";
+  const targetOrigin = url.origin;
 
   const success = status === "success";
+  const payloadJson = serializeForInlineScript({
+    type: "composio-callback",
+    status,
+    connected_account_id: connectedAccountId,
+  });
+  const targetOriginJson = serializeForInlineScript(targetOrigin);
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -40,12 +52,11 @@ export async function GET(request: Request) {
   </div>
   <script>
     try {
-      if (window.opener) {
-        window.opener.postMessage({
-          type: "composio-callback",
-          status: "${status}",
-          connected_account_id: "${connectedAccountId}"
-        }, "*");
+      const payload = ${payloadJson};
+      const targetOrigin = ${targetOriginJson};
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage(payload, targetOrigin);
+        setTimeout(() => window.close(), 150);
       }
     } catch (_) {}
   </script>

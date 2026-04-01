@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -28,20 +28,44 @@ export function ComposioConnectModal({
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const popupRef = useRef<Window | null>(null);
+  const popupPollRef = useRef<number | null>(null);
+  const callbackHandledRef = useRef(false);
 
   const connected = connection?.status === "ACTIVE";
+
+  const stopPopupPolling = useCallback(() => {
+    if (popupPollRef.current !== null) {
+      window.clearInterval(popupPollRef.current);
+      popupPollRef.current = null;
+    }
+  }, []);
+
+  const clearPopupState = useCallback(() => {
+    stopPopupPolling();
+    popupRef.current = null;
+    callbackHandledRef.current = false;
+  }, [stopPopupPolling]);
 
   useEffect(() => {
     if (!open) {
       setError(null);
       setConnecting(false);
       setDisconnecting(false);
+      clearPopupState();
     }
-  }, [open]);
+  }, [clearPopupState, open]);
+
+  useEffect(() => clearPopupState, [clearPopupState]);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.data?.type !== "composio-callback") return;
+      if (event.origin !== window.location.origin) return;
+
+      callbackHandledRef.current = true;
+      stopPopupPolling();
+      popupRef.current = null;
       setConnecting(false);
       if (event.data.status === "success") {
         onConnectionChange();
@@ -51,12 +75,13 @@ export function ComposioConnectModal({
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onConnectionChange]);
+  }, [onConnectionChange, stopPopupPolling]);
 
   const handleConnect = useCallback(async () => {
     if (!toolkit) return;
     setConnecting(true);
     setError(null);
+    clearPopupState();
     try {
       const res = await fetch("/api/composio/connect", {
         method: "POST",
@@ -67,12 +92,34 @@ export function ComposioConnectModal({
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to start connection.");
       }
-      window.open(data.redirect_url, "_blank", "noopener");
+      const popup = window.open(
+        data.redirect_url,
+        "_blank",
+        "popup=yes,width=560,height=720,resizable=yes,scrollbars=yes",
+      );
+      if (!popup) {
+        throw new Error("Popup was blocked. Please allow popups and try again.");
+      }
+
+      popupRef.current = popup;
+      callbackHandledRef.current = false;
+      popup.focus?.();
+      popupPollRef.current = window.setInterval(() => {
+        const currentPopup = popupRef.current;
+        if (!currentPopup || !currentPopup.closed) return;
+
+        stopPopupPolling();
+        popupRef.current = null;
+        setConnecting(false);
+        if (!callbackHandledRef.current) {
+          onConnectionChange();
+        }
+      }, 500);
     } catch (err) {
       setConnecting(false);
       setError(err instanceof Error ? err.message : "Failed to connect.");
     }
-  }, [toolkit]);
+  }, [clearPopupState, onConnectionChange, stopPopupPolling, toolkit]);
 
   const handleDisconnect = useCallback(async () => {
     if (!connection) return;

@@ -210,7 +210,7 @@ Important:
 
 **enum fields**: Field definition stores `enum_values` as JSON array. Entry stores the selected value string. `enum_multiple = true` for multi-select (value stored as JSON array string).
 
-**relation fields**: Field stores `related_object_id` (the ID of the target object) and `relationship_type` (`many_to_one` for single select, `many_to_many` for multi-select). Entry field value stores the related entry ID (or JSON array of IDs for many-to-many). Relation fields can only be created via direct DuckDB SQL (not the API). The UI renders them as a searchable dropdown of entries from the related object.
+**relation fields**: Field stores `related_object_id` (the ID of the target object) and `relationship_type` (`many_to_one` for single select, `many_to_many` for multi-select). Entry field value stores the related entry ID (or JSON array of IDs for many-to-many). Relation fields can only be created via direct DuckDB SQL (not the API). The UI renders them as a searchable dropdown of entries from the related object. This is the default for foreign-table, lookup, linked-record, or "connect this column to another table" requests. Do **NOT** use `text`/`richtext` to store another object's label when a real linked object exists.
 
 Creating a relation field (SQL — the only way):
 
@@ -257,6 +257,8 @@ ON CONFLICT (name) DO NOTHING RETURNING *;
 
 ### Create Fields
 
+Use this only for scalar fields. If the field is meant to reference another object/table, skip this section and use **Create Relation Field** instead.
+
 ```sql
 INSERT INTO fields (object_id, name, type, required, sort_order)
 VALUES
@@ -280,6 +282,16 @@ VALUES (
 ### Create Relation Field
 
 Relation fields link entries across objects. **You MUST create these via SQL** — the API does not support `relation` type.
+
+Use a relation field by default when:
+
+- the user says the column should connect/link/reference another table or object
+- the field name matches or strongly aliases an existing object
+- the column is really a lookup/select field rather than free-form text
+
+Do **NOT** create surrogate string columns like `Company Name`, `Client Name`, `Deal Name`, `Project Name`, or similar when the corresponding object already exists, unless the user explicitly wants denormalized snapshot text.
+
+Default to `many_to_one`. Use `many_to_many` only for clearly plural or multi-select relationships.
 
 ```sql
 -- Link people → company (many people belong to one company)
@@ -367,6 +379,8 @@ COMMIT;
 "
 ```
 
+Entry creation is not complete until the connected entry document exists on disk and is registered in `documents`. After the SQL commit, follow the default sync workflow in `crm/documents/SKILL.md`.
+
 ### Search Entries (via view)
 
 ```sql
@@ -390,6 +404,8 @@ INSERT INTO entry_fields (entry_id, field_id, value)
 VALUES ('<entry_id>', (SELECT id FROM fields WHERE object_id = '<obj_id>' AND name = 'Status'), 'Qualified')
 ON CONFLICT (entry_id, field_id) DO UPDATE SET value = excluded.value, updated_at = now();
 ```
+
+After updating `entry_fields`, immediately sync the connected entry document and append a timestamped activity log entry describing the change. This still applies when the user explicitly asks for the `Notes` field/column.
 
 ### Delete (with cascade)
 

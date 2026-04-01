@@ -4,7 +4,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposioConnectModal } from "./composio-connect-modal";
-import type { ComposioToolkit } from "@/lib/composio";
+import type { ComposioConnection, ComposioToolkit } from "@/lib/composio";
 
 const toolkit: ComposioToolkit = {
   slug: "gmail",
@@ -18,11 +18,12 @@ const toolkit: ComposioToolkit = {
 
 function renderModal(overrides?: {
   onConnectionChange?: () => void;
+  connections?: ComposioConnection[];
 }) {
   return render(
     <ComposioConnectModal
       toolkit={toolkit}
-      connection={null}
+      connections={overrides?.connections ?? []}
       open
       onOpenChange={() => {}}
       onConnectionChange={overrides?.onConnectionChange ?? (() => {})}
@@ -37,6 +38,36 @@ describe("ComposioConnectModal", () => {
     global.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ redirect_url: "http://localhost:3100/connect" }))
     ) as typeof fetch;
+  });
+
+  it("renders existing accounts and connect-another-account actions", () => {
+    renderModal({
+      connections: [
+        {
+          id: "ca_1",
+          toolkit_slug: "gmail",
+          toolkit_name: "Gmail",
+          status: "ACTIVE",
+          created_at: "2026-04-01T00:00:00.000Z",
+          account_label: "Work Gmail",
+        },
+        {
+          id: "ca_2",
+          toolkit_slug: "gmail",
+          toolkit_name: "Gmail",
+          status: "ACTIVE",
+          created_at: "2026-04-02T00:00:00.000Z",
+          account_label: "Personal Gmail",
+        },
+      ],
+    });
+
+    expect(screen.getByText("2 connected accounts available to your AI agent.")).toBeInTheDocument();
+    expect(screen.getByText("Existing connections")).toBeInTheDocument();
+    expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
+    expect(screen.getByText("Work Gmail")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Disconnect" })).toHaveLength(2);
   });
 
   it("stops waiting and refreshes connections after a trusted callback message", async () => {

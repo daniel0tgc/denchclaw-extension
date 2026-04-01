@@ -4,12 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Input } from "../ui/input";
 import { ComposioAppCard } from "./composio-app-card";
 import { ComposioConnectModal } from "./composio-connect-modal";
-import type {
+import {
+  type ComposioConnection,
   ComposioToolkit,
-  ComposioConnection,
   ComposioToolkitsResponse,
   ComposioConnectionsResponse,
 } from "@/lib/composio";
+import {
+  normalizeComposioConnections,
+  normalizeComposioToolkitSlug,
+} from "@/lib/composio-client";
 
 const FEATURED_SLUGS = [
   "gmail",
@@ -32,6 +36,7 @@ type ComposioAppsState = {
   categories: string[];
   loading: boolean;
   error: string | null;
+  connectionsError: string | null;
 };
 
 export function ComposioAppsSection({
@@ -47,6 +52,7 @@ export function ComposioAppsSection({
     categories: [],
     loading: true,
     error: null,
+    connectionsError: null,
   });
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -54,7 +60,7 @@ export function ComposioAppsSection({
   const [modalOpen, setModalOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+    setState((prev) => ({ ...prev, loading: true, error: null, connectionsError: null }));
     try {
       const [toolkitsRes, connectionsRes] = await Promise.all([
         fetch("/api/composio/toolkits"),
@@ -69,9 +75,16 @@ export function ComposioAppsSection({
       }
 
       const toolkitsData = (await toolkitsRes.json()) as ComposioToolkitsResponse;
-      const connectionsData = connectionsRes.ok
-        ? ((await connectionsRes.json()) as ComposioConnectionsResponse)
-        : { items: [] };
+      let connectionsData: ComposioConnectionsResponse = { items: [] };
+      let connectionsError: string | null = null;
+
+      if (connectionsRes.ok) {
+        connectionsData = (await connectionsRes.json()) as ComposioConnectionsResponse;
+      } else {
+        const err = await connectionsRes.json().catch(() => ({}));
+        connectionsError = (err as { error?: string }).error
+          ?? `Failed to load connections (${connectionsRes.status})`;
+      }
 
       setState({
         toolkits: toolkitsData.items,
@@ -79,6 +92,7 @@ export function ComposioAppsSection({
         categories: toolkitsData.categories ?? [],
         loading: false,
         error: null,
+        connectionsError,
       });
     } catch (err) {
       setState((prev) => ({
@@ -97,18 +111,46 @@ export function ComposioAppsSection({
     }
   }, [eligible, fetchData]);
 
+  const normalizedConnections = useMemo(
+    () => normalizeComposioConnections(state.connections),
+    [state.connections],
+  );
+
   const connectionsByToolkit = useMemo(() => {
-    const map = new Map<string, ComposioConnection>();
-    for (const conn of state.connections) {
-      if (conn.status === "ACTIVE" && !map.has(conn.toolkit_slug)) {
-        map.set(conn.toolkit_slug, conn);
+    const map = new Map<string, typeof normalizedConnections>();
+    for (const connection of normalizedConnections) {
+      const bucket = map.get(connection.normalized_toolkit_slug);
+      if (bucket) {
+        bucket.push(connection);
+      } else {
+        map.set(connection.normalized_toolkit_slug, [connection]);
       }
     }
     return map;
-  }, [state.connections]);
+  }, [normalizedConnections]);
+
+  const activeConnectionsByToolkit = useMemo(() => {
+    const map = new Map<string, typeof normalizedConnections>();
+    for (const [toolkitSlug, connections] of connectionsByToolkit) {
+      const activeConnections = connections.filter((connection) => connection.is_active);
+      if (activeConnections.length > 0) {
+        map.set(toolkitSlug, activeConnections);
+      }
+    }
+    return map;
+  }, [connectionsByToolkit]);
+
+  const connectedAppsCount = activeConnectionsByToolkit.size;
+  const activeAccountsCount = useMemo(
+    () => Array.from(activeConnectionsByToolkit.values()).reduce(
+      (sum, connections) => sum + connections.length,
+      0,
+    ),
+    [activeConnectionsByToolkit],
+  );
 
   const filteredToolkits = useMemo(() => {
-    let list = state.toolkits;
+    let list = [...state.toolkits].sort((left, right) => left.name.localeCompare(right.name));
     if (activeCategory) {
       list = list.filter((t) =>
         t.categories.some((c) => c.toLowerCase() === activeCategory.toLowerCase()),
@@ -126,28 +168,34 @@ export function ComposioAppsSection({
     return list;
   }, [state.toolkits, search, activeCategory]);
 
-  const { featured, rest } = useMemo(() => {
-    if (search.trim() || activeCategory) {
-      return { featured: [], rest: filteredToolkits };
-    }
-    const featuredSet = new Set(FEATURED_SLUGS);
-    const feat: ComposioToolkit[] = [];
-    const other: ComposioToolkit[] = [];
-    for (const t of filteredToolkits) {
-      if (featuredSet.has(t.slug)) {
-        feat.push(t);
-      } else {
-        other.push(t);
-      }
-    }
-    feat.sort(
-      (a, b) => FEATURED_SLUGS.indexOf(a.slug) - FEATURED_SLUGS.indexOf(b.slug),
-    );
-    return { featured: feat, rest: other };
-  }, [filteredToolkits, search, activeCategory]);
+  const connectedToolkits = useMemo(
+    () => filteredToolkits.filter((toolkit) =>
+      activeConnectionsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
+    [activeConnectionsByToolkit, filteredToolkits],
+  );
 
-  const selectedConnection = selectedToolkit
-    ? connectionsByToolkit.get(selectedToolkit.slug) ?? null
+  const availableToolkits = useMemo(
+    () => filteredToolkits.filter((toolkit) =>
+      !activeConnectionsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
+    [activeConnectionsByToolkit, filteredToolkits],
+  );
+
+  const { featuredAvailable, restAvailable } = useMemo(() => {
+    if (search.trim() || activeCategory) {
+      return { featuredAvailable: [] as ComposioToolkit[], restAvailable: availableToolkits };
+    }
+
+    const featuredSet = new Set(FEATURED_SLUGS);
+    const featured = availableToolkits.filter((toolkit) => featuredSet.has(toolkit.slug));
+    featured.sort(
+      (left, right) => FEATURED_SLUGS.indexOf(left.slug) - FEATURED_SLUGS.indexOf(right.slug),
+    );
+    const rest = availableToolkits.filter((toolkit) => !featuredSet.has(toolkit.slug));
+    return { featuredAvailable: featured, restAvailable: rest };
+  }, [activeCategory, availableToolkits, search]);
+
+  const selectedConnections = selectedToolkit
+    ? connectionsByToolkit.get(normalizeComposioToolkitSlug(selectedToolkit.slug)) ?? []
     : null;
 
   const handleAppClick = useCallback((toolkit: ComposioToolkit) => {
@@ -167,14 +215,14 @@ export function ComposioAppsSection({
             className="text-sm font-medium"
             style={{ color: "var(--color-text)" }}
           >
-            Connected Apps
+            App Connections
           </h3>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Connect your tools to use them with the AI agent
+            Browse integrations and unlock them for your AI agent
           </p>
         </div>
         <div
-          className="flex items-center justify-center rounded-xl border px-6 py-10"
+          className="flex items-center justify-center rounded-2xl border px-6 py-10"
           style={{
             borderColor: "var(--color-border)",
             background: "var(--color-surface-hover)",
@@ -204,22 +252,88 @@ export function ComposioAppsSection({
 
   return (
     <div className="mt-6">
-      <div className="mb-3 flex items-end justify-between gap-4">
-        <div>
-          <h3
-            className="text-sm font-medium"
-            style={{ color: "var(--color-text)" }}
-          >
-            Connected Apps
-          </h3>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Connect your tools to use them with the AI agent
-          </p>
+      <div
+        className="mb-4 rounded-2xl border p-4"
+        style={{
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-hover)",
+        }}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h3
+              className="text-sm font-medium"
+              style={{ color: "var(--color-text)" }}
+            >
+              App Connections
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Connect your tools, keep track of active accounts, and manage everything from one place.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <div
+              className="min-w-[120px] rounded-xl border px-3 py-2"
+              style={{ borderColor: "var(--color-border)", background: "var(--color-background)" }}
+            >
+              <p className="text-lg font-semibold text-foreground">{connectedAppsCount}</p>
+              <p className="text-[11px] text-muted-foreground">
+                app{connectedAppsCount === 1 ? "" : "s"} connected
+              </p>
+            </div>
+            <div
+              className="min-w-[120px] rounded-xl border px-3 py-2"
+              style={{ borderColor: "var(--color-border)", background: "var(--color-background)" }}
+            >
+              <p className="text-lg font-semibold text-foreground">{activeAccountsCount}</p>
+              <p className="text-[11px] text-muted-foreground">
+                active account{activeAccountsCount === 1 ? "" : "s"}
+              </p>
+            </div>
+          </div>
         </div>
-        {state.connections.filter((c) => c.status === "ACTIVE").length > 0 && (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            {state.connections.filter((c) => c.status === "ACTIVE").length} connected
-          </span>
+
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            type="text"
+            placeholder="Search apps..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 text-sm"
+          />
+        </div>
+
+        {state.categories.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setActiveCategory(null)}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                !activeCategory
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "bg-[var(--color-background)] text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All
+            </button>
+            {state.categories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() =>
+                  setActiveCategory(activeCategory === cat ? null : cat)
+                }
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  activeCategory === cat
+                    ? "bg-[var(--color-accent)] text-white"
+                    : "bg-[var(--color-background)] text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -249,79 +363,81 @@ export function ComposioAppsSection({
 
       {!state.loading && !state.error && (
         <>
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Input
-              type="text"
-              placeholder="Search apps..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 text-xs"
-            />
-          </div>
-
-          {state.categories.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => setActiveCategory(null)}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                  !activeCategory
-                    ? "bg-[var(--color-accent)] text-white"
-                    : "bg-[var(--color-surface-hover)] text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                All
-              </button>
-              {state.categories.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() =>
-                    setActiveCategory(activeCategory === cat ? null : cat)
-                  }
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                    activeCategory === cat
-                      ? "bg-[var(--color-accent)] text-white"
-                      : "bg-[var(--color-surface-hover)] text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
+          {state.connectionsError && (
+            <div
+              className="mb-4 rounded-2xl border px-4 py-3 text-sm"
+              style={{
+                borderColor: "rgba(250, 204, 21, 0.28)",
+                background: "rgba(250, 204, 21, 0.08)",
+                color: "rgb(253 224 71)",
+              }}
+            >
+              {state.connectionsError}
             </div>
           )}
 
-          {featured.length > 0 && (
-            <div className="mb-1">
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Popular
+          {connectedToolkits.length > 0 ? (
+            <div className="mb-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground">Connected</h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Apps already available to your AI agent
+                  </p>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {connectedAppsCount} app{connectedAppsCount === 1 ? "" : "s"} connected
+                </span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {connectedToolkits.map((toolkit) => {
+                  const toolkitSlug = normalizeComposioToolkitSlug(toolkit.slug);
+                  const activeConnections = activeConnectionsByToolkit.get(toolkitSlug) ?? [];
+                  const totalConnections = connectionsByToolkit.get(toolkitSlug)?.length ?? 0;
+                  return (
+                    <ComposioAppCard
+                      key={toolkit.slug}
+                      toolkit={toolkit}
+                      activeConnections={activeConnections.length}
+                      totalConnections={totalConnections}
+                      onClick={() => handleAppClick(toolkit)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div
+              className="mb-5 rounded-2xl border border-dashed px-5 py-6"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-background-soft, var(--color-surface-hover))",
+              }}
+            >
+              <h4 className="text-sm font-medium text-foreground">No connected apps yet</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Connect an app below to make it available inside your agent workflows.
               </p>
-              <div className="space-y-0.5">
-                {featured.map((toolkit) => (
-                  <ComposioAppCard
-                    key={toolkit.slug}
-                    toolkit={toolkit}
-                    connection={connectionsByToolkit.get(toolkit.slug) ?? null}
-                    onClick={() => handleAppClick(toolkit)}
-                  />
-                ))}
-              </div>
             </div>
           )}
 
-          {rest.length > 0 && (
-            <div>
-              {featured.length > 0 && (
-                <p className="mb-1 mt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  All Apps
+          {featuredAvailable.length > 0 && (
+            <div className="mb-5">
+              <div className="mb-3">
+                <h4 className="text-sm font-medium text-foreground">Popular to connect</h4>
+                <p className="text-[11px] text-muted-foreground">
+                  Quick-start apps people usually connect first
                 </p>
-              )}
-              <div className="space-y-0.5">
-                {rest.map((toolkit) => (
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {featuredAvailable.map((toolkit) => (
                   <ComposioAppCard
                     key={toolkit.slug}
                     toolkit={toolkit}
-                    connection={connectionsByToolkit.get(toolkit.slug) ?? null}
+                    activeConnections={0}
+                    featured
                     onClick={() => handleAppClick(toolkit)}
                   />
                 ))}
@@ -329,7 +445,36 @@ export function ComposioAppsSection({
             </div>
           )}
 
-          {filteredToolkits.length === 0 && (
+          {restAvailable.length > 0 && (
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground">
+                    {featuredAvailable.length > 0 ? "Browse all apps" : "Available apps"}
+                  </h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Explore the rest of the catalog and connect more tools
+                  </p>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  {restAvailable.length} available
+                </span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {restAvailable.map((toolkit) => (
+                  <ComposioAppCard
+                    key={toolkit.slug}
+                    toolkit={toolkit}
+                    activeConnections={0}
+                    onClick={() => handleAppClick(toolkit)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {connectedToolkits.length === 0 && availableToolkits.length === 0 && (
             <div className="py-8 text-center text-sm text-muted-foreground">
               {search.trim()
                 ? `No apps matching "${search.trim()}"`
@@ -341,7 +486,7 @@ export function ComposioAppsSection({
 
       <ComposioConnectModal
         toolkit={selectedToolkit}
-        connection={selectedConnection}
+        connections={selectedConnections ?? []}
         open={modalOpen}
         onOpenChange={setModalOpen}
         onConnectionChange={handleConnectionChange}

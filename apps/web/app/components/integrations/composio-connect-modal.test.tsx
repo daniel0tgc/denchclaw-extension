@@ -50,6 +50,17 @@ describe("ComposioConnectModal", () => {
           status: "ACTIVE",
           created_at: "2026-04-01T00:00:00.000Z",
           account_label: "Work Gmail",
+          account_stable_id: "cmpacct_gmail_work",
+          account: {
+            stableId: "cmpacct_gmail_work",
+            confidence: "high",
+            label: "Work Gmail",
+          },
+          reconnect: {
+            claim: "same",
+            confidence: "high",
+            relatedConnectionIds: ["ca_2"],
+          },
         },
         {
           id: "ca_2",
@@ -58,6 +69,17 @@ describe("ComposioConnectModal", () => {
           status: "ACTIVE",
           created_at: "2026-04-02T00:00:00.000Z",
           account_label: "Personal Gmail",
+          account_stable_id: "cmpacct_gmail_work",
+          account: {
+            stableId: "cmpacct_gmail_work",
+            confidence: "high",
+            label: "Personal Gmail",
+          },
+          reconnect: {
+            claim: "same",
+            confidence: "high",
+            relatedConnectionIds: ["ca_1"],
+          },
         },
       ],
     });
@@ -66,8 +88,30 @@ describe("ComposioConnectModal", () => {
     expect(screen.getByText("Existing connections")).toBeInTheDocument();
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
+    expect(screen.getAllByText("Same account reconnected")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Disconnect" })).toHaveLength(2);
+  });
+
+  it("shows inferred identity when the gateway cannot verify a stable account id", () => {
+    renderModal({
+      connections: [
+        {
+          id: "ca_weak",
+          toolkit_slug: "gmail",
+          toolkit_name: "Gmail",
+          status: "ACTIVE",
+          created_at: "2026-04-01T00:00:00.000Z",
+          account_label: "Fallback Gmail",
+          account: {
+            confidence: "low",
+            label: "Fallback Gmail",
+          },
+        },
+      ],
+    });
+
+    expect(screen.getByText("Identity inferred")).toBeInTheDocument();
   });
 
   it("stops waiting and refreshes connections after a trusted callback message", async () => {

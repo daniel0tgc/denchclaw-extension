@@ -1,11 +1,27 @@
-import type { ComposioConnection } from "@/lib/composio";
+import type {
+  ComposioConnection,
+  ComposioConnectionRecord,
+  ComposioConnectionsResponse,
+  ComposioIdentityConfidence,
+  ComposioReconnectClaim,
+  ComposioReconnectConfidence,
+  ComposioToolkit,
+  ComposioToolkitRecord,
+  ComposioToolkitsResponse,
+} from "@/lib/composio";
 
 export type NormalizedComposioConnection = ComposioConnection & {
   normalized_toolkit_slug: string;
   normalized_status: string;
   is_active: boolean;
   account_identity: string;
+  account_identity_source: "gateway_stable_id" | "legacy_heuristic" | "connection_id";
+  identity_confidence: ComposioIdentityConfidence;
   display_label: string;
+  reconnect_claim: ComposioReconnectClaim;
+  reconnect_confidence: ComposioReconnectConfidence;
+  related_connection_ids: string[];
+  is_same_account_reconnect: boolean;
 };
 
 export function normalizeComposioToolkitSlug(slug: string): string {
@@ -16,6 +32,135 @@ export function normalizeComposioConnectionStatus(status: unknown): string {
   return typeof status === "string" && status.trim()
     ? status.trim().toUpperCase()
     : "UNKNOWN";
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (item): item is string =>
+      typeof item === "string" && item.trim().length > 0,
+  );
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function pickString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const parsed = readString(value);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeComposioToolkitRecord(
+  toolkit: ComposioToolkitRecord,
+): ComposioToolkit {
+  return {
+    slug: pickString(toolkit.slug, toolkit.name) ?? "unknown",
+    name: pickString(toolkit.name, toolkit.slug) ?? "Unknown",
+    description: pickString(toolkit.description) ?? "",
+    logo: pickString(toolkit.logo) ?? null,
+    categories: asStringArray(toolkit.categories),
+    auth_schemes: asStringArray(toolkit.auth_schemes),
+    tools_count: typeof toolkit.tools_count === "number" ? toolkit.tools_count : 0,
+  };
+}
+
+export function extractComposioToolkits(
+  response: ComposioToolkitsResponse,
+): {
+  items: ComposioToolkit[];
+  categories: string[];
+  cursor: string | null;
+  total: number;
+} {
+  const items = (response.items ?? []).map(normalizeComposioToolkitRecord);
+  const categories = response.categories?.length
+    ? response.categories
+    : Array.from(new Set(items.flatMap((toolkit) => toolkit.categories)));
+
+  return {
+    items,
+    categories,
+    cursor: response.cursor ?? null,
+    total: typeof response.total === "number" ? response.total : items.length,
+  };
+}
+
+export function extractComposioConnections(
+  response: ComposioConnectionsResponse,
+): ComposioConnection[] {
+  const rawConnections = response.connections?.length
+    ? response.connections
+    : response.items ?? [];
+
+  return rawConnections.map(normalizeComposioConnectionRecord);
+}
+
+function normalizeComposioConnectionRecord(
+  connection: ComposioConnectionRecord,
+): ComposioConnection {
+  const id = pickString(connection.id, connection.connectionId) ?? "unknown-connection";
+  const toolkitSlug = pickString(connection.toolkit_slug, connection.toolkit?.slug) ?? "unknown";
+  const toolkitName = pickString(
+    connection.toolkit_name,
+    connection.toolkit?.name,
+    toolkitSlug,
+  ) ?? "Unknown";
+  const accountLabel = pickString(connection.account_label, connection.account?.label);
+  const accountName = pickString(connection.account_name, connection.account?.label, accountLabel);
+  const accountEmail = pickString(connection.account_email, connection.account?.email);
+  const externalAccountId = pickString(
+    connection.external_account_id,
+    connection.account?.rawIds?.externalAccountId,
+    connection.account?.rawIds?.providerAccountId,
+  );
+  const accountStableId = pickString(
+    connection.account_stable_id,
+    connection.account?.stableId,
+  );
+
+  return {
+    id,
+    toolkit_slug: toolkitSlug,
+    toolkit_name: toolkitName,
+    status: pickString(connection.status) ?? "UNKNOWN",
+    created_at: pickString(connection.created_at, connection.createdAt) ?? "",
+    updated_at: pickString(connection.updated_at, connection.updatedAt) ?? null,
+    account_label: accountLabel ?? null,
+    account_name: accountName ?? null,
+    account_email: accountEmail ?? null,
+    external_account_id: externalAccountId ?? null,
+    account_stable_id: accountStableId ?? null,
+    toolkit: {
+      slug: pickString(connection.toolkit?.slug, toolkitSlug) ?? null,
+      name: pickString(connection.toolkit?.name, toolkitName) ?? null,
+    },
+    account: connection.account
+      ? {
+          ...connection.account,
+          stableId: accountStableId ?? null,
+          confidence: connection.account.confidence ?? undefined,
+          label: accountLabel ?? null,
+          email: accountEmail ?? null,
+        }
+      : undefined,
+    reconnect: connection.reconnect
+      ? {
+          claim: connection.reconnect.claim ?? "unknown",
+          confidence: connection.reconnect.confidence ?? "unknown",
+          relatedConnectionIds: connection.reconnect.relatedConnectionIds ?? [],
+        }
+      : undefined,
+  };
 }
 
 function buildComposioConnectionDisplayLabel(connection: ComposioConnection): string {
@@ -32,32 +177,68 @@ function buildComposioConnectionDisplayLabel(connection: ComposioConnection): st
   return `Connection ${connection.id.slice(-6)}`;
 }
 
-function buildComposioConnectionIdentity(connection: ComposioConnection): string {
-  const stableIdentity = [
+function buildComposioConnectionIdentity(connection: ComposioConnection): {
+  value: string;
+  source: "gateway_stable_id" | "legacy_heuristic" | "connection_id";
+  confidence: ComposioIdentityConfidence;
+} {
+  const gatewayStableId = pickString(
+    connection.account_stable_id,
+    connection.account?.stableId,
+  );
+  if (gatewayStableId) {
+    return {
+      value: gatewayStableId,
+      source: "gateway_stable_id",
+      confidence: connection.account?.confidence ?? "high",
+    };
+  }
+
+  const legacyIdentity = [
     connection.external_account_id,
     connection.account_email,
     connection.account_name,
     connection.account_label,
   ].find((value) => typeof value === "string" && value.trim());
 
-  if (stableIdentity) {
-    return `${normalizeComposioToolkitSlug(connection.toolkit_slug)}:${stableIdentity.trim().toLowerCase()}`;
+  if (legacyIdentity) {
+    return {
+      value: `${normalizeComposioToolkitSlug(connection.toolkit_slug)}:${legacyIdentity.trim().toLowerCase()}`,
+      source: "legacy_heuristic",
+      confidence: connection.external_account_id ? "high" : "low",
+    };
   }
 
-  return `${normalizeComposioToolkitSlug(connection.toolkit_slug)}:${connection.id}`;
+  return {
+    value: `${normalizeComposioToolkitSlug(connection.toolkit_slug)}:${connection.id}`,
+    source: "connection_id",
+    confidence: "unknown",
+  };
 }
 
 export function normalizeComposioConnection(
   connection: ComposioConnection,
 ): NormalizedComposioConnection {
   const normalized_status = normalizeComposioConnectionStatus(connection.status);
+  const identity = buildComposioConnectionIdentity(connection);
+  const reconnect_claim = connection.reconnect?.claim ?? "unknown";
+  const reconnect_confidence = connection.reconnect?.confidence ?? "unknown";
+  const related_connection_ids = connection.reconnect?.relatedConnectionIds ?? [];
+
   return {
     ...connection,
     normalized_toolkit_slug: normalizeComposioToolkitSlug(connection.toolkit_slug),
     normalized_status,
     is_active: normalized_status === "ACTIVE",
-    account_identity: buildComposioConnectionIdentity(connection),
+    account_identity: identity.value,
+    account_identity_source: identity.source,
+    identity_confidence: identity.confidence,
     display_label: buildComposioConnectionDisplayLabel(connection),
+    reconnect_claim,
+    reconnect_confidence,
+    related_connection_ids,
+    is_same_account_reconnect:
+      reconnect_claim === "same" && reconnect_confidence === "high",
   };
 }
 

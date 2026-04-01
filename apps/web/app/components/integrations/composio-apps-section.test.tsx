@@ -4,6 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposioAppsSection } from "./composio-apps-section";
+import { extractComposioToolkits } from "@/lib/composio-client";
 
 const toolkitsPayload = {
   items: [
@@ -41,7 +42,7 @@ const toolkitsPayload = {
 };
 
 const connectionsPayload = {
-  items: [
+  connections: [
     {
       id: "ca_gmail_1",
       toolkit_slug: "gmail",
@@ -49,6 +50,17 @@ const connectionsPayload = {
       status: "ACTIVE",
       created_at: "2026-04-01T00:00:00.000Z",
       account_label: "Work Gmail",
+      account_stable_id: "cmpacct_gmail_work",
+      account: {
+        stableId: "cmpacct_gmail_work",
+        confidence: "high",
+        label: "Work Gmail",
+      },
+      reconnect: {
+        claim: "same",
+        confidence: "high",
+        relatedConnectionIds: ["ca_gmail_2"],
+      },
     },
     {
       id: "ca_gmail_2",
@@ -57,6 +69,17 @@ const connectionsPayload = {
       status: "ACTIVE",
       created_at: "2026-04-02T00:00:00.000Z",
       account_label: "Personal Gmail",
+      account_stable_id: "cmpacct_gmail_work",
+      account: {
+        stableId: "cmpacct_gmail_work",
+        confidence: "high",
+        label: "Personal Gmail",
+      },
+      reconnect: {
+        claim: "same",
+        confidence: "high",
+        relatedConnectionIds: ["ca_gmail_1"],
+      },
     },
     {
       id: "ca_github_1",
@@ -65,6 +88,12 @@ const connectionsPayload = {
       status: "ACTIVE",
       created_at: "2026-04-03T00:00:00.000Z",
       account_label: "GitHub",
+      account_stable_id: "cmpacct_github",
+      account: {
+        stableId: "cmpacct_github",
+        confidence: "high",
+        label: "GitHub",
+      },
     },
   ],
 };
@@ -93,11 +122,12 @@ describe("ComposioAppsSection", () => {
 
     const activeAccountsLabel = screen.getByText("active accounts");
     expect(activeAccountsLabel).toBeInTheDocument();
-    expect(activeAccountsLabel.previousElementSibling?.textContent).toBe("3");
+    expect(activeAccountsLabel.previousElementSibling?.textContent).toBe("2");
     expect(screen.getByRole("button", { name: "Manage Gmail" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Manage GitHub" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Notion" })).toBeInTheDocument();
-    expect(screen.getByText("2 accounts connected")).toBeInTheDocument();
+    expect(screen.getAllByText("1 account connected")).toHaveLength(2);
+    expect(screen.getByText("2 total connections")).toBeInTheDocument();
   });
 
   it("opens a toolkit modal with multi-account management details", async () => {
@@ -115,5 +145,28 @@ describe("ComposioAppsSection", () => {
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
+  });
+
+  it("normalizes toolkit payloads that omit categories", () => {
+    const normalized = extractComposioToolkits({
+      items: [
+        {
+          slug: "slack",
+          name: "Slack",
+          description: "Team chat",
+          tools_count: 4,
+        },
+      ],
+    });
+
+    expect(normalized.items[0]).toEqual(
+      expect.objectContaining({
+        slug: "slack",
+        name: "Slack",
+        categories: [],
+        auth_schemes: [],
+      }),
+    );
+    expect(normalized.categories).toEqual([]);
   });
 });

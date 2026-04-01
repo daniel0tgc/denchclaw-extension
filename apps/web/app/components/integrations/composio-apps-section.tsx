@@ -11,6 +11,8 @@ import {
   ComposioConnectionsResponse,
 } from "@/lib/composio";
 import {
+  extractComposioConnections,
+  extractComposioToolkits,
   normalizeComposioConnections,
   normalizeComposioToolkitSlug,
 } from "@/lib/composio-client";
@@ -74,7 +76,9 @@ export function ComposioAppsSection({
         );
       }
 
-      const toolkitsData = (await toolkitsRes.json()) as ComposioToolkitsResponse;
+      const toolkitsData = extractComposioToolkits(
+        (await toolkitsRes.json()) as ComposioToolkitsResponse,
+      );
       let connectionsData: ComposioConnectionsResponse = { items: [] };
       let connectionsError: string | null = null;
 
@@ -88,8 +92,8 @@ export function ComposioAppsSection({
 
       setState({
         toolkits: toolkitsData.items,
-        connections: connectionsData.items,
-        categories: toolkitsData.categories ?? [],
+        connections: extractComposioConnections(connectionsData),
+        categories: toolkitsData.categories,
         loading: false,
         error: null,
         connectionsError,
@@ -140,13 +144,27 @@ export function ComposioAppsSection({
     return map;
   }, [connectionsByToolkit]);
 
-  const connectedAppsCount = activeConnectionsByToolkit.size;
+  const activeAccountsByToolkit = useMemo(() => {
+    const map = new Map<string, typeof normalizedConnections>();
+    for (const [toolkitSlug, connections] of activeConnectionsByToolkit) {
+      const uniqueAccounts = new Map<string, typeof connections[number]>();
+      for (const connection of connections) {
+        if (!uniqueAccounts.has(connection.account_identity)) {
+          uniqueAccounts.set(connection.account_identity, connection);
+        }
+      }
+      map.set(toolkitSlug, Array.from(uniqueAccounts.values()));
+    }
+    return map;
+  }, [activeConnectionsByToolkit]);
+
+  const connectedAppsCount = activeAccountsByToolkit.size;
   const activeAccountsCount = useMemo(
-    () => Array.from(activeConnectionsByToolkit.values()).reduce(
+    () => Array.from(activeAccountsByToolkit.values()).reduce(
       (sum, connections) => sum + connections.length,
       0,
     ),
-    [activeConnectionsByToolkit],
+    [activeAccountsByToolkit],
   );
 
   const filteredToolkits = useMemo(() => {
@@ -170,14 +188,14 @@ export function ComposioAppsSection({
 
   const connectedToolkits = useMemo(
     () => filteredToolkits.filter((toolkit) =>
-      activeConnectionsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
-    [activeConnectionsByToolkit, filteredToolkits],
+      activeAccountsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
+    [activeAccountsByToolkit, filteredToolkits],
   );
 
   const availableToolkits = useMemo(
     () => filteredToolkits.filter((toolkit) =>
-      !activeConnectionsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
-    [activeConnectionsByToolkit, filteredToolkits],
+      !activeAccountsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))),
+    [activeAccountsByToolkit, filteredToolkits],
   );
 
   const { featuredAvailable, restAvailable } = useMemo(() => {
@@ -393,7 +411,7 @@ export function ComposioAppsSection({
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {connectedToolkits.map((toolkit) => {
                   const toolkitSlug = normalizeComposioToolkitSlug(toolkit.slug);
-                  const activeConnections = activeConnectionsByToolkit.get(toolkitSlug) ?? [];
+                  const activeConnections = activeAccountsByToolkit.get(toolkitSlug) ?? [];
                   const totalConnections = connectionsByToolkit.get(toolkitSlug)?.length ?? 0;
                   return (
                     <ComposioAppCard

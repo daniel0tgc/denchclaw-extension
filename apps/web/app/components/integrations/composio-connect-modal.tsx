@@ -230,6 +230,9 @@ export function ComposioConnectModal({
 
               {normalizedConnections.map((connection, index) => {
                 const buttonLabel = connection.is_active ? "Disconnect" : "Remove";
+                const showReconnectBadge = connection.is_same_account_reconnect;
+                const showInferredIdentityBadge =
+                  connection.account_identity_source !== "gateway_stable_id";
                 return (
                   <div
                     key={connection.id}
@@ -263,6 +266,34 @@ export function ComposioConnectModal({
                             ? `Added ${formatConnectionDate(connection.created_at)}`
                             : `Connection ${index + 1} · Added ${formatConnectionDate(connection.created_at)}`}
                         </p>
+                        {(showReconnectBadge || showInferredIdentityBadge) && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {showReconnectBadge && (
+                              <span
+                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  background: "rgba(96, 165, 250, 0.12)",
+                                  color: "rgb(147 197 253)",
+                                  border: "1px solid rgba(96, 165, 250, 0.2)",
+                                }}
+                              >
+                                Same account reconnected
+                              </span>
+                            )}
+                            {showInferredIdentityBadge && (
+                              <span
+                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  background: "var(--color-background)",
+                                  color: "var(--color-text-muted)",
+                                  border: "1px solid var(--color-border)",
+                                }}
+                              >
+                                Identity inferred
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       <Button

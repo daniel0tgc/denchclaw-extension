@@ -18,6 +18,7 @@ export function ComposioAppCard({
   const connected = activeConnections > 0;
   const accountCountLabel = `${activeConnections} account${activeConnections === 1 ? "" : "s"} connected`;
   const primaryLabel = connected ? "Manage" : "Connect";
+  const categories = toolkit.categories ?? [];
 
   return (
     <button
@@ -102,7 +103,7 @@ export function ComposioAppCard({
 
         <div className="flex items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-1.5">
-            {toolkit.categories.slice(0, 2).map((category) => (
+            {categories.slice(0, 2).map((category) => (
               <span
                 key={category}
                 className="inline-flex items-center rounded-full px-2 py-1"

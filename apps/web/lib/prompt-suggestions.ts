@@ -33,7 +33,6 @@ import {
 	BarChart3,
 	Clock,
 	Phone,
-	Mic,
 	FileText,
 	Database,
 	BrainCircuit,
@@ -210,15 +209,6 @@ export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
 		iconType: "generic",
 		category: "email-comms",
 		prompt: "I just finished a client call. Help me write a structured summary: key discussion points, decisions made, action items for each party, and next meeting date. Format it so I can paste it directly into the CRM notes.",
-	},
-	{
-		id: "voice-message",
-		label: "Voice Message Draft",
-		subtitle: "Generate audio via ElevenLabs",
-		icon: Mic,
-		iconType: "generic",
-		category: "email-comms",
-		prompt: "I need to send a personalized voice message to a VIP client thanking them for their renewal. Generate the audio using ElevenLabs with a warm, professional tone. Keep it under 30 seconds.",
 	},
 	{
 		id: "twilio-sms-campaign",

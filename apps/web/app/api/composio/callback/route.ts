@@ -1,5 +1,6 @@
 import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 import { getComposioMcpHealth } from "@/lib/composio-mcp-health";
+import { refreshIntegrationsRuntime } from "@/lib/integrations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,14 +17,25 @@ export async function GET(request: Request) {
   const targetOrigin = url.origin;
 
   const success = status === "success";
+  let toolIndexRebuild:
+    | Awaited<ReturnType<typeof rebuildComposioToolIndexIfReady>>
+    | undefined;
+  let runtimeRefresh:
+    | Awaited<ReturnType<typeof refreshIntegrationsRuntime>>
+    | undefined;
   if (success) {
-    await rebuildComposioToolIndexIfReady();
+    toolIndexRebuild = await rebuildComposioToolIndexIfReady();
+    if (toolIndexRebuild.ok) {
+      runtimeRefresh = await refreshIntegrationsRuntime();
+    }
     await getComposioMcpHealth();
   }
   const payloadJson = serializeForInlineScript({
     type: "composio-callback",
     status,
     connected_account_id: connectedAccountId,
+    tool_index_rebuild: toolIndexRebuild,
+    runtime_refresh: runtimeRefresh,
   });
   const targetOriginJson = serializeForInlineScript(targetOrigin);
 

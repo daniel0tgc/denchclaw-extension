@@ -84,8 +84,8 @@ describe("ComposioConnectModal", () => {
       ],
     });
 
-    expect(screen.getByText("2 connected accounts available to your AI agent.")).toBeInTheDocument();
-    expect(screen.getByText("Existing connections")).toBeInTheDocument();
+    expect(screen.getByText("2 connected")).toBeInTheDocument();
+    expect(screen.getByText("Connections")).toBeInTheDocument();
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
     expect(screen.getAllByText("Same account reconnected")).toHaveLength(2);
@@ -122,7 +122,7 @@ describe("ComposioConnectModal", () => {
 
     renderModal({ onConnectionChange });
 
-    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
 
     expect(screen.getByRole("button", { name: "Waiting for authorization..." })).toBeDisabled();
 
@@ -140,7 +140,7 @@ describe("ComposioConnectModal", () => {
     await waitFor(() => {
       expect(onConnectionChange).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
   });
 
   it("ignores callback messages from a different origin", async () => {
@@ -151,7 +151,7 @@ describe("ComposioConnectModal", () => {
 
     renderModal({ onConnectionChange });
 
-    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
 
     act(() => {
       window.dispatchEvent(new MessageEvent("message", {
@@ -175,7 +175,7 @@ describe("ComposioConnectModal", () => {
 
     renderModal({ onConnectionChange });
 
-    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
     await waitFor(() => {
       expect(openSpy).toHaveBeenCalledTimes(1);
     });
@@ -184,6 +184,6 @@ describe("ComposioConnectModal", () => {
     await waitFor(() => {
       expect(onConnectionChange).toHaveBeenCalledTimes(1);
     }, { timeout: 1500 });
-    expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
   });
 });

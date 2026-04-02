@@ -21,20 +21,20 @@ function ModalLogoBox({ logo, name }: { logo: string | null; name: string }) {
   const showImg = logo && !failed;
   return (
     <div
-      className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg"
-      style={{ background: "var(--color-surface-hover)" }}
+      className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl"
+      style={{ background: "var(--color-surface-hover)", border: "1px solid var(--color-border)" }}
     >
       {showImg ? (
         <img
           src={logo}
           alt=""
-          className="h-7 w-7 object-contain"
+          className="h-8 w-8 object-contain"
           decoding="async"
           onError={() => setFailed(true)}
         />
       ) : (
         <span
-          className="text-sm font-semibold uppercase"
+          className="text-base font-semibold uppercase"
           style={{ color: "var(--color-text-muted)" }}
         >
           {name.slice(0, 2)}
@@ -42,6 +42,19 @@ function ModalLogoBox({ logo, name }: { logo: string | null; name: string }) {
       )}
     </div>
   );
+}
+
+function formatAuthScheme(scheme: string): string {
+  const map: Record<string, string> = {
+    OAUTH2: "OAuth 2.0",
+    OAUTH1: "OAuth 1.0",
+    API_KEY: "API Key",
+    BASIC: "Basic Auth",
+    BEARER_TOKEN: "Bearer Token",
+    JWT: "JWT",
+    NO_AUTH: "No Auth",
+  };
+  return map[scheme] ?? scheme.replace(/_/g, " ");
 }
 
 function formatConnectionDate(value: string): string {
@@ -197,45 +210,99 @@ export function ComposioConnectModal({
 
   if (!toolkit) return null;
 
+  const authLabel = toolkit.auth_schemes.length > 0
+    ? toolkit.auth_schemes.map(formatAuthScheme).join(", ")
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <ModalLogoBox logo={toolkit.logo} name={toolkit.name} />
-            <div>
-              <DialogTitle>{toolkit.name}</DialogTitle>
-              {toolkit.tools_count > 0 && (
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {toolkit.tools_count} tool{toolkit.tools_count !== 1 ? "s" : ""} available
-                </p>
-              )}
+      <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
+        {/* Hero header */}
+        <div
+          className="px-6 pt-6 pb-4"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
+          <DialogHeader className="space-y-0">
+            <div className="flex items-start gap-4">
+              <ModalLogoBox logo={toolkit.logo} name={toolkit.name} />
+              <div className="min-w-0 flex-1">
+                <DialogTitle className="text-lg leading-tight">{toolkit.name}</DialogTitle>
+                {toolkit.description && (
+                  <DialogDescription className="mt-1 text-[13px] leading-relaxed line-clamp-2">
+                    {toolkit.description}
+                  </DialogDescription>
+                )}
+              </div>
             </div>
+          </DialogHeader>
+
+          {/* Stats row */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {toolkit.tools_count > 0 && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium"
+                style={{ background: "var(--color-surface-hover)", color: "var(--color-text)" }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+                {toolkit.tools_count} tool{toolkit.tools_count !== 1 ? "s" : ""}
+              </span>
+            )}
+            {authLabel && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium"
+                style={{ background: "var(--color-surface-hover)", color: "var(--color-text)" }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                {authLabel}
+              </span>
+            )}
+            {connected && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium"
+                style={{ background: "rgba(16, 185, 129, 0.1)", color: "rgb(74 222 128)", border: "1px solid rgba(16, 185, 129, 0.2)" }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                {activeConnections.length} connected
+              </span>
+            )}
           </div>
-        </DialogHeader>
 
-        {toolkit.description && (
-          <DialogDescription>{toolkit.description}</DialogDescription>
-        )}
+          {/* Category pills */}
+          {toolkit.categories.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {toolkit.categories.slice(0, 5).map((cat) => (
+                <span
+                  key={cat}
+                  className="rounded-full px-2 py-0.5 text-[11px]"
+                  style={{ background: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}
+                >
+                  {cat}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
 
-        {connected && (
-          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[12px] text-emerald-300">
-            {activeConnections.length} connected account{activeConnections.length === 1 ? "" : "s"} available to your AI agent.
-          </div>
-        )}
+        {/* Body */}
+        <div className="px-6 py-4 space-y-3 max-h-[340px] overflow-y-auto">
+          {error && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] text-red-300">
+              {error}
+            </div>
+          )}
 
-        {error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] text-red-300">
-            {error}
-          </div>
-        )}
-
-        <div className="space-y-3">
           {normalizedConnections.length > 0 ? (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Existing connections
+                  Connections
                 </h4>
                 <span className="text-[11px] text-muted-foreground">
                   {normalizedConnections.length} total
@@ -325,18 +392,22 @@ export function ComposioConnectModal({
             </div>
           ) : (
             <div
-              className="rounded-xl border border-dashed px-3 py-4 text-sm text-muted-foreground"
+              className="rounded-xl border border-dashed px-3 py-5 text-center text-sm text-muted-foreground"
               style={{
                 borderColor: "var(--color-border)",
                 background: "var(--color-surface-hover)",
               }}
             >
-              No accounts connected yet. Start by connecting your first {toolkit.name} account.
+              No accounts connected yet. Connect your {toolkit.name} account to get started.
             </div>
           )}
         </div>
 
-        <DialogFooter>
+        {/* Footer */}
+        <div
+          className="flex items-center justify-end gap-2 px-6 py-4"
+          style={{ borderTop: "1px solid var(--color-border)" }}
+        >
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Close
           </Button>
@@ -349,9 +420,9 @@ export function ComposioConnectModal({
               ? "Waiting for authorization..."
               : connected
                 ? "Connect another account"
-                : "Connect"}
+                : `Connect ${toolkit.name}`}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

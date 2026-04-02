@@ -36,9 +36,31 @@ const MAX_CATEGORY_PILLS = 8;
 
 type IntegrationsTab = "connected" | "marketplace";
 
-const TABS: { id: IntegrationsTab; label: string }[] = [
-  { id: "connected", label: "Connected" },
-  { id: "marketplace", label: "Marketplace" },
+function HomeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </svg>
+  );
+}
+
+function StorefrontIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" />
+      <path d="M3 9l1.5-5h15L21 9" />
+      <path d="M12 9v12" />
+      <path d="M3 9c0 1.66 1.34 3 3 3s3-1.34 3-3" />
+      <path d="M9 9c0 1.66 1.34 3 3 3s3-1.34 3-3" />
+      <path d="M15 9c0 1.66 1.34 3 3 3s3-1.34 3-3" />
+    </svg>
+  );
+}
+
+const TABS: { id: IntegrationsTab; label: string; icon: () => React.JSX.Element }[] = [
+  { id: "connected", label: "Connected", icon: HomeIcon },
+  { id: "marketplace", label: "Marketplace", icon: StorefrontIcon },
 ];
 
 type ComposioAppsState = {
@@ -355,21 +377,25 @@ export function ComposioAppsSection({
         className="flex w-fit items-center gap-1 mb-6 rounded-xl p-1"
         style={{ background: "var(--color-surface-hover)" }}
       >
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer"
-            style={{
-              background: activeTab === tab.id ? "var(--color-surface)" : "transparent",
-              color: activeTab === tab.id ? "var(--color-text)" : "var(--color-text-muted)",
-              boxShadow: activeTab === tab.id ? "var(--shadow-sm)" : "none",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {TABS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer flex items-center gap-1.5"
+              style={{
+                background: activeTab === tab.id ? "var(--color-surface)" : "transparent",
+                color: activeTab === tab.id ? "var(--color-text)" : "var(--color-text-muted)",
+                boxShadow: activeTab === tab.id ? "var(--shadow-sm)" : "none",
+              }}
+            >
+              <Icon />
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search */}

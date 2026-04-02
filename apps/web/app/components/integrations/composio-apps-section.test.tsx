@@ -170,7 +170,7 @@ describe("ComposioAppsSection", () => {
     await user.click(screen.getByRole("button", { name: "Manage Gmail" }));
 
     expect(screen.getByRole("heading", { name: "Gmail" })).toBeInTheDocument();
-    expect(screen.getByText("Existing connections")).toBeInTheDocument();
+    expect(screen.getByText("Connections")).toBeInTheDocument();
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();

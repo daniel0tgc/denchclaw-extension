@@ -100,4 +100,23 @@ describe("ChatModelSelector", () => {
 		);
 		expect(document.querySelector('img[src="/models/kimi.png"]')).not.toBeNull();
 	});
+
+	it("can render a placeholder for settings-style usage without falling back to the first model", () => {
+		render(
+			<ChatModelSelector
+				models={[
+					{ ...models[0], isRecommended: true },
+					models[1],
+				]}
+				selectedModel={null}
+				onSelect={vi.fn()}
+				fallbackToFirst={false}
+				placeholder="Choose a model..."
+				ariaLabel="Select primary model"
+			/>,
+		);
+
+		expect(screen.getByText("Choose a model...")).toBeInTheDocument();
+		expect(screen.queryByText("Claude Opus 4.6")).not.toBeInTheDocument();
+	});
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
 import { DenchIntegrationsSection } from "../integrations/dench-integrations-section";
 
@@ -193,6 +194,14 @@ function ModelSelector({
   selecting: boolean;
   notice: ActionNotice | null;
 }) {
+  const pickerModels: ChatModelSelectorOption[] = models.map((model) => ({
+    stableId: model.stableId,
+    displayName: model.displayName,
+    provider: model.provider,
+    reasoning: model.reasoning,
+    isRecommended: model.id === recommendedModelId,
+  }));
+
   return (
     <div className="space-y-4">
       <div
@@ -233,52 +242,23 @@ function ModelSelector({
         >
           Primary Model
         </label>
-        <div className="relative">
-          <select
-            value={isDenchPrimary && selectedModel ? selectedModel : ""}
-            onChange={(e) => {
-              if (e.target.value && !selecting) {
-                onSelect(e.target.value);
-              }
-            }}
+        <div
+          className="rounded-xl border px-3 py-2.5"
+          style={{
+            background: "var(--color-surface)",
+            borderColor: "var(--color-border)",
+          }}
+        >
+          <ChatModelSelector
+            models={pickerModels}
+            selectedModel={isDenchPrimary ? selectedModel : null}
+            onSelect={onSelect}
             disabled={selecting}
-            className="w-full appearance-none px-3 py-2.5 pr-8 rounded-xl text-sm outline-none transition-colors cursor-pointer"
-            style={{
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              color: "var(--color-text)",
-            }}
-          >
-            {!isDenchPrimary && (
-              <option value="" disabled>
-                Choose a model...
-              </option>
-            )}
-            {models.map((model) => (
-              <option key={model.stableId} value={model.stableId}>
-                {model.displayName}
-                {model.id === recommendedModelId ? " (recommended)" : ""}
-                {model.reasoning ? " · reasoning" : ""}
-                {" · "}
-                {model.provider}
-              </option>
-            ))}
-          </select>
-          <span
-            className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            {selecting ? (
-              <div
-                className="h-3.5 w-3.5 animate-spin rounded-full border-2"
-                style={{ borderColor: "var(--color-border)", borderTopColor: "var(--color-accent)" }}
-              />
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            )}
-          </span>
+            fallbackToFirst={isDenchPrimary}
+            placeholder="Choose a model..."
+            ariaLabel="Select primary model"
+            triggerClassName="w-full justify-between"
+          />
         </div>
       </div>
 

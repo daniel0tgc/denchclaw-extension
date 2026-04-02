@@ -19,6 +19,8 @@ import { trackServer } from "@/lib/telemetry";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSessionMeta } from "@/app/api/web-sessions/shared";
+import { getAgentSession } from "@/app/api/sessions/shared";
+import { shouldMitigateOpenAiSwitch } from "@/lib/chat-models";
 
 export const runtime = "nodejs";
 
@@ -66,7 +68,15 @@ export async function POST(req: Request) {
 		sessionKey,
 		distinctId,
 		userHtml,
-	}: { messages: UIMessage[]; sessionId?: string; sessionKey?: string; distinctId?: string; userHtml?: string } = await req.json();
+		modelOverride,
+	}: {
+		messages: UIMessage[];
+		sessionId?: string;
+		sessionKey?: string;
+		distinctId?: string;
+		userHtml?: string;
+		modelOverride?: string;
+	} = await req.json();
 
 	const lastUserMessage = messages.filter((m) => m.role === "user").pop();
 	const userText =
@@ -92,6 +102,27 @@ export async function POST(req: Request) {
 	);
 
 	const isSubagentSession = typeof sessionKey === "string" && sessionKey.includes(":subagent:");
+	const normalizedModelOverride =
+		typeof modelOverride === "string" && modelOverride.trim()
+			? modelOverride.trim()
+			: undefined;
+
+	if (sessionId && normalizedModelOverride) {
+		const runtimeSession = getAgentSession(sessionId);
+		if (
+			runtimeSession &&
+			shouldMitigateOpenAiSwitch({
+				sessionModel: runtimeSession.model ?? null,
+				sessionModelProvider: runtimeSession.modelProvider ?? null,
+				targetModel: normalizedModelOverride,
+			})
+		) {
+			return new Response(
+				"Switching an existing non-OpenAI chat into ChatGPT is temporarily blocked for this session because the upstream provider can reject older tool-call history. Start a new chat to use this model safely.",
+				{ status: 409 },
+			);
+		}
+	}
 
 	if (!isSubagentSession && sessionId && hasActiveRun(sessionId)) {
 		return new Response("Active run in progress", { status: 409 });
@@ -151,6 +182,7 @@ export async function POST(req: Request) {
 				message: agentMessage,
 				agentSessionId: sessionId,
 				overrideAgentId: effectiveAgentId,
+				modelOverride: normalizedModelOverride,
 			});
 		} catch (err) {
 			return new Response(

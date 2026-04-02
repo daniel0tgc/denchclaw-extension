@@ -99,6 +99,7 @@ export type ComposioMcpHealth = {
 };
 
 const COMPOSIO_MCP_STATUS_FILE = "composio-mcp-status.json";
+const GATEWAY_TOOLS_CACHE_TTL_MS = 5 * 60_000;
 
 const COMPOSIO_LIVE_PROBE_PROMPT = [
   "You are running a Composio MCP availability probe.",
@@ -112,6 +113,14 @@ const COMPOSIO_LIVE_PROBE_PROMPT = [
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function isFresh(checkedAt: string | undefined, ttlMs: number): boolean {
+  if (!checkedAt) {
+    return false;
+  }
+  const timestamp = Date.parse(checkedAt);
+  return Number.isFinite(timestamp) && Date.now() - timestamp <= ttlMs;
 }
 
 function resolveStatusFilePath(workspaceDir: string | null): string | null {
@@ -441,23 +450,32 @@ export async function getComposioMcpHealth(options?: {
   };
 
   if (apiKey) {
-    try {
-      const tools = await fetchComposioMcpToolsList(gatewayUrl, apiKey);
-      gatewayTools = {
-        status: tools.length > 0 ? "pass" : "fail",
-        detail: tools.length > 0
-          ? "The gateway returned Composio MCP tools successfully."
-          : "The gateway returned zero Composio MCP tools.",
-        checkedAt: generatedAt,
-        toolCount: tools.length,
-      };
-    } catch (error) {
-      gatewayTools = {
-        status: "fail",
-        detail: error instanceof Error ? error.message : "The gateway tools/list probe failed.",
-        checkedAt: generatedAt,
-        toolCount: null,
-      };
+    const persistedGatewayTools = persisted?.gatewayTools;
+    if (
+      persistedGatewayTools
+      && !options?.repairConfig
+      && isFresh(persistedGatewayTools.checkedAt, GATEWAY_TOOLS_CACHE_TTL_MS)
+    ) {
+      gatewayTools = persistedGatewayTools;
+    } else {
+      try {
+        const tools = await fetchComposioMcpToolsList(gatewayUrl, apiKey);
+        gatewayTools = {
+          status: tools.length > 0 ? "pass" : "fail",
+          detail: tools.length > 0
+            ? "The gateway returned Composio MCP tools successfully."
+            : "The gateway returned zero Composio MCP tools.",
+          checkedAt: generatedAt,
+          toolCount: tools.length,
+        };
+      } catch (error) {
+        gatewayTools = {
+          status: "fail",
+          detail: error instanceof Error ? error.message : "The gateway tools/list probe failed.",
+          checkedAt: generatedAt,
+          toolCount: null,
+        };
+      }
     }
   }
 

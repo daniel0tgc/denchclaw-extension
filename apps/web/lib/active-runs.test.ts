@@ -205,6 +205,25 @@ describe("active-runs", () => {
 	// ── startRun + subscribeToRun ──────────────────────────────────────
 
 	describe("startRun + subscribeToRun", () => {
+		it("passes the session model override to spawnAgentProcess", async () => {
+			const { startRun } = await setup();
+			const { spawnAgentProcess } = await import("./agent-runner.js");
+
+			startRun({
+				sessionId: "s-model",
+				message: "hello",
+				agentSessionId: "s-model",
+				modelOverride: "gpt-5.4",
+			});
+
+			expect(spawnAgentProcess).toHaveBeenCalledWith(
+				"hello",
+				"s-model",
+				undefined,
+				"gpt-5.4",
+			);
+		});
+
 		it("creates a run and emits fallback text when process exits without output", async () => {
 			const { child, startRun, subscribeToRun } = await setup();
 

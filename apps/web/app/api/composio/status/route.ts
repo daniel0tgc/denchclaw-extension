@@ -32,7 +32,10 @@ export async function POST(request: Request) {
       return Response.json(await getComposioMcpHealth());
     }
     if (body.action === "repair_mcp") {
-      return Response.json(await getComposioMcpHealth({ repairConfig: true }));
+      return Response.json(await getComposioMcpHealth({
+        repairConfig: true,
+        includeLiveAgentProbe: true,
+      }));
     }
     if (body.action === "probe_live_agent") {
       return Response.json(await getComposioMcpHealth({ includeLiveAgentProbe: true }));

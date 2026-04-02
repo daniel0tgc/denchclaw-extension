@@ -38,6 +38,10 @@ vi.mock("@/app/api/web-sessions/shared", () => ({
   ),
 }));
 
+vi.mock("@/app/api/sessions/shared", () => ({
+  getAgentSession: vi.fn(() => undefined),
+}));
+
 describe("Chat API routes", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -73,6 +77,9 @@ describe("Chat API routes", () => {
       resolveSessionAgentId: vi.fn(
         (_sessionId: string, fallbackAgentId: string) => fallbackAgentId,
       ),
+    }));
+    vi.mock("@/app/api/sessions/shared", () => ({
+      getAgentSession: vi.fn(() => undefined),
     }));
   });
 
@@ -133,6 +140,66 @@ describe("Chat API routes", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("text/event-stream");
       expect(startRun).toHaveBeenCalled();
+    });
+
+    it("forwards a chat model override to the run starter", async () => {
+      const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
+      vi.mocked(hasActiveRun).mockReturnValue(false);
+      vi.mocked(subscribeToRun).mockReturnValue(() => {});
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { id: "m1", role: "user", parts: [{ type: "text", text: "hello" }] },
+          ],
+          sessionId: "s1",
+          modelOverride: "gpt-5.4",
+        }),
+      });
+
+      await POST(req);
+
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "s1",
+          modelOverride: "gpt-5.4",
+        }),
+      );
+    });
+
+    it("blocks unsafe non-OpenAI to ChatGPT session switches with a friendly error", async () => {
+      const { getAgentSession } = await import("@/app/api/sessions/shared");
+      const { startRun } = await import("@/lib/active-runs");
+      vi.mocked(startRun).mockClear();
+      vi.mocked(getAgentSession).mockReturnValue({
+        key: "agent:main:web:s1",
+        sessionId: "s1",
+        updatedAt: Date.now(),
+        model: "dench-cloud/anthropic.claude-opus-4-6-v1",
+        modelProvider: "anthropic",
+      } as never);
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { id: "m1", role: "user", parts: [{ type: "text", text: "switch me" }] },
+          ],
+          sessionId: "s1",
+          modelOverride: "gpt-5.4",
+        }),
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(409);
+      await expect(res.text()).resolves.toContain("Start a new chat");
+      expect(startRun).not.toHaveBeenCalled();
     });
 
     it("maps partial tool output into AI SDK preliminary output chunks", async () => {

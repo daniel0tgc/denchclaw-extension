@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { ComposioAppCard } from "./composio-app-card";
 import { ComposioConnectModal } from "./composio-connect-modal";
@@ -122,19 +122,36 @@ export function ComposioAppsSection({
   const [modalOpen, setModalOpen] = useState(false);
   const [mcpStatus, setMcpStatus] = useState<ComposioMcpStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [toolIndexError, setToolIndexError] = useState<string | null>(null);
   const [repairingMcp, setRepairingMcp] = useState(false);
+  const initialFetchStartedRef = useRef(false);
+
+  const fetchMcpStatus = useCallback(async () => {
+    try {
+      const statusRes = await fetch("/api/composio/status");
+      if (statusRes.ok) {
+        setMcpStatus((await statusRes.json()) as ComposioMcpStatus);
+        setStatusError(null);
+        return;
+      }
+
+      setMcpStatus(null);
+      const err = await statusRes.json().catch(() => ({}));
+      setStatusError(
+        (err as { error?: string }).error ?? `Failed to load Composio MCP status (${statusRes.status})`,
+      );
+    } catch (err) {
+      setMcpStatus(null);
+      setStatusError(err instanceof Error ? err.message : "Failed to load Composio MCP status.");
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null, connectionsError: null }));
-    setMcpStatus(null);
     setStatusError(null);
-    setToolIndexError(null);
     try {
-      const [toolkitsRes, connectionsRes, statusRes] = await Promise.all([
+      const [toolkitsRes, connectionsRes] = await Promise.all([
         fetch("/api/composio/toolkits"),
         fetch("/api/composio/connections"),
-        fetch("/api/composio/status"),
       ]);
 
       if (!toolkitsRes.ok) {
@@ -158,16 +175,6 @@ export function ComposioAppsSection({
           ?? `Failed to load connections (${connectionsRes.status})`;
       }
 
-      if (statusRes.ok) {
-        setMcpStatus((await statusRes.json()) as ComposioMcpStatus);
-      } else {
-        setMcpStatus(null);
-        const err = await statusRes.json().catch(() => ({}));
-        setStatusError(
-          (err as { error?: string }).error ?? `Failed to load Composio MCP status (${statusRes.status})`,
-        );
-      }
-
       setState({
         toolkits: toolkitsData.items,
         connections: extractComposioConnections(connectionsData),
@@ -177,13 +184,7 @@ export function ComposioAppsSection({
         connectionsError,
       });
 
-      const toolIndexRes = await fetch("/api/composio/tool-index", { method: "POST" });
-      if (!toolIndexRes.ok) {
-        const err = await toolIndexRes.json().catch(() => ({}));
-        setToolIndexError(
-          (err as { error?: string }).error ?? `Failed to rebuild Composio tool index (${toolIndexRes.status})`,
-        );
-      }
+      void fetchMcpStatus();
     } catch (err) {
       setMcpStatus(null);
       setState((prev) => ({
@@ -192,12 +193,17 @@ export function ComposioAppsSection({
         error: err instanceof Error ? err.message : "Failed to load apps.",
       }));
     }
-  }, []);
+  }, [fetchMcpStatus]);
 
   useEffect(() => {
     if (eligible) {
+      if (initialFetchStartedRef.current) {
+        return;
+      }
+      initialFetchStartedRef.current = true;
       void fetchData();
     } else {
+      initialFetchStartedRef.current = false;
       setState((prev) => ({ ...prev, loading: false }));
     }
   }, [eligible, fetchData]);
@@ -322,15 +328,6 @@ export function ComposioAppsSection({
         return;
       }
       setMcpStatus(payload as ComposioMcpStatus);
-      const toolIndexRes = await fetch("/api/composio/tool-index", { method: "POST" });
-      if (!toolIndexRes.ok) {
-        const err = await toolIndexRes.json().catch(() => ({}));
-        setToolIndexError(
-          (err as { error?: string }).error ?? `Failed to rebuild Composio tool index (${toolIndexRes.status})`,
-        );
-      } else {
-        setToolIndexError(null);
-      }
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : "Failed to update Composio MCP status.");
     } finally {
@@ -448,7 +445,7 @@ export function ComposioAppsSection({
       )}
 
       {/* MCP status (collapsed into a small bar) */}
-      {(statusError || toolIndexError || (mcpStatus && mcpStatus.summary.level !== "healthy")) && (
+      {(statusError || (mcpStatus && mcpStatus.summary.level !== "healthy")) && (
         <div
           className="mb-4 flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs"
           style={{
@@ -458,7 +455,7 @@ export function ComposioAppsSection({
           }}
         >
           <span className="truncate">
-            {statusError ?? toolIndexError ?? mcpStatus?.summary.message ?? "MCP needs attention"}
+            {statusError ?? mcpStatus?.summary.message ?? "MCP needs attention"}
           </span>
           <button
             type="button"

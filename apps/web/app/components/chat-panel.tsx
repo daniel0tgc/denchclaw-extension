@@ -34,6 +34,13 @@ import {
 	getStreamActivityLabel,
 	hasAssistantText,
 } from "./chat-stream-status";
+import {
+	ChatModelSelector,
+} from "./chat-model-selector";
+import {
+	type ChatModelOption,
+	resolveActiveChatModelId,
+} from "@/lib/chat-models";
 
 // ── Prompt suggestions for new chat hero ──
 
@@ -171,6 +178,101 @@ type AttachedFile = {
 	/** Local blob URL for instant preview before upload completes. */
 	localUrl?: string;
 };
+
+type ChatCloudState = {
+	isDenchPrimary: boolean;
+	selectedDenchModel: string | null;
+	models: ChatModelOption[];
+};
+
+type ChatSessionRuntime = {
+	model: string | null;
+	modelProvider: string | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return null;
+	}
+	return value as Record<string, unknown>;
+}
+
+function normalizeChatModelOption(value: unknown): ChatModelOption | null {
+	const record = asRecord(value);
+	if (!record) {
+		return null;
+	}
+	const stableId =
+		typeof record.stableId === "string" && record.stableId.trim()
+			? record.stableId.trim()
+			: null;
+	const displayName =
+		typeof record.displayName === "string" && record.displayName.trim()
+			? record.displayName.trim()
+			: null;
+	const provider =
+		typeof record.provider === "string" && record.provider.trim()
+			? record.provider.trim()
+			: null;
+	if (!stableId || !displayName || !provider) {
+		return null;
+	}
+	return {
+		stableId,
+		displayName,
+		provider,
+		reasoning: Boolean(record.reasoning),
+	};
+}
+
+function normalizeChatCloudState(value: unknown): ChatCloudState | null {
+	const record = asRecord(value);
+	if (!record) {
+		return null;
+	}
+	const models = Array.isArray(record.models)
+		? record.models
+				.map(normalizeChatModelOption)
+				.filter((model): model is ChatModelOption => model !== null)
+		: [];
+	return {
+		isDenchPrimary: Boolean(record.isDenchPrimary),
+		selectedDenchModel:
+			typeof record.selectedDenchModel === "string" &&
+			record.selectedDenchModel.trim()
+				? record.selectedDenchModel.trim()
+				: null,
+		models,
+	};
+}
+
+function normalizeChatSessionRuntime(
+	value: unknown,
+	sessionId: string,
+): ChatSessionRuntime | null {
+	const record = asRecord(value);
+	if (!record) {
+		return null;
+	}
+	const sessions = Array.isArray(record.sessions) ? record.sessions : [];
+	for (const session of sessions) {
+		const parsed = asRecord(session);
+		if (!parsed || parsed.sessionId !== sessionId) {
+			continue;
+		}
+		return {
+			model:
+				typeof parsed.model === "string" && parsed.model.trim()
+					? parsed.model.trim()
+					: null,
+			modelProvider:
+				typeof parsed.modelProvider === "string" && parsed.modelProvider.trim()
+					? parsed.modelProvider.trim()
+					: null,
+		};
+	}
+	return null;
+}
 
 function getFileCategory(
 	name: string,
@@ -924,6 +1026,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 		const [rawView, _setRawView] = useState(false);
+		const [cloudState, setCloudState] = useState<ChatCloudState | null>(null);
+		const [sessionRuntime, setSessionRuntime] = useState<ChatSessionRuntime | null>(null);
+		const [modelOverride, setModelOverride] = useState<string | null>(null);
 
 		// ── Hero state (new chat screen) ──
 		const greeting = "What can I help with?";
@@ -938,11 +1043,48 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		const filePath = fileContext?.path ?? null;
 
+		useEffect(() => {
+			let cancelled = false;
+			const controller = new AbortController();
+			void (async () => {
+				try {
+					const res = await fetch("/api/settings/cloud", {
+						cache: "no-store",
+						signal: controller.signal,
+					});
+					if (!res.ok) {
+						return;
+					}
+					const raw = await res.json();
+					const next = normalizeChatCloudState(raw);
+					if (!cancelled && next) {
+						setCloudState(next);
+					}
+				} catch {
+					// Best-effort only; the chat should work even if cloud state is unavailable.
+				}
+			})();
+			return () => {
+				cancelled = true;
+				controller.abort();
+			};
+		}, [currentSessionId]);
+
+		useEffect(() => {
+			setModelOverride(null);
+			setSessionRuntime(null);
+		}, [currentSessionId]);
+
 		// ── Ref-based session ID for transport ──
 		const sessionIdRef = useRef<string | null>(null);
 		useEffect(() => {
 			sessionIdRef.current = currentSessionId;
 		}, [currentSessionId]);
+
+		const modelOverrideRef = useRef<string | null>(null);
+		useEffect(() => {
+			modelOverrideRef.current = modelOverride;
+		}, [modelOverride]);
 
 		const subagentSessionKeyRef = useRef(subagentSessionKey);
 		useEffect(() => {
@@ -960,6 +1102,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						if (sk) {extra.sessionKey = sk;}
 						const sid = sessionIdRef.current;
 						if (sid) {extra.sessionId = sid;}
+						const currentModelOverride = modelOverrideRef.current;
+						if (currentModelOverride) {
+							extra.modelOverride = currentModelOverride;
+						}
 						if (pendingHtmlRef.current) {
 							extra.userHtml = pendingHtmlRef.current;
 							pendingHtmlRef.current = null;
@@ -977,6 +1123,47 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			status === "streaming" ||
 			status === "submitted" ||
 			isReconnecting;
+
+		useEffect(() => {
+			if (!currentSessionId || (isStreaming && !modelOverride)) {
+				return;
+			}
+			let cancelled = false;
+			const controller = new AbortController();
+			void (async () => {
+				try {
+					const res = await fetch("/api/sessions", {
+						cache: "no-store",
+						signal: controller.signal,
+					});
+					if (!res.ok) {
+						return;
+					}
+					const raw = await res.json();
+					const next = normalizeChatSessionRuntime(raw, currentSessionId);
+					if (!cancelled) {
+						setSessionRuntime(next);
+					}
+				} catch {
+					// Best-effort only; chat should still function without this metadata.
+				}
+			})();
+			return () => {
+				cancelled = true;
+				controller.abort();
+			};
+		}, [currentSessionId, isStreaming, modelOverride]);
+
+		const activeChatModel = resolveActiveChatModelId({
+			modelOverride,
+			sessionModel: sessionRuntime?.model ?? null,
+			selectedDenchModel: cloudState?.selectedDenchModel ?? null,
+			models: cloudState?.models ?? [],
+		});
+		const hasModelPicker =
+			Boolean(currentSessionId) &&
+			Boolean(cloudState?.isDenchPrimary) &&
+			(cloudState?.models.length ?? 0) > 0;
 
 		const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
 		onRuntimeStateChangeRef.current = onRuntimeStateChange;
@@ -2316,14 +2503,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								Chat: {fileContext.filename}
 							</h2>
 						) : currentSessionId ? (
-							<h2
-								className="text-sm font-semibold"
-								style={{
-									color: "var(--color-text)",
-								}}
-							>
-								{sessionTitle || "Chat Session"}
-							</h2>
+							hasModelPicker ? (
+								<ChatModelSelector
+									models={cloudState?.models ?? []}
+									selectedModel={activeChatModel}
+									onSelect={setModelOverride}
+								/>
+							) : (
+								<h2
+									className="text-sm font-semibold"
+									style={{
+										color: "var(--color-text)",
+									}}
+								>
+									{sessionTitle || "Chat Session"}
+								</h2>
+							)
 						) : null}
 					</div>
 					{!hideHeaderActions && (

@@ -67,7 +67,10 @@ describe("Composio status API", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(200);
-    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({ repairConfig: true });
+    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({
+      repairConfig: true,
+      includeLiveAgentProbe: true,
+    });
   });
 
   it("POST runs the live-agent probe when requested", async () => {

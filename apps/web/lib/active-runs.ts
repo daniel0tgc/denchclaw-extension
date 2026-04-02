@@ -608,8 +608,15 @@ export function startRun(params: {
 	agentSessionId?: string;
 	/** Use a specific agent ID instead of the workspace default. */
 	overrideAgentId?: string;
+	modelOverride?: string;
 }): ActiveRun {
-	const { sessionId, message, agentSessionId, overrideAgentId } = params;
+	const {
+		sessionId,
+		message,
+		agentSessionId,
+		overrideAgentId,
+		modelOverride,
+	} = params;
 
 	const existing = activeRuns.get(sessionId);
 	if (existing?.status === "running") {
@@ -623,7 +630,12 @@ export function startRun(params: {
 		? `agent:${agentId}:web:${agentSessionId}`
 		: undefined;
 	const abortController = new AbortController();
-	const child = spawnAgentProcess(message, agentSessionId, overrideAgentId);
+	const child = spawnAgentProcess(
+		message,
+		agentSessionId,
+		overrideAgentId,
+		modelOverride,
+	);
 
 	const run: ActiveRun = {
 		sessionId,

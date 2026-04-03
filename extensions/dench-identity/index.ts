@@ -43,10 +43,17 @@ const APP_ALIASES: Record<string, string> = {
   slack: "slack",
   github: "github",
   git: "github",
+  pr: "github",
+  prs: "github",
+  "pull request": "github",
+  "pull requests": "github",
   notion: "notion",
   calendar: "google-calendar",
   "google calendar": "google-calendar",
   "gcal": "google-calendar",
+  googlecalendar: "google-calendar",
+  twitter: "x",
+  x: "x",
   linear: "linear",
 };
 
@@ -94,10 +101,38 @@ const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
   github: [
     {
       intent: "List repos",
-      tool: "GITHUB_LIST_REPOSITORIES_FOR_AUTHENTICATED_USER",
+      tool: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
       required_args: [],
       arg_hints: {},
       example_prompts: ["list my GitHub repositories"],
+    },
+    {
+      intent: "Find pull requests",
+      tool: "GITHUB_FIND_PULL_REQUESTS",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: ["check my recent PRs", "show my recent pull requests"],
+    },
+    {
+      intent: "List repo pull requests",
+      tool: "GITHUB_LIST_PULL_REQUESTS",
+      required_args: ["owner", "repo"],
+      arg_hints: {
+        owner: "Repository owner or organization login.",
+        repo: "Repository name without the .git suffix.",
+      },
+      example_prompts: ["list PRs for this repo", "show pull requests in this repository"],
+    },
+    {
+      intent: "Get pull request",
+      tool: "GITHUB_GET_A_PULL_REQUEST",
+      required_args: ["owner", "repo", "pull_number"],
+      arg_hints: {
+        owner: "Repository owner or organization login.",
+        repo: "Repository name without the .git suffix.",
+        pull_number: "Numeric pull request number.",
+      },
+      example_prompts: ["show this pull request", "get PR details"],
     },
   ],
   notion: [
@@ -111,6 +146,16 @@ const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
   ],
   "google-calendar": [
     {
+      intent: "Upcoming events",
+      tool: "GOOGLE_CALENDAR_EVENTS_LIST",
+      required_args: [],
+      arg_hints: {
+        time_min: "RFC3339 datetime string.",
+        time_max: "RFC3339 datetime string.",
+      },
+      example_prompts: ["what's upcoming on my calendar", "show upcoming calendar events"],
+    },
+    {
       intent: "List events",
       tool: "GOOGLE_CALENDAR_EVENTS_LIST",
       required_args: [],
@@ -119,6 +164,17 @@ const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
         time_max: "RFC3339 datetime string.",
       },
       example_prompts: ["show my calendar events", "list upcoming meetings"],
+    },
+    {
+      intent: "Find event",
+      tool: "GOOGLE_CALENDAR_EVENTS_LIST",
+      required_args: [],
+      arg_hints: {
+        query: "Search text for matching events if the tool supports it.",
+        time_min: "RFC3339 datetime string.",
+        time_max: "RFC3339 datetime string.",
+      },
+      example_prompts: ["find my event tomorrow", "search for a calendar event"],
     },
   ],
   linear: [
@@ -175,6 +231,271 @@ function scoreMatch(text: string, queryTokens: string[]): number {
   return score;
 }
 
+type ResolverToolCandidate = {
+  name: string;
+  title: string;
+  description_short: string;
+  required_args: string[];
+  arg_hints: Record<string, string>;
+  default_args?: Record<string, unknown>;
+  example_args?: Record<string, unknown>;
+  example_prompts?: string[];
+  source: "indexed" | "recipe" | "ondemand";
+};
+
+type ResolverMcpTool = {
+  name: string;
+  description?: string;
+  title?: string;
+  inputSchema?: {
+    type?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+  };
+};
+
+function toolkitSlugToToolPrefix(slug: string): string {
+  return (normalizeResolverApp(slug) ?? slug).toUpperCase().replace(/-/g, "_") + "_";
+}
+
+function extractResolverRequiredArgs(schema: ResolverMcpTool["inputSchema"]): string[] {
+  if (!schema || schema.type !== "object" || !Array.isArray(schema.required)) {
+    return [];
+  }
+  return schema.required.filter((value): value is string =>
+    typeof value === "string" && value.trim().length > 0);
+}
+
+function buildResolverArgHints(
+  toolName: string,
+  schema: ResolverMcpTool["inputSchema"],
+): Record<string, string> {
+  const props = schema?.type === "object" ? schema.properties : undefined;
+  if (!props) {
+    return {};
+  }
+
+  const hints: Record<string, string> = {};
+  const upper = toolName.toUpperCase();
+  if (upper.includes("GOOGLE_CALENDAR") && props.time_min) {
+    hints.time_min = "RFC3339 datetime string.";
+  }
+  if (upper.includes("GOOGLE_CALENDAR") && props.time_max) {
+    hints.time_max = "RFC3339 datetime string.";
+  }
+  if (upper.includes("GOOGLE_CALENDAR") && props.calendar_id) {
+    hints.calendar_id = "Calendar identifier. Use the calendar list tool first if needed.";
+  }
+  if (upper.includes("GITHUB") && props.owner) {
+    hints.owner = "Repository owner or organization login.";
+  }
+  if (upper.includes("GITHUB") && props.repo) {
+    hints.repo = "Repository name without the .git suffix.";
+  }
+  if (upper.includes("GITHUB") && props.pull_number) {
+    hints.pull_number = "Numeric pull request number.";
+  }
+  for (const [key, value] of Object.entries(props)) {
+    const prop = asRecord(value);
+    if (prop?.type === "array" && !hints[key]) {
+      hints[key] = "Must be a JSON array, not a comma-separated string.";
+    }
+  }
+  return hints;
+}
+
+function buildResolverCandidateFromCatalog(tool: ResolverMcpTool): ResolverToolCandidate {
+  return {
+    name: tool.name,
+    title:
+      tool.title?.trim() ||
+      tool.annotations?.title?.trim() ||
+      tool.name,
+    description_short: tool.description?.trim() ?? "",
+    required_args: extractResolverRequiredArgs(tool.inputSchema),
+    arg_hints: buildResolverArgHints(tool.name, tool.inputSchema),
+    source: "ondemand",
+  };
+}
+
+function buildIndexedToolCandidates(
+  app: ComposioToolIndexFile["connected_apps"][number],
+): ResolverToolCandidate[] {
+  const out = new Map<string, ResolverToolCandidate>();
+  const staticFallbackRecipes = STATIC_COMPOSIO_FALLBACK[
+    normalizeResolverApp(app.toolkit_slug) ?? app.toolkit_slug
+  ] ?? [];
+  for (const tool of app.tools) {
+    out.set(tool.name, {
+      ...tool,
+      source: "indexed",
+    });
+  }
+  for (const [intent, toolName] of Object.entries(app.recipes)) {
+    if (out.has(toolName)) {
+      continue;
+    }
+    const fallbackRecipe = staticFallbackRecipes.find((recipe) =>
+      recipe.tool === toolName || recipe.intent === intent);
+    out.set(toolName, {
+      name: toolName,
+      title: intent,
+      description_short: `Recommended ${app.toolkit_name} recipe for ${intent}.`,
+      required_args: fallbackRecipe?.required_args ?? [],
+      arg_hints: fallbackRecipe?.arg_hints ?? {},
+      ...(fallbackRecipe?.default_args ? { default_args: fallbackRecipe.default_args } : {}),
+      example_prompts: fallbackRecipe?.example_prompts ?? [intent],
+      source: "recipe",
+    });
+  }
+  return Array.from(out.values());
+}
+
+function chooseBestTool(
+  candidates: ResolverToolCandidate[],
+  recipes: Record<string, string>,
+  queryText: string,
+) {
+  const queryTokens = tokenize(queryText);
+  const recipeByTool = new Map<string, string[]>();
+  for (const [intent, toolName] of Object.entries(recipes)) {
+    const bucket = recipeByTool.get(toolName);
+    if (bucket) {
+      bucket.push(intent);
+    } else {
+      recipeByTool.set(toolName, [intent]);
+    }
+  }
+
+  let bestTool = candidates[0] ?? null;
+  let bestScore = -1;
+  for (const tool of candidates) {
+    const recipeHints = recipeByTool.get(tool.name) ?? [];
+    const score = scoreMatch(
+      [
+        tool.name,
+        tool.title,
+        tool.description_short,
+        ...recipeHints,
+        ...(tool.example_prompts ?? []),
+      ].join(" "),
+      queryTokens,
+    );
+    if (score > bestScore) {
+      bestTool = tool;
+      bestScore = score;
+    }
+  }
+
+  return {
+    tool: bestTool,
+    recipe: bestTool ? (recipeByTool.get(bestTool.name)?.[0] ?? null) : null,
+    score: bestScore,
+  };
+}
+
+function resolveGatewayUrlFromApi(api: OpenClawPluginApi): string | null {
+  const plugins = asRecord(asRecord(api?.config)?.plugins)?.entries;
+  const denchGateway = asRecord(asRecord(plugins)?.["dench-ai-gateway"]);
+  const configured = readString(asRecord(denchGateway?.config)?.gatewayUrl);
+  return configured ?? process.env.DENCH_GATEWAY_URL?.trim() ?? null;
+}
+
+function resolveComposioApiKeyFromApi(api: OpenClawPluginApi): string | null {
+  const provider = asRecord(asRecord(asRecord(api?.config)?.models)?.providers)?.["dench-cloud"];
+  return readString(asRecord(provider)?.apiKey)
+    ?? process.env.DENCH_CLOUD_API_KEY?.trim()
+    ?? process.env.DENCH_API_KEY?.trim()
+    ?? null;
+}
+
+function extractToolsFromJsonRpcMessage(payload: unknown): ResolverMcpTool[] {
+  const result = asRecord(asRecord(payload)?.result);
+  const tools = result?.tools;
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+  return tools
+    .map((item) => asRecord(item))
+    .filter((item): item is UnknownRecord => Boolean(item))
+    .map((tool) => ({
+      name: readString(tool.name) ?? "",
+      description: readString(tool.description),
+      title: readString(tool.title ?? asRecord(tool.annotations)?.title),
+      inputSchema: asRecord(tool.inputSchema) as ResolverMcpTool["inputSchema"],
+      annotations: asRecord(tool.annotations) as ResolverMcpTool["annotations"],
+    }))
+    .filter((tool) => tool.name.length > 0);
+}
+
+function parseSseJsonRpcTools(body: string): ResolverMcpTool[] {
+  let lastPayload: unknown = null;
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) {
+      continue;
+    }
+    const raw = trimmed.slice(5).trim();
+    if (!raw || raw === "[DONE]") {
+      continue;
+    }
+    try {
+      lastPayload = JSON.parse(raw);
+    } catch {
+      // Ignore non-JSON SSE frames.
+    }
+  }
+  return lastPayload === null ? [] : extractToolsFromJsonRpcMessage(lastPayload);
+}
+
+async function fetchBroaderCatalogSlice(
+  api: OpenClawPluginApi,
+  appSlug: string,
+): Promise<ResolverToolCandidate[]> {
+  const gatewayUrl = resolveGatewayUrlFromApi(api);
+  const apiKey = resolveComposioApiKeyFromApi(api);
+  if (!gatewayUrl || !apiKey) {
+    return [];
+  }
+
+  const response = await fetch(`${gatewayUrl.replace(/\/$/, "")}/v1/composio/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {
+        connected_toolkits: [appSlug],
+      },
+    }),
+  });
+  if (!response.ok) {
+    return [];
+  }
+
+  const text = await response.text();
+  const tools = (() => {
+    try {
+      return extractToolsFromJsonRpcMessage(JSON.parse(text));
+    } catch {
+      return parseSseJsonRpcTools(text);
+    }
+  })();
+  const prefix = toolkitSlugToToolPrefix(appSlug);
+  return tools
+    .filter((tool) => tool.name.startsWith(prefix))
+    .map(buildResolverCandidateFromCatalog);
+}
+
 function describeStatusForResolver(workspaceDir: string): {
   verified: boolean;
   message: string | null;
@@ -222,41 +543,7 @@ function chooseTool(
   app: ComposioToolIndexFile["connected_apps"][number],
   queryText: string,
 ) {
-  const queryTokens = tokenize(queryText);
-  const recipeByTool = new Map<string, string[]>();
-  for (const [intent, toolName] of Object.entries(app.recipes)) {
-    const bucket = recipeByTool.get(toolName);
-    if (bucket) {
-      bucket.push(intent);
-    } else {
-      recipeByTool.set(toolName, [intent]);
-    }
-  }
-
-  let bestTool = app.tools[0] ?? null;
-  let bestScore = -1;
-  for (const tool of app.tools) {
-    const recipes = recipeByTool.get(tool.name) ?? [];
-    const score = scoreMatch(
-      [
-        tool.name,
-        tool.title,
-        tool.description_short,
-        ...recipes,
-        ...(tool.example_prompts ?? []),
-      ].join(" "),
-      queryTokens,
-    );
-    if (score > bestScore) {
-      bestTool = tool;
-      bestScore = score;
-    }
-  }
-
-  return {
-    tool: bestTool,
-    recipe: bestTool ? (recipeByTool.get(bestTool.name)?.[0] ?? null) : null,
-  };
+  return chooseBestTool(buildIndexedToolCandidates(app), app.recipes, queryText);
 }
 
 function chooseFallbackTool(app: string, queryText: string) {
@@ -339,7 +626,18 @@ function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
         });
       }
 
-      const { tool, recipe } = chooseTool(app, queryText);
+      let chosen = chooseTool(app, queryText);
+      if (!chosen.tool || chosen.score <= 0) {
+        const broaderCatalog = await fetchBroaderCatalogSlice(api, app.toolkit_slug).catch(() => []);
+        if (broaderCatalog.length > 0) {
+          const broaderChoice = chooseBestTool(broaderCatalog, app.recipes, queryText);
+          if (broaderChoice.tool && broaderChoice.score > chosen.score) {
+            chosen = broaderChoice;
+          }
+        }
+      }
+
+      const { tool, recipe } = chosen;
       if (!tool) {
         return jsonResult({
           error: `No indexed Composio tools are available for ${app.toolkit_name}.`,
@@ -348,12 +646,19 @@ function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
       }
 
       const status = describeStatusForResolver(workspaceDir);
+      const directlyCallable = app.tools.some((entry) => entry.name === tool.name)
+        || Object.values(app.recipes).includes(tool.name);
+      const instruction = directlyCallable
+        ? `Call the Composio tool \`${tool.name}\` directly. Do not use gog, shell CLIs, curl, or raw gateway HTTP.`
+        : `This recommendation came from the broader Composio catalog fallback. If \`${tool.name}\` is directly available in this session, call it. Otherwise rebuild the Composio tool index before retrying.`;
       return jsonResult({
         app: app.toolkit_slug,
         app_name: app.toolkit_name,
         connected_accounts: app.account_count,
         server: "composio",
         tool: tool.name,
+        source: tool.source,
+        directly_callable: directlyCallable,
         recommended_intent: recipe,
         required_args: tool.required_args,
         arg_hints: tool.arg_hints,
@@ -362,7 +667,7 @@ function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
         example_prompts: tool.example_prompts ?? [],
         mcp_verified: status.verified,
         status_message: status.message,
-        instruction: `Call the Composio tool \`${tool.name}\` directly. Do not use gog, shell CLIs, curl, or raw gateway HTTP.`,
+        instruction,
       });
     },
   };
@@ -379,6 +684,8 @@ function buildComposioDefaultGuidance(composioAppsSkillPath: string): string {
     `- Load and follow \`${composioAppsSkillPath}\` for Gmail, Slack, GitHub, Notion, Google Calendar, and Linear recipes when the generated tool index is missing.`,
     "- Never use `gog`, shell CLIs, curl, or raw `/v1/composio/*` HTTP for Gmail/Calendar/Drive/Slack/GitHub/Notion/Linear when Composio is connected or the user mentions Composio/rube/map/MCP.",
     "- Gmail fast path: `GMAIL_FETCH_EMAILS` with `label_ids: [\"INBOX\"]` and `max_results: 10`; for one message use `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID`.",
+    "- GitHub fast path: for 'recent PRs' or general PR discovery, prefer `GITHUB_FIND_PULL_REQUESTS` when available.",
+    "- Google Calendar fast path: for 'what's upcoming' or 'find an event', prefer `GOOGLE_CALENDAR_EVENTS_LIST` with an explicit time window when the schema supports it.",
     "- If Composio MCP is unavailable in this session, stop and report repair guidance instead of bypassing it.",
     "- If a Composio tool call fails because of argument shape, fix the arguments and retry once before considering any fallback.",
     "",

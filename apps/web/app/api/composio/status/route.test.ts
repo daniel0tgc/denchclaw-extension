@@ -38,9 +38,9 @@ const mockStatus = {
     toolCallsDetected: false,
   },
   summary: {
-    level: "warning",
+    level: "healthy",
     verified: false,
-    message: "not verified",
+    message: "verification pending",
   },
 };
 
@@ -54,7 +54,7 @@ describe("Composio status API", () => {
     const response = await GET();
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(body.summary.level).toBe("warning");
+    expect(body.summary.level).toBe("healthy");
     expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith();
   });
 

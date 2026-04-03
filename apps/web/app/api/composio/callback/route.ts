@@ -1,3 +1,12 @@
+import {
+  fetchComposioConnections,
+  resolveComposioApiKey,
+  resolveComposioGatewayUrl,
+} from "@/lib/composio";
+import {
+  extractComposioConnections,
+  normalizeComposioConnections,
+} from "@/lib/composio-client";
 import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 import { getComposioMcpHealth } from "@/lib/composio-mcp-health";
 import { refreshIntegrationsRuntime } from "@/lib/integrations";
@@ -7,6 +16,49 @@ export const runtime = "nodejs";
 
 function serializeForInlineScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+async function resolveConnectedToolkitSummary(connectedAccountId: string): Promise<{
+  toolkit_slug: string | null;
+  toolkit_name: string | null;
+  status: string | null;
+}> {
+  if (!connectedAccountId) {
+    return {
+      toolkit_slug: null,
+      toolkit_name: null,
+      status: null,
+    };
+  }
+
+  const apiKey = resolveComposioApiKey();
+  if (!apiKey) {
+    return {
+      toolkit_slug: null,
+      toolkit_name: null,
+      status: null,
+    };
+  }
+
+  try {
+    const connections = normalizeComposioConnections(
+      extractComposioConnections(
+        await fetchComposioConnections(resolveComposioGatewayUrl(), apiKey),
+      ),
+    );
+    const match = connections.find((connection) => connection.id === connectedAccountId);
+    return {
+      toolkit_slug: match?.normalized_toolkit_slug ?? null,
+      toolkit_name: match?.toolkit_name ?? null,
+      status: match?.normalized_status ?? null,
+    };
+  } catch {
+    return {
+      toolkit_slug: null,
+      toolkit_name: null,
+      status: null,
+    };
+  }
 }
 
 export async function GET(request: Request) {
@@ -23,7 +75,11 @@ export async function GET(request: Request) {
   let runtimeRefresh:
     | Awaited<ReturnType<typeof refreshIntegrationsRuntime>>
     | undefined;
+  let resolvedConnection:
+    | Awaited<ReturnType<typeof resolveConnectedToolkitSummary>>
+    | undefined;
   if (success) {
+    resolvedConnection = await resolveConnectedToolkitSummary(connectedAccountId);
     toolIndexRebuild = await rebuildComposioToolIndexIfReady();
     if (toolIndexRebuild.ok) {
       runtimeRefresh = await refreshIntegrationsRuntime();
@@ -34,6 +90,9 @@ export async function GET(request: Request) {
     type: "composio-callback",
     status,
     connected_account_id: connectedAccountId,
+    connected_toolkit_slug: resolvedConnection?.toolkit_slug ?? null,
+    connected_toolkit_name: resolvedConnection?.toolkit_name ?? null,
+    connected_status: resolvedConnection?.status ?? null,
     tool_index_rebuild: toolIndexRebuild,
     runtime_refresh: runtimeRefresh,
   });

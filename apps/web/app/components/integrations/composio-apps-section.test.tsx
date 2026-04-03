@@ -165,8 +165,18 @@ function installFetchMock(statusOverride = statusPayload) {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
 
-    if (url === "/api/composio/connections") {
-      return new Response(JSON.stringify(connectionsPayload));
+    if (url === "/api/composio/connections?include_toolkits=1") {
+      return new Response(JSON.stringify({
+        ...connectionsPayload,
+        toolkits: [gmailToolkit, githubToolkit],
+      }));
+    }
+
+    if (url === "/api/composio/connections?include_toolkits=1&fresh=1") {
+      return new Response(JSON.stringify({
+        ...connectionsPayload,
+        toolkits: [gmailToolkit, githubToolkit],
+      }));
     }
 
     if (url === "/api/composio/status") {
@@ -175,16 +185,7 @@ function installFetchMock(statusOverride = statusPayload) {
 
     if (url.startsWith("/api/composio/toolkits")) {
       const parsed = new URL(url, "http://localhost");
-      const search = parsed.searchParams.get("search");
       const cursor = parsed.searchParams.get("cursor");
-
-      if (search === "gmail") {
-        return new Response(JSON.stringify({ items: [gmailToolkit], cursor: null, total: 1, categories: ["Email"] }));
-      }
-
-      if (search === "github") {
-        return new Response(JSON.stringify({ items: [githubToolkit], cursor: null, total: 1, categories: ["Developer tools"] }));
-      }
 
       if (cursor === "page-2") {
         return new Response(JSON.stringify(marketplacePageTwo));
@@ -265,17 +266,17 @@ describe("ComposioAppsSection", () => {
     expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
   });
 
-  it("shows MCP repair bar when status is unhealthy", async () => {
+  it("shows MCP repair bar only when status is unhealthy", async () => {
     const warningStatus = {
       ...statusPayload,
       summary: {
-        level: "warning" as const,
+        level: "error" as const,
         verified: false,
-        message: "Composio MCP verification was inconclusive: Live agent probe timed out before returning a result.",
+        message: "Composio MCP is configured, but a live agent session could not see the tools directly.",
       },
       liveAgent: {
-        status: "unknown" as const,
-        detail: "Live agent probe timed out before returning a result.",
+        status: "fail" as const,
+        detail: "A live agent session could not see the tools directly.",
         evidence: ["GMAIL_FETCH_EMAILS"],
       },
     };
@@ -284,12 +285,37 @@ describe("ComposioAppsSection", () => {
     render(<ComposioAppsSection eligible lockBadge={null} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Composio MCP verification was inconclusive: Live agent probe timed out before returning a result.")).toBeInTheDocument();
+      expect(screen.getByText("Composio MCP is configured, but a live agent session could not see the tools directly.")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText("Live agent probe timed out before returning a result.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("A live agent session could not see the tools directly.").length).toBeGreaterThan(0);
     expect(screen.getByText("Evidence: GMAIL_FETCH_EMAILS")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Repair" })).toBeInTheDocument();
+  });
+
+  it("does not show a repair bar when live verification is still pending", async () => {
+    const pendingStatus = {
+      ...statusPayload,
+      summary: {
+        level: "healthy" as const,
+        verified: false,
+        message: "Composio MCP is configured and the gateway is reachable. Live-agent verification is pending.",
+      },
+      liveAgent: {
+        status: "unknown" as const,
+        detail: "Live agent visibility has not been checked yet.",
+        evidence: [],
+      },
+    };
+    installFetchMock(pendingStatus);
+
+    render(<ComposioAppsSection eligible lockBadge={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Gmail")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Repair" })).not.toBeInTheDocument();
   });
 
   it("normalizes toolkit payloads that omit categories", () => {

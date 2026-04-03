@@ -157,4 +157,104 @@ describe("buildComposioToolIndex", () => {
       "body",
     ]);
   });
+
+  it("prioritizes GitHub pull-request tools and recipes for recent PR flows", async () => {
+    workspaceDir = mkdtempSync(path.join(os.tmpdir(), "dench-composio-index-"));
+
+    fetchComposioConnectionsMock.mockResolvedValue([
+      {
+        is_active: true,
+        normalized_toolkit_slug: "github",
+        toolkit_name: "GitHub",
+        account_identity: "user/github",
+      },
+    ]);
+
+    fetchComposioMcpToolsListMock.mockResolvedValue([
+      {
+        name: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+        title: "List repositories",
+        description: "Lists repositories for the authenticated user.",
+        inputSchema: { type: "object", properties: {} },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "GITHUB_FIND_PULL_REQUESTS",
+        title: "Find pull requests",
+        description: "Primary tool to find and search pull requests.",
+        inputSchema: { type: "object", properties: {} },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "GITHUB_LIST_PULL_REQUESTS",
+        title: "List pull requests",
+        description: "Lists pull requests for a repository.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            owner: { type: "string" },
+            repo: { type: "string" },
+          },
+          required: ["owner", "repo"],
+        },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "GITHUB_GET_A_PULL_REQUEST",
+        title: "Get a pull request",
+        description: "Retrieves a specific pull request.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            owner: { type: "string" },
+            repo: { type: "string" },
+            pull_number: { type: "integer" },
+          },
+          required: ["owner", "repo", "pull_number"],
+        },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "GITHUB_CREATE_AN_ISSUE",
+        title: "Create issue",
+        description: "Creates an issue.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            owner: { type: "string" },
+            repo: { type: "string" },
+            title: { type: "string" },
+          },
+          required: ["owner", "repo", "title"],
+        },
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        name: `GITHUB_CHECK_SOMETHING_${index}`,
+        title: `Check ${index}`,
+        description: "Irrelevant check helper.",
+        inputSchema: { type: "object", properties: {} },
+        annotations: { readOnlyHint: true },
+      })),
+    ]);
+
+    const index = await buildComposioToolIndex({
+      workspaceDir,
+      gatewayUrl: "https://gateway.example.com",
+      apiKey: "dc-key",
+    });
+
+    const github = index.connected_apps[0];
+    expect(github.recipes).toMatchObject({
+      "Find pull requests": "GITHUB_FIND_PULL_REQUESTS",
+      "List repo pull requests": "GITHUB_LIST_PULL_REQUESTS",
+      "Get pull request": "GITHUB_GET_A_PULL_REQUEST",
+    });
+    expect(github.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "GITHUB_FIND_PULL_REQUESTS",
+        "GITHUB_LIST_PULL_REQUESTS",
+        "GITHUB_GET_A_PULL_REQUEST",
+      ]),
+    );
+  });
 });

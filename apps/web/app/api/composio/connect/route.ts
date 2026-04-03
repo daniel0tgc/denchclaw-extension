@@ -4,6 +4,7 @@ import {
   resolveComposioEligibility,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
+import { resolveComposioConnectToolkitSlug } from "@/lib/composio-normalization";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,15 +51,21 @@ export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
   const callbackUrl = `${origin}/api/composio/callback`;
   const gatewayUrl = resolveComposioGatewayUrl();
+  const requestedToolkit = body.toolkit.trim();
+  const connectToolkit = resolveComposioConnectToolkitSlug(requestedToolkit);
 
   try {
     const data = await initiateComposioConnect(
       gatewayUrl,
       apiKey,
-      body.toolkit.trim(),
+      connectToolkit,
       callbackUrl,
     );
-    return Response.json(data);
+    return Response.json({
+      ...data,
+      requested_toolkit: requestedToolkit,
+      connect_toolkit: connectToolkit,
+    });
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : "Failed to initiate connection." },

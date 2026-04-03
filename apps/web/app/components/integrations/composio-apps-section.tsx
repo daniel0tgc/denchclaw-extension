@@ -34,7 +34,6 @@ const FEATURED_SLUGS = [
 
 const MAX_CATEGORY_PILLS = 6;
 const MARKETPLACE_PAGE_SIZE = 24;
-const CONNECTED_TOOLKIT_LOOKUP_LIMIT = 8;
 
 type IntegrationsTab = "connected" | "marketplace";
 
@@ -79,6 +78,21 @@ type ComposioAppsState = {
   connectionsError: string | null;
 };
 
+type ConnectedAppsSnapshot = {
+  connectedToolkits: ComposioToolkit[];
+  connections: ComposioConnection[];
+};
+
+type ConnectionChangePayload = {
+  toolkit?: ComposioToolkit | null;
+  connected?: boolean;
+  connectedToolkitSlug?: string | null;
+  connectedToolkitName?: string | null;
+  shouldProbeLiveAgent?: boolean;
+};
+
+let lastConnectedAppsSnapshot: ConnectedAppsSnapshot | null = null;
+
 function dedupeToolkits(toolkits: ComposioToolkit[]): ComposioToolkit[] {
   const bySlug = new Map<string, ComposioToolkit>();
   for (const toolkit of toolkits) {
@@ -87,9 +101,30 @@ function dedupeToolkits(toolkits: ComposioToolkit[]): ComposioToolkit[] {
   return Array.from(bySlug.values());
 }
 
-function createToolkitPlaceholder(slug: string, name: string): ComposioToolkit {
+function buildInitialState(): ComposioAppsState {
   return {
-    slug,
+    connectedToolkits: lastConnectedAppsSnapshot?.connectedToolkits ?? [],
+    marketplaceToolkits: [],
+    marketplaceCursor: null,
+    connections: lastConnectedAppsSnapshot?.connections ?? [],
+    categories: [],
+    loading: lastConnectedAppsSnapshot === null,
+    marketplaceLoading: false,
+    marketplaceReady: false,
+    loadingMore: false,
+    error: null,
+    connectionsError: null,
+  };
+}
+
+function createToolkitPlaceholder(
+  slug: string,
+  name: string,
+  connectSlug?: string | null,
+): ComposioToolkit {
+  return {
+    slug: normalizeComposioToolkitSlug(slug),
+    connect_slug: connectSlug ?? slug,
     name,
     description: "",
     logo: null,
@@ -135,19 +170,7 @@ export function ComposioAppsSection({
   lockBadge: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<IntegrationsTab>("connected");
-  const [state, setState] = useState<ComposioAppsState>({
-    connectedToolkits: [],
-    marketplaceToolkits: [],
-    marketplaceCursor: null,
-    connections: [],
-    categories: [],
-    loading: true,
-    marketplaceLoading: false,
-    marketplaceReady: false,
-    loadingMore: false,
-    error: null,
-    connectionsError: null,
-  });
+  const [state, setState] = useState<ComposioAppsState>(buildInitialState);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectedToolkit, setSelectedToolkit] = useState<ComposioToolkit | null>(null);
@@ -155,6 +178,7 @@ export function ComposioAppsSection({
   const [mcpStatus, setMcpStatus] = useState<ComposioMcpStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [repairingMcp, setRepairingMcp] = useState(false);
+  const [optimisticConnectedToolkits, setOptimisticConnectedToolkits] = useState<ComposioToolkit[]>([]);
   const initialFetchStartedRef = useRef(false);
   const marketplaceRequestKeyRef = useRef("");
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -183,35 +207,17 @@ export function ComposioAppsSection({
     );
   }, []);
 
-  const fetchConnectedToolkits = useCallback(async (connections: ComposioConnection[]) => {
-    const activeSlugs = Array.from(new Set(
-      normalizeComposioConnections(connections)
-        .filter((connection) => connection.is_active)
-        .map((connection) => normalizeComposioToolkitSlug(connection.normalized_toolkit_slug)),
-    ));
-
-    if (activeSlugs.length === 0) {
-      return [];
-    }
-
-    const toolkits = await Promise.all(activeSlugs.map(async (slug) => {
-      const result = await fetchToolkitsPage({
-        search: slug,
-        limit: CONNECTED_TOOLKIT_LOOKUP_LIMIT,
-      }).catch(() => ({ items: [] as ComposioToolkit[] }));
-      const exact = result.items.find((toolkit) =>
-        normalizeComposioToolkitSlug(toolkit.slug) === slug);
-      const fallbackName = connections.find((connection) =>
-        normalizeComposioToolkitSlug(connection.toolkit_slug) === slug)?.toolkit_name ?? slug;
-      return exact ?? createToolkitPlaceholder(slug, fallbackName);
-    }));
-
-    return dedupeToolkits(toolkits).sort((left, right) => left.name.localeCompare(right.name));
-  }, [fetchToolkitsPage]);
-
-  const fetchMcpStatus = useCallback(async () => {
+  const fetchMcpStatus = useCallback(async (
+    action?: "refresh_status" | "repair_mcp" | "probe_live_agent",
+  ) => {
     try {
-      const statusRes = await fetch("/api/composio/status");
+      const statusRes = action
+        ? await fetch("/api/composio/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action }),
+          })
+        : await fetch("/api/composio/status");
       if (statusRes.ok) {
         setMcpStatus((await statusRes.json()) as ComposioMcpStatus);
         setStatusError(null);
@@ -229,23 +235,25 @@ export function ComposioAppsSection({
     }
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (options?: { fresh?: boolean }) => {
     setState((prev) => ({
       ...prev,
-      connectedToolkits: [],
-      connections: [],
-      loading: true,
+      loading: prev.connectedToolkits.length === 0 && prev.connections.length === 0,
       error: null,
       connectionsError: null,
     }));
     setStatusError(null);
     try {
-      const connectionsRes = await fetch("/api/composio/connections");
-      let connectionsData: ComposioConnectionsResponse = { items: [] };
+      const connectionsRes = await fetch(
+        `/api/composio/connections?include_toolkits=1${options?.fresh ? "&fresh=1" : ""}`,
+      );
+      let connectionsData: ComposioConnectionsResponse & {
+        toolkits?: ComposioToolkit[];
+      } = { items: [] };
       let connectionsError: string | null = null;
 
       if (connectionsRes.ok) {
-        connectionsData = (await connectionsRes.json()) as ComposioConnectionsResponse;
+        connectionsData = (await connectionsRes.json()) as typeof connectionsData;
       } else {
         const err = await connectionsRes.json().catch(() => ({}));
         connectionsError = (err as { error?: string }).error
@@ -253,32 +261,44 @@ export function ComposioAppsSection({
       }
 
       const extractedConnections = extractComposioConnections(connectionsData);
-      const connectedToolkits = await fetchConnectedToolkits(extractedConnections);
-
-      setState({
+      const connectedToolkits = dedupeToolkits(connectionsData.toolkits ?? [])
+        .sort((left, right) => left.name.localeCompare(right.name));
+      lastConnectedAppsSnapshot = {
         connectedToolkits,
-        marketplaceToolkits: [],
-        marketplaceCursor: null,
         connections: extractedConnections,
-        categories: [],
+      };
+      setOptimisticConnectedToolkits((prev) => prev.filter((toolkit) =>
+        !connectedToolkits.some((connectedToolkit) =>
+          normalizeComposioToolkitSlug(connectedToolkit.slug)
+            === normalizeComposioToolkitSlug(toolkit.slug))));
+
+      setState((prev) => ({
+        ...prev,
+        connectedToolkits,
+        connections: extractedConnections,
         loading: false,
-        marketplaceLoading: false,
-        marketplaceReady: false,
-        loadingMore: false,
         error: null,
         connectionsError,
-      });
+      }));
 
-      void fetchMcpStatus();
+      window.setTimeout(() => {
+        void fetchMcpStatus();
+      }, 0);
     } catch (err) {
       setMcpStatus(null);
       setState((prev) => ({
         ...prev,
         loading: false,
-        error: err instanceof Error ? err.message : "Failed to load apps.",
+        error:
+          prev.connectedToolkits.length > 0 || prev.connections.length > 0
+            ? prev.error
+            : err instanceof Error
+              ? err.message
+              : "Failed to load apps.",
+        connectionsError: err instanceof Error ? err.message : "Failed to load connections.",
       }));
     }
-  }, [fetchConnectedToolkits, fetchMcpStatus]);
+  }, [fetchMcpStatus]);
 
   const loadMarketplace = useCallback(async (options?: { reset?: boolean }) => {
     const reset = options?.reset ?? false;
@@ -429,11 +449,21 @@ export function ComposioAppsSection({
     return map;
   }, [activeConnectionsByToolkit]);
 
+  const optimisticConnectedToolkitSlugs = useMemo(
+    () => new Set(
+      optimisticConnectedToolkits.map((toolkit) => normalizeComposioToolkitSlug(toolkit.slug)),
+    ),
+    [optimisticConnectedToolkits],
+  );
+
   const connectedToolkits = useMemo(
     () => {
       const q = search.trim().toLowerCase();
-      return state.connectedToolkits
-        .filter((toolkit) => activeAccountsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug)))
+      return dedupeToolkits([...state.connectedToolkits, ...optimisticConnectedToolkits])
+        .filter((toolkit) => {
+          const slug = normalizeComposioToolkitSlug(toolkit.slug);
+          return activeAccountsByToolkit.has(slug) || optimisticConnectedToolkitSlugs.has(slug);
+        })
         .filter((toolkit) => {
           if (!q) {
             return true;
@@ -443,13 +473,20 @@ export function ComposioAppsSection({
             || toolkit.description.toLowerCase().includes(q);
         });
     },
-    [activeAccountsByToolkit, search, state.connectedToolkits],
+    [
+      activeAccountsByToolkit,
+      optimisticConnectedToolkits,
+      optimisticConnectedToolkitSlugs,
+      search,
+      state.connectedToolkits,
+    ],
   );
 
   const marketplaceToolkits = useMemo(() => {
     return state.marketplaceToolkits.filter((toolkit) =>
-      !activeAccountsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug)));
-  }, [activeAccountsByToolkit, state.marketplaceToolkits]);
+      !activeAccountsByToolkit.has(normalizeComposioToolkitSlug(toolkit.slug))
+      && !optimisticConnectedToolkitSlugs.has(normalizeComposioToolkitSlug(toolkit.slug)));
+  }, [activeAccountsByToolkit, optimisticConnectedToolkitSlugs, state.marketplaceToolkits]);
 
   const displayCategories = useMemo(
     () => state.categories.slice(0, MAX_CATEGORY_PILLS),
@@ -465,12 +502,60 @@ export function ComposioAppsSection({
     setModalOpen(true);
   }, []);
 
-  const handleConnectionChange = useCallback(() => {
-    void fetchData();
+  const handleConnectionChange = useCallback((payload?: ConnectionChangePayload) => {
+    if (payload?.toolkit && payload.connected === false) {
+      const removedSlug = normalizeComposioToolkitSlug(payload.toolkit.slug);
+      setOptimisticConnectedToolkits((prev) => prev.filter((toolkit) =>
+        normalizeComposioToolkitSlug(toolkit.slug) !== removedSlug));
+    }
+    if (payload?.connected) {
+      const resolvedSlug = payload.connectedToolkitSlug ?? payload.toolkit?.slug ?? null;
+      const resolvedName = payload.connectedToolkitName ?? payload.toolkit?.name ?? null;
+      if (resolvedSlug && resolvedName) {
+        const normalizedResolvedSlug = normalizeComposioToolkitSlug(resolvedSlug);
+        const existingToolkit = [
+          payload.toolkit,
+          ...state.connectedToolkits,
+          ...state.marketplaceToolkits,
+        ]
+          .filter((toolkit): toolkit is ComposioToolkit => Boolean(toolkit))
+          .find((toolkit) =>
+            normalizeComposioToolkitSlug(toolkit.slug) === normalizedResolvedSlug,
+          ) ?? null;
+        const optimisticToolkit = existingToolkit
+          ? {
+              ...existingToolkit,
+              slug: normalizedResolvedSlug,
+              name: resolvedName,
+            }
+          : createToolkitPlaceholder(
+              normalizedResolvedSlug,
+              resolvedName,
+              payload.toolkit?.connect_slug ?? resolvedSlug,
+            );
+        setOptimisticConnectedToolkits((prev) =>
+          dedupeToolkits([
+            ...prev.filter((toolkit) =>
+              normalizeComposioToolkitSlug(toolkit.slug) !== normalizedResolvedSlug),
+            optimisticToolkit,
+          ]));
+      }
+    }
+    void fetchData({ fresh: true });
+    if (payload?.connected) {
+      window.setTimeout(() => {
+        void fetchData({ fresh: true });
+      }, 1500);
+    }
+    if (payload?.shouldProbeLiveAgent) {
+      window.setTimeout(() => {
+        void fetchMcpStatus("probe_live_agent");
+      }, 300);
+    }
     if (activeTab === "marketplace") {
       void loadMarketplace({ reset: true });
     }
-  }, [activeTab, fetchData, loadMarketplace]);
+  }, [activeTab, fetchData, fetchMcpStatus, loadMarketplace, state.connectedToolkits, state.marketplaceToolkits]);
 
   const handleRepairMcp = useCallback(async () => {
     setRepairingMcp(true);

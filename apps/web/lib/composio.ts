@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
+import { normalizeComposioToolkitSlug } from "@/lib/composio-normalization";
 import { readConfiguredDenchCloudSettings } from "../../../src/cli/dench-cloud";
 
 const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
@@ -34,6 +35,7 @@ function pickString(...values: unknown[]): string | undefined {
 
 export type ComposioToolkit = {
   slug: string;
+  connect_slug?: string | null;
   name: string;
   description: string;
   logo: string | null;
@@ -181,10 +183,6 @@ export type NormalizedComposioConnection = ComposioConnection & {
   related_connection_ids: string[];
   is_same_account_reconnect: boolean;
 };
-
-export function normalizeComposioToolkitSlug(slug: string): string {
-  return slug.trim().toLowerCase();
-}
 
 export function normalizeComposioConnectionStatus(status: unknown): string {
   return typeof status === "string" && status.trim()
@@ -507,12 +505,18 @@ export type ComposioMcpTool = {
   };
 };
 
-function extractToolsFromJsonRpcMessage(payload: unknown): ComposioMcpTool[] {
+function extractToolsFromJsonRpcMessage(payload: unknown): {
+  tools: ComposioMcpTool[];
+  nextCursor: string | null;
+} {
   const rec = asRecord(payload);
   const result = asRecord(rec?.result);
   const tools = result?.tools;
   if (!Array.isArray(tools)) {
-    return [];
+    return {
+      tools: [],
+      nextCursor: readString(result?.next_cursor ?? result?.nextCursor ?? result?.cursor) ?? null,
+    };
   }
 
   const out: ComposioMcpTool[] = [];
@@ -530,10 +534,16 @@ function extractToolsFromJsonRpcMessage(payload: unknown): ComposioMcpTool[] {
       annotations: t?.annotations as ComposioMcpTool["annotations"],
     });
   }
-  return out;
+  return {
+    tools: out,
+    nextCursor: readString(result?.next_cursor ?? result?.nextCursor ?? result?.cursor) ?? null,
+  };
 }
 
-function parseSseJsonRpcTools(body: string): ComposioMcpTool[] {
+function parseSseJsonRpcTools(body: string): {
+  tools: ComposioMcpTool[];
+  nextCursor: string | null;
+} {
   const lines = body.split(/\r?\n/);
   let lastPayload: unknown = null;
   for (const line of lines) {
@@ -552,17 +562,20 @@ function parseSseJsonRpcTools(body: string): ComposioMcpTool[] {
     }
   }
   if (lastPayload === null) {
-    return [];
+    return { tools: [], nextCursor: null };
   }
   return extractToolsFromJsonRpcMessage(lastPayload);
 }
 
-async function parseMcpToolsListResponse(res: Response): Promise<ComposioMcpTool[]> {
+async function parseMcpToolsListResponse(res: Response): Promise<{
+  tools: ComposioMcpTool[];
+  nextCursor: string | null;
+}> {
   const contentType = res.headers.get("content-type") ?? "";
   const text = await res.text();
   if (contentType.includes("text/event-stream")) {
     const fromSse = parseSseJsonRpcTools(text);
-    if (fromSse.length > 0) {
+    if (fromSse.tools.length > 0 || fromSse.nextCursor) {
       return fromSse;
     }
   }
@@ -587,32 +600,50 @@ export async function fetchComposioMcpToolsList(
   const url = `${gatewayUrl.replace(/\/$/, "")}/v1/composio/mcp`;
   const connectedToolkits = options?.connectedToolkits?.filter((slug) => slug.trim().length > 0) ?? [];
   const preferredToolNames = options?.preferredToolNames?.filter((name) => name.trim().length > 0) ?? [];
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/list",
-      // Forward-compatible hint payload for the external gateway. The current
-      // MCP bridge may ignore these fields; a filtered gateway implementation
-      // can use them to prioritize connected-app tools without changing the
-      // client contract.
-      params: {
-        ...(connectedToolkits.length > 0 ? { connected_toolkits: connectedToolkits } : {}),
-        ...(preferredToolNames.length > 0 ? { preferred_tool_names: preferredToolNames } : {}),
+  const seen = new Set<string>();
+  const out: ComposioMcpTool[] = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        accept: "application/json, text/event-stream",
       },
-    }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `MCP tools/list failed (HTTP ${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`,
-    );
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        // Forward-compatible hint payload for the external gateway. The current
+        // MCP bridge may ignore these fields; a filtered gateway implementation
+        // can use them to prioritize connected-app tools without changing the
+        // client contract.
+        params: {
+          ...(connectedToolkits.length > 0 ? { connected_toolkits: connectedToolkits } : {}),
+          ...(preferredToolNames.length > 0 ? { preferred_tool_names: preferredToolNames } : {}),
+          ...(cursor ? { cursor } : {}),
+        },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(
+        `MCP tools/list failed (HTTP ${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+      );
+    }
+    const parsed = await parseMcpToolsListResponse(res);
+    for (const tool of parsed.tools) {
+      if (seen.has(tool.name)) {
+        continue;
+      }
+      seen.add(tool.name);
+      out.push(tool);
+    }
+    if (!parsed.nextCursor || parsed.nextCursor === cursor) {
+      return out;
+    }
+    cursor = parsed.nextCursor;
   }
-  return parseMcpToolsListResponse(res);
 }

@@ -48,7 +48,10 @@ The workspace may contain `composio-tool-index.json` with the exact tool names a
 
 | Intent | Tool | Defaults / notes |
 |--------|------|------------------|
-| List repos for user | `GITHUB_LIST_REPOSITORIES_FOR_AUTHENTICATED_USER` | Pagination per schema |
+| List repos for user | `GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER` | Pagination per schema |
+| Find / search pull requests | `GITHUB_FIND_PULL_REQUESTS` | Best first path for "recent PRs" or broad PR search |
+| List pull requests in a repo | `GITHUB_LIST_PULL_REQUESTS` | Requires `owner` and `repo` |
+| Get one pull request | `GITHUB_GET_A_PULL_REQUEST` | `owner`, `repo`, `pull_number` |
 | Repo metadata | `GITHUB_GET_A_REPOSITORY` | `owner`, `repo` |
 | Create issue | `GITHUB_CREATE_AN_ISSUE` | `owner`, `repo`, `title`, `body` |
 
@@ -65,7 +68,9 @@ The workspace may contain `composio-tool-index.json` with the exact tool names a
 | Intent | Tool | Defaults / notes |
 |--------|------|------------------|
 | List calendars | `GOOGLE_CALENDAR_CALENDAR_LIST` | Optional params per schema |
+| Upcoming events | `GOOGLE_CALENDAR_EVENTS_LIST` | Prefer a clear time window when possible |
 | List events | `GOOGLE_CALENDAR_EVENTS_LIST` | `calendar_id`, time range (`time_min` / `time_max` as RFC3339) |
+| Find event | `GOOGLE_CALENDAR_EVENTS_LIST` | Use search text / date window fields supported by the schema |
 | Create event | `GOOGLE_CALENDAR_CREATE_EVENT` | Calendar id + event payload per schema |
 
 **Gotcha:** Datetimes should be RFC3339 strings.

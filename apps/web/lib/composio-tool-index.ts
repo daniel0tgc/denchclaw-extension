@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   fetchComposioConnections,
@@ -8,7 +8,7 @@ import {
   resolveComposioGatewayUrl,
   type ComposioMcpTool,
 } from "@/lib/composio";
-import { resolveWorkspaceRoot } from "@/lib/workspace";
+import { resolveOpenClawStateDir, resolveWorkspaceRoot } from "@/lib/workspace";
 import {
   extractComposioConnections,
   normalizeComposioConnections,
@@ -37,7 +37,12 @@ export type ComposioToolIndex = {
   }>;
 };
 
-const TOP_TOOLS_PER_APP = 10;
+const DEFAULT_TOP_TOOLS_PER_APP = 10;
+const TOP_TOOLS_PER_APP_OVERRIDES: Record<string, number> = {
+  github: 24,
+  "google-calendar": 16,
+};
+const MAX_INDEXED_TOOLS_TOTAL = 100;
 
 type ToolRoutingPreset = {
   tool: string;
@@ -80,8 +85,30 @@ const RECIPES_BY_SLUG: Record<string, Record<string, ToolRoutingPreset>> = {
   },
   github: {
     "List repos": {
-      tool: "GITHUB_LIST_REPOSITORIES_FOR_AUTHENTICATED_USER",
+      tool: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
       example_prompts: ["list my GitHub repositories", "show my repos"],
+    },
+    "Find pull requests": {
+      tool: "GITHUB_FIND_PULL_REQUESTS",
+      example_prompts: [
+        "check my recent PRs",
+        "show my recent pull requests",
+        "find open pull requests",
+      ],
+    },
+    "List repo pull requests": {
+      tool: "GITHUB_LIST_PULL_REQUESTS",
+      example_prompts: [
+        "list pull requests in this repo",
+        "show PRs for this repository",
+      ],
+    },
+    "Get pull request": {
+      tool: "GITHUB_GET_A_PULL_REQUEST",
+      example_prompts: [
+        "show me this pull request",
+        "get pull request details",
+      ],
     },
     "Get repo": {
       tool: "GITHUB_GET_A_REPOSITORY",
@@ -107,9 +134,23 @@ const RECIPES_BY_SLUG: Record<string, Record<string, ToolRoutingPreset>> = {
     },
   },
   "google-calendar": {
+    "Upcoming events": {
+      tool: "GOOGLE_CALENDAR_EVENTS_LIST",
+      example_prompts: [
+        "what's upcoming on my calendar",
+        "show upcoming calendar events",
+      ],
+    },
     "List events": {
       tool: "GOOGLE_CALENDAR_EVENTS_LIST",
       example_prompts: ["show my calendar events", "list upcoming meetings"],
+    },
+    "Find event": {
+      tool: "GOOGLE_CALENDAR_EVENTS_LIST",
+      example_prompts: [
+        "find my event tomorrow",
+        "search for a calendar event",
+      ],
     },
     "Create event": {
       tool: "GOOGLE_CALENDAR_CREATE_EVENT",
@@ -188,6 +229,28 @@ function buildArgHints(toolName: string, schema: ComposioMcpTool["inputSchema"])
   if (upper.includes("GOOGLE_CALENDAR") && props.time_min) {
     hints.time_min = "RFC3339 datetime string.";
   }
+  if (upper.includes("GOOGLE_CALENDAR") && props.time_max) {
+    hints.time_max = "RFC3339 datetime string.";
+  }
+  if (upper.includes("GOOGLE_CALENDAR") && props.calendar_id) {
+    hints.calendar_id = "Calendar identifier. Use the calendar list tool first if you need to pick one.";
+  }
+  if (upper.includes("GOOGLE_CALENDAR") && props.query) {
+    hints.query = "Search text for matching events, if the tool supports it.";
+  }
+
+  if (upper.includes("GITHUB") && props.owner) {
+    hints.owner = "Repository owner or organization login.";
+  }
+  if (upper.includes("GITHUB") && props.repo) {
+    hints.repo = "Repository name without the .git suffix.";
+  }
+  if (upper.includes("GITHUB") && props.pull_number) {
+    hints.pull_number = "Numeric pull request number.";
+  }
+  if (upper.includes("GITHUB") && props.state) {
+    hints.state = "Use values like OPEN, CLOSED, or ALL when supported by the tool schema.";
+  }
 
   for (const [key, val] of Object.entries(props)) {
     const p = asObjectRecord(val);
@@ -206,6 +269,45 @@ function toolSortKey(tool: ComposioMcpTool, preferredNames: Set<string>): [numbe
   const preferred = preferredNames.has(tool.name) ? 0 : 1;
   const readOnly = tool.annotations?.readOnlyHint === true ? 0 : 1;
   return [preferred, readOnly, tool.name.toLowerCase()];
+}
+
+const INDEX_PRIORITY_TERMS: Record<string, string[]> = {
+  github: [
+    "pull request",
+    "pull requests",
+    "find pull requests",
+    "list pull requests",
+    "get a pull request",
+    "search issues and pull requests",
+    "repositories for the authenticated user",
+  ],
+  "google-calendar": [
+    "events list",
+    "upcoming",
+    "event",
+    "calendar list",
+    "create event",
+  ],
+};
+
+function scoreToolPriority(slug: string, tool: ComposioMcpTool): number {
+  const priorityTerms = INDEX_PRIORITY_TERMS[normalizeComposioToolkitSlug(slug)] ?? [];
+  if (priorityTerms.length === 0) {
+    return 0;
+  }
+  const haystack = [
+    tool.name,
+    tool.title,
+    tool.description,
+  ].filter(Boolean).join(" ").toLowerCase();
+  return priorityTerms.reduce(
+    (score, term) => score + (haystack.includes(term) ? 1 : 0),
+    0,
+  );
+}
+
+function topToolsPerApp(slug: string): number {
+  return TOP_TOOLS_PER_APP_OVERRIDES[normalizeComposioToolkitSlug(slug)] ?? DEFAULT_TOP_TOOLS_PER_APP;
 }
 
 function buildRecipesForToolkit(
@@ -250,9 +352,11 @@ function buildRoutingPresetsForToolkit(slug: string): Map<string, ToolRoutingPre
 }
 
 function selectIndexedTools(params: {
+  slug: string;
   sortedTools: ComposioMcpTool[];
   recipeToolNames: Set<string>;
 }): ComposioMcpTool[] {
+  const maxTools = topToolsPerApp(params.slug);
   const selected: ComposioMcpTool[] = [];
   const seen = new Set<string>();
 
@@ -265,7 +369,7 @@ function selectIndexedTools(params: {
   }
 
   for (const tool of params.sortedTools) {
-    if (selected.length >= TOP_TOOLS_PER_APP && !params.recipeToolNames.has(tool.name)) {
+    if (selected.length >= maxTools && !params.recipeToolNames.has(tool.name)) {
       break;
     }
     if (seen.has(tool.name)) {
@@ -276,6 +380,112 @@ function selectIndexedTools(params: {
   }
 
   return selected;
+}
+
+function trimIndexedAppsToBudget(
+  connectedApps: ComposioToolIndex["connected_apps"],
+): ComposioToolIndex["connected_apps"] {
+  const protectedToolsBySlug = new Map<string, Set<string>>();
+  const remainingOptionalBySlug = new Map<string, typeof connectedApps[number]["tools"]>();
+  const trimmed = connectedApps.map((app) => {
+    const protectedTools = new Set(Object.values(app.recipes));
+    protectedToolsBySlug.set(app.toolkit_slug, protectedTools);
+    const required = app.tools.filter((tool) => protectedTools.has(tool.name));
+    remainingOptionalBySlug.set(
+      app.toolkit_slug,
+      app.tools.filter((tool) => !protectedTools.has(tool.name)),
+    );
+    return {
+      ...app,
+      tools: [...required],
+    };
+  });
+
+  let remainingBudget = MAX_INDEXED_TOOLS_TOTAL - trimmed.reduce(
+    (count, app) => count + app.tools.length,
+    0,
+  );
+
+  if (remainingBudget <= 0) {
+    return trimmed;
+  }
+
+  let added = true;
+  while (remainingBudget > 0 && added) {
+    added = false;
+    for (const app of trimmed) {
+      if (remainingBudget <= 0) {
+        break;
+      }
+      const queue = remainingOptionalBySlug.get(app.toolkit_slug) ?? [];
+      const next = queue.shift();
+      if (!next) {
+        continue;
+      }
+      app.tools.push(next);
+      remainingBudget -= 1;
+      added = true;
+    }
+  }
+
+  return trimmed;
+}
+
+function readConfig(): Record<string, unknown> {
+  const configPath = join(resolveOpenClawStateDir(), "openclaw.json");
+  if (!existsSync(configPath)) {
+    return {};
+  }
+  try {
+    return (JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function writeConfig(config: Record<string, unknown>): void {
+  const configPath = join(resolveOpenClawStateDir(), "openclaw.json");
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function ensureRecord(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = asRecord(parent[key]);
+  if (existing) {
+    return existing;
+  }
+  const fresh: Record<string, unknown> = {};
+  parent[key] = fresh;
+  return fresh;
+}
+
+function syncAllowedComposioTools(index: ComposioToolIndex): void {
+  const config = readConfig();
+  const tools = ensureRecord(config, "tools");
+  const allow = new Set(readStringList(tools.allow));
+  allow.add("composio_resolve_tool");
+  for (const app of index.connected_apps) {
+    for (const tool of app.tools) {
+      allow.add(tool.name);
+    }
+    for (const toolName of Object.values(app.recipes)) {
+      allow.add(toolName);
+    }
+  }
+  tools.allow = Array.from(allow);
+  writeConfig(config);
 }
 
 export type BuildComposioToolIndexParams = {
@@ -346,6 +556,10 @@ export async function buildComposioToolIndex(
       if (ka[0] !== kb[0]) {
         return ka[0] - kb[0];
       }
+      const priorityDiff = scoreToolPriority(slug, b) - scoreToolPriority(slug, a);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
       if (ka[1] !== kb[1]) {
         return ka[1] - kb[1];
       }
@@ -353,6 +567,7 @@ export async function buildComposioToolIndex(
     });
 
     const selectedTools = selectIndexedTools({
+      slug,
       sortedTools: sorted,
       recipeToolNames: new Set(Object.values(recipes)),
     });
@@ -389,7 +604,7 @@ export async function buildComposioToolIndex(
 
   const index: ComposioToolIndex = {
     generated_at: new Date().toISOString(),
-    connected_apps,
+    connected_apps: trimIndexedAppsToBudget(connected_apps),
   };
 
   const outPath = join(workspaceDir, "composio-tool-index.json");
@@ -430,6 +645,7 @@ export async function rebuildComposioToolIndexIfReady(): Promise<RebuildComposio
       gatewayUrl: resolveComposioGatewayUrl(),
       apiKey,
     });
+    syncAllowedComposioTools(index);
     return {
       ok: true,
       workspaceDir,

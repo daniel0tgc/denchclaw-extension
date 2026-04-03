@@ -17,15 +17,17 @@ const toolkit: ComposioToolkit = {
 };
 
 function renderModal(overrides?: {
-  onConnectionChange?: () => void;
+  onConnectionChange?: (payload?: unknown) => void;
   connections?: ComposioConnection[];
+  toolkit?: ComposioToolkit;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return render(
     <ComposioConnectModal
-      toolkit={toolkit}
+      toolkit={overrides?.toolkit ?? toolkit}
       connections={overrides?.connections ?? []}
       open
-      onOpenChange={() => {}}
+      onOpenChange={overrides?.onOpenChange ?? (() => {})}
       onConnectionChange={overrides?.onConnectionChange ?? (() => {})}
     />,
   );
@@ -117,10 +119,11 @@ describe("ComposioConnectModal", () => {
   it("stops waiting and refreshes connections after a trusted callback message", async () => {
     const user = userEvent.setup();
     const onConnectionChange = vi.fn();
+    const onOpenChange = vi.fn();
     const popup = { closed: false, focus: vi.fn() };
     vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
 
-    renderModal({ onConnectionChange });
+    renderModal({ onConnectionChange, onOpenChange });
 
     await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
 
@@ -133,6 +136,8 @@ describe("ComposioConnectModal", () => {
           type: "composio-callback",
           status: "success",
           connected_account_id: "ca_123",
+          connected_toolkit_slug: "gmail",
+          connected_toolkit_name: "Gmail",
         },
       }));
     });
@@ -140,6 +145,14 @@ describe("ComposioConnectModal", () => {
     await waitFor(() => {
       expect(onConnectionChange).toHaveBeenCalledTimes(1);
     });
+    expect(onConnectionChange).toHaveBeenCalledWith({
+      toolkit,
+      connected: true,
+      connectedToolkitSlug: "gmail",
+      connectedToolkitName: "Gmail",
+      shouldProbeLiveAgent: true,
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
   });
 
@@ -170,10 +183,11 @@ describe("ComposioConnectModal", () => {
   it("refreshes connections after the popup closes even if the callback message is missed", async () => {
     const user = userEvent.setup();
     const onConnectionChange = vi.fn();
+    const onOpenChange = vi.fn();
     const popup = { closed: false, focus: vi.fn() };
     const openSpy = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
 
-    renderModal({ onConnectionChange });
+    renderModal({ onConnectionChange, onOpenChange });
 
     await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
     await waitFor(() => {
@@ -184,6 +198,35 @@ describe("ComposioConnectModal", () => {
     await waitFor(() => {
       expect(onConnectionChange).toHaveBeenCalledTimes(1);
     }, { timeout: 1500 });
+    expect(onConnectionChange).toHaveBeenCalledWith({ toolkit });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
+  });
+
+  it("uses the raw connect slug when a toolkit normalizes to X", async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue({
+      closed: false,
+      focus: vi.fn(),
+    } as unknown as Window);
+    const xToolkit: ComposioToolkit = {
+      ...toolkit,
+      slug: "x",
+      connect_slug: "twitter",
+      name: "X",
+    };
+
+    renderModal({ toolkit: xToolkit });
+
+    await user.click(screen.getByRole("button", { name: "Connect X" }));
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/composio/connect",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ toolkit: "twitter" }),
+      }),
+    );
+    expect(openSpy).toHaveBeenCalledTimes(1);
   });
 });

@@ -13,13 +13,21 @@ vi.mock("@/lib/integrations", () => ({
   refreshIntegrationsRuntime: vi.fn(),
 }));
 
+vi.mock("@/lib/composio", () => ({
+  fetchComposioConnections: vi.fn(),
+  resolveComposioApiKey: vi.fn(() => "dench_test_key"),
+  resolveComposioGatewayUrl: vi.fn(() => "https://gateway.example.com"),
+}));
+
 const { rebuildComposioToolIndexIfReady } = await import("@/lib/composio-tool-index");
 const { getComposioMcpHealth } = await import("@/lib/composio-mcp-health");
 const { refreshIntegrationsRuntime } = await import("@/lib/integrations");
+const { fetchComposioConnections } = await import("@/lib/composio");
 
 const mockedRebuildComposioToolIndexIfReady = vi.mocked(rebuildComposioToolIndexIfReady);
 const mockedGetComposioMcpHealth = vi.mocked(getComposioMcpHealth);
 const mockedRefreshIntegrationsRuntime = vi.mocked(refreshIntegrationsRuntime);
+const mockedFetchComposioConnections = vi.mocked(fetchComposioConnections);
 
 describe("Composio callback API", () => {
   beforeEach(() => {
@@ -37,6 +45,17 @@ describe("Composio callback API", () => {
       error: null,
       profile: "dench",
     });
+    mockedFetchComposioConnections.mockResolvedValue({
+      connections: [
+        {
+          id: "acct_123",
+          toolkit_slug: "twitter",
+          toolkit_name: "Twitter",
+          status: "ACTIVE",
+          created_at: "2026-04-02T00:00:00.000Z",
+        },
+      ],
+    } as never);
   });
 
   it("rebuilds the tool index and restarts the runtime after a successful connection", async () => {
@@ -52,6 +71,8 @@ describe("Composio callback API", () => {
     expect(mockedRefreshIntegrationsRuntime).toHaveBeenCalledTimes(1);
     expect(mockedGetComposioMcpHealth).toHaveBeenCalledTimes(1);
     expect(html).toContain('"connected_account_id":"acct_123"');
+    expect(html).toContain('"connected_toolkit_slug":"x"');
+    expect(html).toContain('"connected_toolkit_name":"X"');
     expect(html).toContain('"runtime_refresh"');
   });
 

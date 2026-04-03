@@ -11,44 +11,53 @@ export const runtime = "nodejs";
 
 const DEFAULT_TOOLKITS_CACHE_TTL_MS = 5 * 60_000;
 
-let cachedDefaultToolkits:
+type CacheEntry<T> =
   | {
       expiresAt: number;
-      value: ComposioToolkitsResponse;
+      value: T;
     }
   | {
       expiresAt: number;
-      promise: Promise<ComposioToolkitsResponse>;
-    }
-  | null = null;
+      promise: Promise<T>;
+    };
 
-async function fetchDefaultToolkitsCached(
+const toolkitsCache = new Map<string, CacheEntry<ComposioToolkitsResponse>>();
+
+async function fetchToolkitsCached(
   gatewayUrl: string,
   apiKey: string,
+  cacheKey: string,
+  options?: {
+    search?: string;
+    category?: string;
+    cursor?: string;
+    limit?: number;
+  },
 ): Promise<ComposioToolkitsResponse> {
   const now = Date.now();
-  if (cachedDefaultToolkits && cachedDefaultToolkits.expiresAt > now) {
-    if ("value" in cachedDefaultToolkits) {
-      return cachedDefaultToolkits.value;
+  const cached = toolkitsCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    if ("value" in cached) {
+      return cached.value;
     }
-    return cachedDefaultToolkits.promise;
+    return cached.promise;
   }
 
-  const promise = fetchComposioToolkits(gatewayUrl, apiKey);
-  cachedDefaultToolkits = {
+  const promise = fetchComposioToolkits(gatewayUrl, apiKey, options);
+  toolkitsCache.set(cacheKey, {
     expiresAt: now + DEFAULT_TOOLKITS_CACHE_TTL_MS,
     promise,
-  };
+  });
 
   try {
     const value = await promise;
-    cachedDefaultToolkits = {
+    toolkitsCache.set(cacheKey, {
       expiresAt: Date.now() + DEFAULT_TOOLKITS_CACHE_TTL_MS,
       value,
-    };
+    });
     return value;
   } catch (error) {
-    cachedDefaultToolkits = null;
+    toolkitsCache.delete(cacheKey);
     throw error;
   }
 }
@@ -84,15 +93,20 @@ export async function GET(request: Request) {
     const limit = searchParams.has("limit")
       ? Number(searchParams.get("limit"))
       : undefined;
-    const useDefaultCache = !search && !category && !cursor && limit === undefined;
-    const data = useDefaultCache
-      ? await fetchDefaultToolkitsCached(gatewayUrl, apiKey)
-      : await fetchComposioToolkits(gatewayUrl, apiKey, {
-          search,
-          category,
-          cursor,
-          limit,
-        });
+    const cacheKey = JSON.stringify({
+      gatewayUrl,
+      apiKey,
+      search: search ?? null,
+      category: category ?? null,
+      cursor: cursor ?? null,
+      limit: limit ?? null,
+    });
+    const data = await fetchToolkitsCached(gatewayUrl, apiKey, cacheKey, {
+      search,
+      category,
+      cursor,
+      limit,
+    });
     return Response.json(data);
   } catch (err) {
     return Response.json(

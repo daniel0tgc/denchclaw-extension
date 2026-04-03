@@ -230,4 +230,58 @@ describe("register", () => {
 
     rmSync(tmp, { recursive: true, force: true });
   });
+
+  it("resolves recent GitHub PR requests through recipe-backed tools outside the direct tool slice", async () => {
+    const tmp = path.join(
+      os.tmpdir(),
+      `dench-identity-resolver-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmp, { recursive: true });
+    writeFileSync(
+      path.join(tmp, "composio-tool-index.json"),
+      JSON.stringify({
+        generated_at: "2026-04-03T00:00:00.000Z",
+        connected_apps: [
+          {
+            toolkit_slug: "github",
+            toolkit_name: "GitHub",
+            account_count: 1,
+            tools: [
+              {
+                name: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+                title: "List repositories",
+                description_short: "Lists repositories for the authenticated user.",
+                required_args: [],
+                arg_hints: {},
+              },
+            ],
+            recipes: {
+              "Find pull requests": "GITHUB_FIND_PULL_REQUESTS",
+            },
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const api = {
+      config: { plugins: { entries: {} }, agents: { defaults: { workspace: tmp } } },
+      on: vi.fn(),
+      registerTool: vi.fn(),
+    };
+
+    register(api as any);
+
+    const resolver = api.registerTool.mock.calls[0][0];
+    const result = await resolver.execute({
+      app: "github",
+      intent: "check my recent PRs",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.tool).toBe("GITHUB_FIND_PULL_REQUESTS");
+    expect(payload.directly_callable).toBe(true);
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
 });

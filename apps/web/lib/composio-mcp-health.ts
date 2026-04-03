@@ -108,7 +108,7 @@ const COMPOSIO_LIVE_PROBE_PROMPT = [
   "Without calling any tool, inspect your currently available tool list.",
   "Reply with exactly one JSON object and nothing else.",
   'Use this schema: {"visible":true|false,"reason":"...","evidence":["..."]}.',
-  "Set visible=true only if this session directly exposes a Composio MCP path, meaning you can see either a server named `composio` or tool names like `GMAIL_FETCH_EMAILS`, `SLACK_SEND_MESSAGE`, `GITHUB_LIST_REPOSITORIES_FOR_AUTHENTICATED_USER`, `NOTION_SEARCH`, `GOOGLE_CALENDAR_EVENTS_LIST`, or `LINEAR_LIST_ISSUES` in your available tools.",
+  "Set visible=true only if this session directly exposes a Composio MCP path, meaning you can see either a server named `composio` or tool names like `GMAIL_FETCH_EMAILS`, `SLACK_SEND_MESSAGE`, `GITHUB_FIND_PULL_REQUESTS`, `NOTION_SEARCH`, `GOOGLE_CALENDAR_EVENTS_LIST`, or `LINEAR_LIST_ISSUES` in your available tools.",
   "If you are unsure, set visible=false.",
   "Do not call any tool.",
 ].join("\n");
@@ -381,20 +381,12 @@ function buildSummary(params: {
     };
   }
 
-  if (params.liveAgent.detail && params.liveAgent.detail !== LIVE_AGENT_NOT_CHECKED_DETAIL) {
-    return {
-      level: "warning",
-      verified: false,
-      message: params.liveAgent.detail === LIVE_AGENT_REPAIR_PENDING_DETAIL
-        ? "Composio MCP was repaired, but live agent visibility still needs to be verified."
-        : `Composio MCP verification was inconclusive: ${params.liveAgent.detail}`,
-    };
-  }
-
   return {
-    level: "warning",
+    level: "healthy",
     verified: false,
-    message: "Composio MCP is configured and the gateway is reachable, but live agent visibility has not been verified yet.",
+    message: params.liveAgent.detail === LIVE_AGENT_REPAIR_PENDING_DETAIL
+      ? "Composio MCP configuration was refreshed and a live-agent verification can run in the background."
+      : "Composio MCP is configured and the gateway is reachable. Live-agent verification is pending.",
   };
 }
 

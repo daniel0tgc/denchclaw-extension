@@ -81,7 +81,13 @@ export function ComposioConnectModal({
   connections: ComposioConnection[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnectionChange: () => void;
+  onConnectionChange: (payload?: {
+    toolkit?: ComposioToolkit | null;
+    connected?: boolean;
+    connectedToolkitSlug?: string | null;
+    connectedToolkitName?: string | null;
+    shouldProbeLiveAgent?: boolean;
+  }) => void;
 }) {
   const [connecting, setConnecting] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
@@ -134,14 +140,27 @@ export function ComposioConnectModal({
       popupRef.current = null;
       setConnecting(false);
       if (event.data.status === "success") {
-        onConnectionChange();
+        onConnectionChange({
+          toolkit,
+          connected: true,
+          connectedToolkitSlug:
+            typeof event.data.connected_toolkit_slug === "string"
+              ? event.data.connected_toolkit_slug
+              : toolkit?.slug ?? null,
+          connectedToolkitName:
+            typeof event.data.connected_toolkit_name === "string"
+              ? event.data.connected_toolkit_name
+              : toolkit?.name ?? null,
+          shouldProbeLiveAgent: true,
+        });
+        onOpenChange(false);
       } else {
         setError("Connection was not completed. Please try again.");
       }
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onConnectionChange, stopPopupPolling]);
+  }, [onConnectionChange, onOpenChange, stopPopupPolling, toolkit]);
 
   const handleConnect = useCallback(async () => {
     if (!toolkit) return;
@@ -152,7 +171,7 @@ export function ComposioConnectModal({
       const res = await fetch("/api/composio/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolkit: toolkit.slug }),
+        body: JSON.stringify({ toolkit: toolkit.connect_slug ?? toolkit.slug }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -178,14 +197,15 @@ export function ComposioConnectModal({
         popupRef.current = null;
         setConnecting(false);
         if (!callbackHandledRef.current) {
-          onConnectionChange();
+          onConnectionChange({ toolkit });
+          onOpenChange(false);
         }
       }, 500);
     } catch (err) {
       setConnecting(false);
       setError(err instanceof Error ? err.message : "Failed to connect.");
     }
-  }, [clearPopupState, onConnectionChange, stopPopupPolling, toolkit]);
+  }, [clearPopupState, onConnectionChange, onOpenChange, stopPopupPolling, toolkit]);
 
   const handleDisconnect = useCallback(async (connectionId: string) => {
     setDisconnectingId(connectionId);
@@ -200,7 +220,7 @@ export function ComposioConnectModal({
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to disconnect.");
       }
-      onConnectionChange();
+      onConnectionChange({ toolkit, connected: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect.");
     } finally {

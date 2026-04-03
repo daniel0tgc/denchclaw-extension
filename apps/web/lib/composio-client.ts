@@ -9,6 +9,12 @@ import type {
   ComposioToolkitRecord,
   ComposioToolkitsResponse,
 } from "@/lib/composio";
+import {
+  normalizeComposioToolkitName,
+  normalizeComposioToolkitSlug,
+} from "@/lib/composio-normalization";
+
+export { normalizeComposioToolkitSlug } from "@/lib/composio-normalization";
 
 export type NormalizedComposioConnection = ComposioConnection & {
   normalized_toolkit_slug: string;
@@ -23,10 +29,6 @@ export type NormalizedComposioConnection = ComposioConnection & {
   related_connection_ids: string[];
   is_same_account_reconnect: boolean;
 };
-
-export function normalizeComposioToolkitSlug(slug: string): string {
-  return slug.trim().toLowerCase();
-}
 
 export function normalizeComposioConnectionStatus(status: unknown): string {
   return typeof status === "string" && status.trim()
@@ -70,6 +72,8 @@ function normalizeComposioToolkitRecord(
   toolkit: ComposioToolkitRecord,
 ): ComposioToolkit {
   const meta = asRecord(toolkit.meta);
+  const rawSlug = pickString(toolkit.slug, toolkit.name) ?? "unknown";
+  const normalizedSlug = normalizeComposioToolkitSlug(rawSlug);
   const metaToolsCount = typeof meta?.tools_count === "number" ? meta.tools_count : undefined;
   const toolsCount = typeof toolkit.tools_count === "number"
     ? toolkit.tools_count
@@ -84,8 +88,12 @@ function normalizeComposioToolkitRecord(
     : metaCats;
 
   return {
-    slug: pickString(toolkit.slug, toolkit.name) ?? "unknown",
-    name: pickString(toolkit.name, toolkit.slug) ?? "Unknown",
+    slug: normalizedSlug,
+    connect_slug: rawSlug,
+    name: normalizeComposioToolkitName(
+      pickString(toolkit.name, toolkit.slug),
+      rawSlug,
+    ),
     description: pickString(
       toolkit.description,
       toolkit.description_short,
@@ -144,12 +152,13 @@ function normalizeComposioConnectionRecord(
   connection: ComposioConnectionRecord,
 ): ComposioConnection {
   const id = pickString(connection.id, connection.connectionId) ?? "unknown-connection";
-  const toolkitSlug = pickString(connection.toolkit_slug, connection.toolkit?.slug) ?? "unknown";
+  const rawToolkitSlug = pickString(connection.toolkit_slug, connection.toolkit?.slug) ?? "unknown";
+  const toolkitSlug = normalizeComposioToolkitSlug(rawToolkitSlug);
   const toolkitName = pickString(
     connection.toolkit_name,
     connection.toolkit?.name,
-    toolkitSlug,
-  ) ?? "Unknown";
+    rawToolkitSlug,
+  );
   const accountLabel = pickString(connection.account_label, connection.account?.label);
   const accountName = pickString(connection.account_name, connection.account?.label, accountLabel);
   const accountEmail = pickString(connection.account_email, connection.account?.email);
@@ -166,7 +175,7 @@ function normalizeComposioConnectionRecord(
   return {
     id,
     toolkit_slug: toolkitSlug,
-    toolkit_name: toolkitName,
+    toolkit_name: normalizeComposioToolkitName(toolkitName, rawToolkitSlug),
     status: pickString(connection.status) ?? "UNKNOWN",
     created_at: pickString(connection.created_at, connection.createdAt) ?? "",
     updated_at: pickString(connection.updated_at, connection.updatedAt) ?? null,
@@ -176,8 +185,11 @@ function normalizeComposioConnectionRecord(
     external_account_id: externalAccountId ?? null,
     account_stable_id: accountStableId ?? null,
     toolkit: {
-      slug: pickString(connection.toolkit?.slug, toolkitSlug) ?? null,
-      name: pickString(connection.toolkit?.name, toolkitName) ?? null,
+      slug: toolkitSlug,
+      name: normalizeComposioToolkitName(
+        pickString(connection.toolkit?.name, toolkitName),
+        rawToolkitSlug,
+      ),
     },
     account: connection.account
       ? {

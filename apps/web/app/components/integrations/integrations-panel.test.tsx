@@ -51,11 +51,13 @@ describe("IntegrationsPanel", () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : (input as URL).href;
       if (url === "/api/integrations") return new Response(JSON.stringify(eligiblePayload));
-      if (url === "/api/composio/connections") return new Response(JSON.stringify(connectionsPayload));
-      if (url === "/api/composio/status") return new Response(JSON.stringify(statusPayload));
-      if (url.startsWith("/api/composio/toolkits?search=gmail")) {
-        return new Response(JSON.stringify(toolkitsPayload));
+      if (url === "/api/composio/connections?include_toolkits=1") {
+        return new Response(JSON.stringify({ ...connectionsPayload, toolkits: [] }));
       }
+      if (url === "/api/composio/connections?include_toolkits=1&fresh=1") {
+        return new Response(JSON.stringify({ ...connectionsPayload, toolkits: [] }));
+      }
+      if (url === "/api/composio/status") return new Response(JSON.stringify(statusPayload));
       if (url.startsWith("/api/composio/toolkits")) {
         return new Response(JSON.stringify(toolkitsPayload));
       }

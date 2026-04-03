@@ -35,9 +35,6 @@ import {
 	ChatModelSelector,
 } from "./chat-model-selector";
 import {
-	classifyOpenAiModelSwitch,
-	isLikelyOpenAiModelId,
-	needsOpenAiSwitchAcknowledgement,
 	type ChatModelOption,
 	resolveActiveChatModelId,
 } from "@/lib/chat-models";
@@ -911,10 +908,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const [rawView, _setRawView] = useState(false);
 		const [cloudState, setCloudState] = useState<ChatCloudState | null>(null);
 		const [sessionRuntime, setSessionRuntime] = useState<ChatSessionRuntime | null>(null);
-		const [modelOverride, setModelOverride] = useState<string | null>(null);
-		const [openAiUnsafeSwitchConfirmed, setOpenAiUnsafeSwitchConfirmed] =
-			useState(false);
-		const openAiUnsafeSwitchConfirmedRef = useRef(false);
+		const [selectingChatModel, setSelectingChatModel] = useState(false);
 
 		// ── Hero state (new chat screen) ──
 		const greeting = "What can I help with?";
@@ -959,29 +953,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		}, [currentSessionId]);
 
 		useEffect(() => {
-			setModelOverride(null);
 			setSessionRuntime(null);
-			setOpenAiUnsafeSwitchConfirmed(false);
 		}, [currentSessionId]);
-
-		useEffect(() => {
-			setOpenAiUnsafeSwitchConfirmed(false);
-		}, [modelOverride]);
-
-		useEffect(() => {
-			openAiUnsafeSwitchConfirmedRef.current = openAiUnsafeSwitchConfirmed;
-		}, [openAiUnsafeSwitchConfirmed]);
 
 		// ── Ref-based session ID for transport ──
 		const sessionIdRef = useRef<string | null>(null);
 		useEffect(() => {
 			sessionIdRef.current = currentSessionId;
 		}, [currentSessionId]);
-
-		const modelOverrideRef = useRef<string | null>(null);
-		useEffect(() => {
-			modelOverrideRef.current = modelOverride;
-		}, [modelOverride]);
 
 		const subagentSessionKeyRef = useRef(subagentSessionKey);
 		useEffect(() => {
@@ -999,13 +978,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						if (sk) {extra.sessionKey = sk;}
 						const sid = sessionIdRef.current;
 						if (sid) {extra.sessionId = sid;}
-						const currentModelOverride = modelOverrideRef.current;
-						if (currentModelOverride) {
-							extra.modelOverride = currentModelOverride;
-						}
-						if (openAiUnsafeSwitchConfirmedRef.current) {
-							extra.acknowledgeUnsafeOpenAiSwitch = true;
-						}
 						if (pendingHtmlRef.current) {
 							extra.userHtml = pendingHtmlRef.current;
 							pendingHtmlRef.current = null;
@@ -1019,56 +991,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const { messages, sendMessage, status, stop, error, setMessages } =
 			useChat({ transport });
 
-		const hasAssistantHistory = useMemo(
-			() => messages.some((m) => m.role === "assistant"),
-			[messages],
-		);
-
-		const openAiSwitchKind = useMemo(() => {
-			if (!modelOverride || !currentSessionId) {
-				return "safe" as const;
-			}
-			return classifyOpenAiModelSwitch({
-				sessionModel: sessionRuntime?.model ?? null,
-				sessionModelProvider: sessionRuntime?.modelProvider ?? null,
-				targetModel: modelOverride,
-			});
-		}, [
-			modelOverride,
-			currentSessionId,
-			sessionRuntime?.model,
-			sessionRuntime?.modelProvider,
-		]);
-
-		const needsOpenAiSwitchAck = useMemo(
-			() =>
-				Boolean(
-					currentSessionId &&
-						modelOverride &&
-						isLikelyOpenAiModelId(modelOverride) &&
-						needsOpenAiSwitchAcknowledgement(
-							openAiSwitchKind,
-							hasAssistantHistory,
-						),
-				),
-			[
-				currentSessionId,
-				modelOverride,
-				openAiSwitchKind,
-				hasAssistantHistory,
-			],
-		);
-
-		const openAiSwitchBlocked =
-			needsOpenAiSwitchAck && !openAiUnsafeSwitchConfirmed;
-
 		const isStreaming =
 			status === "streaming" ||
 			status === "submitted" ||
 			isReconnecting;
 
 		useEffect(() => {
-			if (!currentSessionId || (isStreaming && !modelOverride)) {
+			if (!currentSessionId || isStreaming) {
 				return;
 			}
 			let cancelled = false;
@@ -1095,10 +1024,48 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				cancelled = true;
 				controller.abort();
 			};
-		}, [currentSessionId, isStreaming, modelOverride]);
+		}, [currentSessionId, isStreaming, cloudState?.selectedDenchModel]);
+
+		const handleSelectChatModel = useCallback(async (stableId: string) => {
+			const trimmed = stableId.trim();
+			if (!trimmed) {
+				return;
+			}
+			if (trimmed === cloudState?.selectedDenchModel) {
+				return;
+			}
+			setSelectingChatModel(true);
+			setStreamError(null);
+			try {
+				const res = await fetch("/api/settings/cloud", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action: "select_model", stableId: trimmed }),
+				});
+				const payload = (await res.json()) as { error?: string; state?: unknown };
+				if (!res.ok) {
+					setStreamError(
+						typeof payload.error === "string" && payload.error.trim()
+							? payload.error
+							: "Failed to switch model.",
+					);
+					return;
+				}
+				const next = normalizeChatCloudState(payload.state);
+				if (next) {
+					setCloudState(next);
+				}
+			} catch (err) {
+				setStreamError(
+					err instanceof Error ? err.message : "Failed to switch model.",
+				);
+			} finally {
+				setSelectingChatModel(false);
+			}
+		}, [cloudState?.selectedDenchModel]);
 
 		const activeChatModel = resolveActiveChatModelId({
-			modelOverride,
+			modelOverride: null,
 			sessionModel: sessionRuntime?.model ?? null,
 			selectedDenchModel: cloudState?.selectedDenchModel ?? null,
 			models: cloudState?.models ?? [],
@@ -1771,18 +1738,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					return;
 				}
 
-				if (
-					!isSubagentMode &&
-					!gatewaySessionKey &&
-					needsOpenAiSwitchAck &&
-					!openAiUnsafeSwitchConfirmed
-				) {
-					setStreamError(
-						"Confirm the ChatGPT switch below — earlier tool history won’t carry over.",
-					);
-					return;
-				}
-
 				const userText = text.trim();
 				const currentAttachments = [...readyFiles];
 
@@ -1915,8 +1870,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				attemptReconnect,
 				onConversationActivity,
 				isSubagentMode,
-				needsOpenAiSwitchAck,
-				openAiUnsafeSwitchConfirmed,
 				setMessages,
 			],
 		);
@@ -2362,9 +2315,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								onClick={() => editorRef.current?.submit()}
 								disabled={
 									(editorEmpty && attachedFiles.length === 0) ||
-									loadingSession ||
-									(openAiSwitchBlocked &&
-										(!editorEmpty || attachedFiles.length > 0))
+									loadingSession
 								}
 								className={`${compact ? "w-6 h-6" : "w-7 h-7"} rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
 								style={{
@@ -2489,41 +2440,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 									<ChatModelSelector
 										models={cloudState?.models ?? []}
 										selectedModel={activeChatModel}
-										onSelect={setModelOverride}
+										onSelect={(id) => {
+											void handleSelectChatModel(id);
+										}}
+										disabled={selectingChatModel}
+										fallbackToFirst
 									/>
-									{needsOpenAiSwitchAck && (
-										<div
-											className="mt-2 rounded-lg border px-3 py-2 text-left"
-											style={{
-												borderColor: "var(--color-border)",
-												background: "color-mix(in srgb, var(--color-accent) 6%, var(--color-surface))",
-											}}
-										>
-											<p className="text-xs leading-snug" style={{ color: "var(--color-text-secondary)" }}>
-												<strong className="font-medium text-[var(--color-text)]">Model switch:</strong>{" "}
-												ChatGPT can’t reuse earlier tool-call history from this chat. Continuing starts a
-												<strong> fresh AI context</strong> for this thread (your saved messages stay here).
-											</p>
-											{!openAiUnsafeSwitchConfirmed ? (
-												<button
-													type="button"
-													className="mt-2 text-xs font-medium rounded-md px-2.5 py-1.5 border transition-opacity hover:opacity-90"
-													style={{
-														borderColor: "var(--color-border-strong)",
-														color: "var(--color-text)",
-														background: "var(--color-surface)",
-													}}
-													onClick={() => setOpenAiUnsafeSwitchConfirmed(true)}
-												>
-													Continue with fresh context
-												</button>
-											) : (
-												<p className="mt-2 text-[11px] font-medium" style={{ color: "var(--color-text-muted)" }}>
-													Ready — you can send your message.
-												</p>
-											)}
-										</div>
-									)}
 								</div>
 							) : (
 								<h2

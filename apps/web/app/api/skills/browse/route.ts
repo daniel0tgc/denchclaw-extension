@@ -37,6 +37,19 @@ export type BrowseSkill = {
   source: string;
 };
 
+function humanizeSlug(slug: string): string {
+  return slug
+    .replace(/^(vercel|cursor|claude)-/, "")
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function generateSummary(slug: string, source: string): string {
+  const org = source.split("/")[0] ?? source;
+  const label = humanizeSlug(slug);
+  return `${label} skill by ${org}`;
+}
+
 function normalizeSkill(raw: SkillsShSkill): BrowseSkill {
   const slug = raw.skillId ?? raw.name ?? raw.id.split("/").at(-1) ?? raw.id;
   const source = raw.source ?? raw.id.split("/").slice(0, 2).join("/");
@@ -44,7 +57,7 @@ function normalizeSkill(raw: SkillsShSkill): BrowseSkill {
   return {
     slug,
     displayName: raw.name ?? slug,
-    summary: source ? `by ${source}` : "",
+    summary: generateSummary(slug, source),
     installs: raw.installs ?? 0,
     source,
   };

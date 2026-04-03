@@ -38,10 +38,13 @@ export function SkillStorePanel({ embedded }: { embedded?: boolean } = {}) {
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [browseQuery, setBrowseQuery] = useState("");
   const browseDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const browseAbort = useRef<AbortController | null>(null);
+  const browseInitialised = useRef(false);
   const [installStatuses, setInstallStatuses] = useState<Record<string, InstallStatus>>({});
   const [panelNotice, setPanelNotice] = useState<PanelNotice | null>(null);
 
   const [featuredSkills, setFeaturedSkills] = useState<BrowseSkillData[]>([]);
+  const featuredInitialised = useRef(false);
   const [featuredLoading, setFeaturedLoading] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -93,22 +96,27 @@ export function SkillStorePanel({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => { void fetchInstalled({ showSpinner: true }); }, [fetchInstalled]);
 
   const fetchBrowse = useCallback(async (query?: string, category?: string | null) => {
+    browseAbort.current?.abort();
+    const controller = new AbortController();
+    browseAbort.current = controller;
     setBrowseLoading(true);
     setBrowseError(null);
     try {
       const params = new URLSearchParams();
       if (query?.trim()) params.set("q", query.trim());
       else if (category) params.set("category", category);
-      const res = await fetch(`/api/skills/browse?${params.toString()}`);
+      const res = await fetch(`/api/skills/browse?${params.toString()}`, { signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (data.error) setBrowseError(data.error);
       setBrowseSkills(data.skills ?? []);
       if (data.categories) setCategories(data.categories);
     } catch (err) {
+      if (controller.signal.aborted) return;
       setBrowseError(err instanceof Error ? err.message : "Failed to load skills");
       setBrowseSkills([]);
     } finally {
-      setBrowseLoading(false);
+      if (!controller.signal.aborted) setBrowseLoading(false);
     }
   }, []);
 
@@ -127,13 +135,15 @@ export function SkillStorePanel({ embedded }: { embedded?: boolean } = {}) {
   }, []);
 
   useEffect(() => {
-    if (activeTab === "browse" && featuredSkills.length === 0 && !featuredLoading) {
+    if (activeTab === "browse" && !featuredInitialised.current && !featuredLoading) {
+      featuredInitialised.current = true;
       void fetchFeatured();
     }
-    if (activeTab === "browse" && browseSkills.length === 0 && !browseLoading && !browseError) {
+    if (activeTab === "browse" && !browseInitialised.current && !browseLoading) {
+      browseInitialised.current = true;
       void fetchBrowse();
     }
-  }, [activeTab, featuredSkills.length, featuredLoading, browseSkills.length, browseLoading, browseError, fetchBrowse, fetchFeatured]);
+  }, [activeTab, featuredLoading, browseLoading, fetchBrowse, fetchFeatured]);
 
   const handleBrowseSearch = useCallback((value: string) => {
     setBrowseQuery(value);

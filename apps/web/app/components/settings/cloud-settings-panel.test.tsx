@@ -153,12 +153,14 @@ describe("CloudSettingsPanel", () => {
 
     render(<CloudSettingsPanel />);
 
-    const voiceSelect = await screen.findByRole("combobox", { name: "Select ElevenLabs voice" });
-    await waitFor(() => {
-      expect(screen.getByRole("option", { name: /Rachel/ })).toBeInTheDocument();
-      expect(voiceSelect).not.toBeDisabled();
+    const voiceTrigger = await screen.findByRole("button", {
+      name: "Select ElevenLabs voice",
     });
-    await user.selectOptions(voiceSelect, "voice_123");
+    await waitFor(() => {
+      expect(voiceTrigger).not.toBeDisabled();
+    });
+    await user.click(voiceTrigger);
+    await user.click(await screen.findByRole("menuitemradio", { name: /Rachel/ }));
 
     await waitFor(() => {
       expect(screen.getByText("Saved Rachel for ElevenLabs playback.")).toBeInTheDocument();

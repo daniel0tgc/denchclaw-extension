@@ -1,9 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
 import { DenchIntegrationsSection } from "../integrations/dench-integrations-section";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 
 type CloudStatus = "no_key" | "invalid_key" | "valid";
 
@@ -51,6 +59,9 @@ type ActionNotice = {
 };
 
 const DENCH_API_KEY_URL = "https://dench.com/api";
+
+/** Sentinel for “default voice” in radio group (empty string is avoided for Radix value). */
+const DEFAULT_VOICE_RADIO_VALUE = "__dench_default_voice__";
 
 function NoticeBanner({ notice }: { notice: ActionNotice }) {
   const toneClass =
@@ -266,24 +277,15 @@ function ModelSelector({
         >
           Primary Model
         </label>
-        <div
-          className="rounded-xl border px-3 py-2.5"
-          style={{
-            background: "var(--color-surface)",
-            borderColor: "var(--color-border)",
-          }}
-        >
-          <ChatModelSelector
-            models={pickerModels}
-            selectedModel={isDenchPrimary ? selectedModel : null}
-            onSelect={onSelect}
-            disabled={selecting}
-            fallbackToFirst={isDenchPrimary}
-            placeholder="Choose a model..."
-            ariaLabel="Select primary model"
-            triggerClassName="w-full justify-between"
-          />
-        </div>
+        <ChatModelSelector
+          models={pickerModels}
+          selectedModel={isDenchPrimary ? selectedModel : null}
+          onSelect={onSelect}
+          disabled={selecting}
+          fallbackToFirst={isDenchPrimary}
+          placeholder="Choose a model..."
+          ariaLabel="Select primary model"
+        />
       </div>
 
       <div>
@@ -293,36 +295,64 @@ function ModelSelector({
         >
           ElevenLabs Voice
         </label>
-        <div
-          className="rounded-xl border px-3 py-2.5"
-          style={{
-            background: "var(--color-surface)",
-            borderColor: "var(--color-border)",
-          }}
-        >
-          <select
-            value={selectedVoiceId ?? ""}
-            onChange={(event) => onSelectVoice(event.target.value || null)}
-            disabled={voiceLoading || savingVoice || voices.length === 0}
-            className="w-full bg-transparent text-sm outline-none"
-            style={{ color: "var(--color-text)" }}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className="inline-flex max-w-full items-center gap-1.5 rounded-lg p-0 text-sm font-medium transition-opacity hover:opacity-100 disabled:cursor-default disabled:opacity-60 cursor-pointer outline-none ring-0 border-none"
+            style={{ color: "var(--color-text-secondary)", opacity: 0.9 }}
             aria-label="Select ElevenLabs voice"
+            title={selectedVoice?.name ?? undefined}
+            disabled={voiceLoading || savingVoice || voices.length === 0}
           >
-            <option value="">
+            <span
+              className="max-w-[240px] truncate"
+              style={
+                voiceLoading || (!selectedVoice && voices.length === 0)
+                  ? { color: "var(--color-text-muted)" }
+                  : undefined
+              }
+            >
               {voiceLoading
                 ? "Loading voices..."
-                : voices.length > 0
-                  ? "Default voice (first available)"
-                  : "No voices available"}
-            </option>
-            {voices.map((voice) => (
-              <option key={voice.voiceId} value={voice.voiceId}>
-                {voice.name}
-                {voice.category ? ` · ${voice.category}` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
+                : voices.length === 0
+                  ? "No voices available"
+                  : selectedVoice
+                    ? `${selectedVoice.name}${selectedVoice.category ? ` · ${selectedVoice.category}` : ""}`
+                    : "Default voice (first available)"}
+            </span>
+            {voiceLoading || savingVoice ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            side="bottom"
+            sideOffset={8}
+            className="min-w-[15rem] max-w-[20rem] p-1.5"
+          >
+            <DropdownMenuRadioGroup
+              value={selectedVoiceId ?? DEFAULT_VOICE_RADIO_VALUE}
+              onValueChange={(value) => {
+                onSelectVoice(
+                  value === DEFAULT_VOICE_RADIO_VALUE ? null : value,
+                );
+              }}
+            >
+              <DropdownMenuRadioItem value={DEFAULT_VOICE_RADIO_VALUE}>
+                Default voice (first available)
+              </DropdownMenuRadioItem>
+              {voices.map((voice) => (
+                <DropdownMenuRadioItem key={voice.voiceId} value={voice.voiceId}>
+                  <span className="truncate">
+                    {voice.name}
+                    {voice.category ? ` · ${voice.category}` : ""}
+                  </span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div className="mt-2 space-y-1">
           <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
             {elevenLabsEnabled

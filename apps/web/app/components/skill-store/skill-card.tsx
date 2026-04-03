@@ -345,6 +345,12 @@ export function BrowseSkillCard({
         </div>
       </div>
 
+      {skill.summary && !installStatus && (
+        <p className="text-xs leading-relaxed line-clamp-2" style={{ color: "var(--color-text-muted)" }}>
+          {skill.summary}
+        </p>
+      )}
+
       {installStatus && (
         <p
           className="text-[11px]"

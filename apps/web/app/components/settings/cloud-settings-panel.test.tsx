@@ -91,12 +91,15 @@ describe("CloudSettingsPanel", () => {
 
       if (url === "/api/settings/cloud" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as { action: string; stableId: string };
-        expect(body).toEqual({ action: "select_model", stableId: "gpt-5.4" });
+        expect(body).toEqual({
+          action: "select_model",
+          stableId: "anthropic.claude-opus-4-6-v1",
+        });
         return new Response(JSON.stringify({
           state: {
             ...baseState,
             isDenchPrimary: true,
-            selectedDenchModel: "gpt-5.4",
+            selectedDenchModel: "anthropic.claude-opus-4-6-v1",
           },
           refresh: {
             attempted: true,
@@ -113,10 +116,12 @@ describe("CloudSettingsPanel", () => {
     render(<CloudSettingsPanel />);
 
     await user.click(await screen.findByRole("button", { name: "Select primary model" }));
-    await user.click(await screen.findByText("GPT-5.4"));
+    await user.click(await screen.findByText("Claude Opus 4.6"));
 
     await waitFor(() => {
-      expect(screen.getByText("Switched to GPT-5.4 and the dench gateway restarted successfully.")).toBeInTheDocument();
+      expect(
+        screen.getByText("Switched to Claude Opus 4.6 and the dench gateway restarted successfully."),
+      ).toBeInTheDocument();
     });
   });
 

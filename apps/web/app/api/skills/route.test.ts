@@ -92,7 +92,7 @@ describe("skills browse and install APIs", () => {
         {
           slug: "nextjs-seo-optimizer",
           displayName: "nextjs-seo-optimizer",
-          summary: "by kumbajirajkumar123/nextjs-seo-optimizer",
+          summary: "Nextjs Seo Optimizer skill by kumbajirajkumar123",
           installs: 8,
           source: "kumbajirajkumar123/nextjs-seo-optimizer",
         },

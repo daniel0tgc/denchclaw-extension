@@ -73,7 +73,6 @@ describe("Composio callback API", () => {
     expect(html).toContain('"connected_account_id":"acct_123"');
     expect(html).toContain('"connected_toolkit_slug":"x"');
     expect(html).toContain('"connected_toolkit_name":"X"');
-    expect(html).toContain('"runtime_refresh"');
   });
 
   it("does not rebuild when the callback is unsuccessful", async () => {

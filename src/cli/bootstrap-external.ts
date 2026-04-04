@@ -13,13 +13,15 @@ import path from "node:path";
 import process from "node:process";
 import { confirm, isCancel, select, spinner, text } from "@clack/prompts";
 import json5 from "json5";
+import gradient from "gradient-string";
 import { isDaemonlessMode } from "../config/paths.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { readTelemetryConfig, markNoticeShown } from "../telemetry/config.js";
 import { track } from "../telemetry/telemetry.js";
+import { visibleWidth } from "../terminal/ansi.js";
 import { stylePromptMessage } from "../terminal/prompt-style.js";
-import { theme } from "../terminal/theme.js";
+import { isRich, theme } from "../terminal/theme.js";
 import { VERSION } from "../version.js";
 import {
   buildDenchCloudConfigPatch,
@@ -2303,6 +2305,86 @@ async function promptForDenchCloudModel(params: {
   return String(selection);
 }
 
+function renderDenchCloudRecommendationBanner(): string {
+  const rich = isRich();
+  const W = 74;
+
+  const bdr = (s: string) => (rich ? theme.accentDim(s) : s);
+  const ironShimmer = rich
+    ? gradient(["#374151", "#6B7280", "#9CA3AF", "#D1D5DB", "#9CA3AF", "#6B7280", "#374151"])
+    : (s: string) => s;
+  const topBar = ironShimmer("─".repeat(W));
+  const botBar = ironShimmer("─".repeat(W));
+  const top = `  ${bdr("╭")}${topBar}${bdr("╮")}`;
+  const bot = `  ${bdr("╰")}${botBar}${bdr("╯")}`;
+  const blank = `  ${bdr("│")}${" ".repeat(W)}${bdr("│")}`;
+
+  const row = (content: string, indent = 4): string => {
+    const vis = visibleWidth(content);
+    const right = Math.max(1, W - indent - vis);
+    return `  ${bdr("│")}${" ".repeat(indent)}${content}${" ".repeat(right)}${bdr("│")}`;
+  };
+
+  const title = rich
+    ? gradient(["#38BDF8", "#2DD4BF", "#34D399"])("D E N C H   C L O U D")
+    : "D E N C H   C L O U D";
+  const subtitle = rich
+    ? theme.muted("The recommended way to run DenchClaw. Everything is managed for you.")
+    : "The recommended way to run DenchClaw. Everything is managed for you.";
+
+  const bullet = rich ? theme.info("▸") : "▸";
+  const lbl = (s: string) => (rich ? theme.accentBright(s) : s);
+  const dim = (s: string) => (rich ? theme.muted(s) : s);
+  const COL = 14;
+  const features: [string, string][] = [
+    [lbl("AI Models"), dim("Claude, GPT, Kimi & more — no API keys needed")],
+    [lbl("Voice"), dim("ElevenLabs built in — no account required")],
+    [lbl("Web Search"), dim("Exa ready out of the box — no key to manage")],
+    [lbl("Skills Store"), dim("Browse & install skills instantly")],
+    [lbl("Image Gen"), dim("State-of-the-art models from day one")],
+  ];
+  const featureLines = features.map(([name, desc]) => {
+    const gap = " ".repeat(Math.max(1, COL - visibleWidth(name)));
+    return `${bullet}  ${name}${gap}${desc}`;
+  });
+
+  const star = rich ? theme.warn("★") : "★";
+  const intTitle = rich ? theme.warn("1,000+ App Integrations") : "1,000+ App Integrations";
+  const dot = rich ? theme.accentDim(" · ") : " · ";
+  const apps = [
+    rich ? theme.info("Gmail") : "Gmail",
+    rich ? theme.accentBright("Notion") : "Notion",
+    rich ? theme.success("HubSpot") : "HubSpot",
+    rich ? theme.warn("PostHog") : "PostHog",
+    rich ? theme.accent("Stripe") : "Stripe",
+    rich ? theme.success("Salesforce") : "Salesforce",
+    rich ? theme.muted("…") : "…",
+  ].join(dot);
+
+  const check = rich ? theme.success("✓") : "✓";
+  const cta = rich
+    ? theme.success("Recommended for most users")
+    : "Recommended for most users";
+
+  return [
+    "",
+    top,
+    blank,
+    row(title),
+    row(subtitle),
+    blank,
+    ...featureLines.map((l) => row(l)),
+    blank,
+    row(`${star}  ${intTitle}`),
+    row(apps, 7),
+    blank,
+    row(`${check}  ${cta}`),
+    blank,
+    bot,
+    "",
+  ].join("\n");
+}
+
 async function applyDenchCloudBootstrapConfig(params: {
   openclawCommand: string;
   profile: string;
@@ -2463,12 +2545,13 @@ async function resolveDenchCloudBootstrapSelection(params: {
     };
   }
 
+  if (!explicitRequest) {
+    params.runtime.log(renderDenchCloudRecommendationBanner());
+  }
   const wantsDenchCloud = explicitRequest
     ? true
     : await confirm({
-      message: stylePromptMessage(
-        "Use Dench Cloud for inference? Get your API key at dench.com/api",
-      ),
+      message: stylePromptMessage("Continue with Dench Cloud? Recommended. API key: dench.com/api"),
       initialValue: existingDenchConfigured || !currentProvider,
     });
   if (isCancel(wantsDenchCloud) || !wantsDenchCloud) {
@@ -2827,6 +2910,8 @@ export async function bootstrapCommand(
   }
   if (denchCloudSelection.enabled) {
     onboardArgv.push("--auth-choice", "skip");
+    onboardArgv.push("--skip-search");
+    onboardArgv.push("--skip-skills");
   }
 
   onboardArgv.push("--accept-risk", "--skip-ui");

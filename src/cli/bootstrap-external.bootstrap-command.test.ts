@@ -910,6 +910,16 @@ describe("bootstrapCommand always-onboard behavior", () => {
       );
     });
 
+    expect(runtime.log).toHaveBeenCalledWith(
+      expect.stringContaining("D E N C H   C L O U D"),
+    );
+    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("App Integrations"));
+    expect(promptMocks.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Continue with Dench Cloud? Recommended. API key: dench.com/api"),
+      }),
+    );
+
     const updatedConfig = JSON.parse(readFileSync(path.join(stateDir, "openclaw.json"), "utf-8"));
     expect(updatedConfig.plugins.entries["exa-search"]).toEqual(
       expect.objectContaining({ enabled: false }),

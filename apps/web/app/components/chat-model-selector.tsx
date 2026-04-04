@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, Lock } from "lucide-react";
 import {
 	SiClaude,
 	SiGoogle,
@@ -18,7 +18,10 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { ChatModelOption } from "@/lib/chat-models";
+import {
+	findChatModelByStableOrCatalogId,
+	type ChatModelOption,
+} from "@/lib/chat-models";
 
 export type ChatModelSelectorOption = ChatModelOption & {
 	isRecommended?: boolean;
@@ -149,6 +152,8 @@ export function ChatModelSelector({
 	selectedModel,
 	onSelect,
 	disabled = false,
+	loading = false,
+	disabledHint,
 	fallbackToFirst = true,
 	placeholder = "Choose a model...",
 	ariaLabel = "Select chat model",
@@ -158,29 +163,40 @@ export function ChatModelSelector({
 	selectedModel: string | null;
 	onSelect: (stableId: string) => void;
 	disabled?: boolean;
+	/** When true with `disabled`, shows a spinner instead of the menu affordance. */
+	loading?: boolean;
+	/** Native tooltip when disabled (e.g. why the user can’t open the menu). */
+	disabledHint?: string;
 	fallbackToFirst?: boolean;
 	placeholder?: string;
 	ariaLabel?: string;
 	triggerClassName?: string;
 }) {
 	const activeModel =
-		models.find((model) => model.stableId === selectedModel)
+		findChatModelByStableOrCatalogId(models, selectedModel)
 		?? (fallbackToFirst ? models[0] ?? null : null);
 
 	if (models.length === 0) {
 		return null;
 	}
 
+	const triggerTitle =
+		disabled && loading
+			? "Switching model…"
+			: disabled && disabledHint?.trim()
+				? disabledHint.trim()
+				: (activeModel?.displayName ?? placeholder);
+
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger
 				className={cn(
-					"inline-flex max-w-full items-center gap-1.5 rounded-lg p-0 text-sm font-medium transition-opacity hover:opacity-100 disabled:cursor-default disabled:opacity-60",
+					"inline-flex max-w-full items-center gap-1.5 rounded-lg p-0 text-sm font-medium transition-opacity hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-60",
 					triggerClassName,
 				)}
 				style={{ color: "var(--color-text-secondary)", opacity: 0.9 }}
 				aria-label={ariaLabel}
-				title={activeModel?.displayName ?? placeholder}
+				title={triggerTitle}
 				disabled={disabled}
 			>
 				{activeModel ? (
@@ -201,8 +217,10 @@ export function ChatModelSelector({
 				>
 					{activeModel?.displayName ?? placeholder}
 				</span>
-				{disabled ? (
+				{disabled && loading ? (
 					<Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+				) : disabled ? (
+					<Lock className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
 				) : (
 					<ChevronDown className="h-3.5 w-3.5 shrink-0" />
 				)}

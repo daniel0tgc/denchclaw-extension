@@ -228,15 +228,16 @@ function ModelSelector({
   voices: VoiceOption[];
   notice: ActionNotice | null;
 }) {
-  const pickerModels: ChatModelSelectorOption[] = models
-    .filter((model) => model.provider === "anthropic")
-    .map((model) => ({
-      stableId: model.stableId,
-      displayName: model.displayName,
-      provider: model.provider,
-      reasoning: model.reasoning,
-      isRecommended: model.id === recommendedModelId,
-    }));
+  const pickerModels: ChatModelSelectorOption[] = models.map((model) => ({
+    stableId: model.stableId,
+    ...(model.id.trim() && model.id !== model.stableId
+      ? { catalogId: model.id }
+      : {}),
+    displayName: model.displayName,
+    provider: model.provider,
+    reasoning: model.reasoning,
+    isRecommended: model.id === recommendedModelId,
+  }));
   const selectedVoice = voices.find((voice) => voice.voiceId === selectedVoiceId) ?? null;
 
   return (
@@ -283,6 +284,8 @@ function ModelSelector({
           models={pickerModels}
           selectedModel={isDenchPrimary ? selectedModel : null}
           onSelect={onSelect}
+          disabled={selecting}
+          loading={selecting}
           fallbackToFirst={isDenchPrimary}
           placeholder="Choose a model..."
           ariaLabel="Select primary model"

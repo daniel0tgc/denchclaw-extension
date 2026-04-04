@@ -1,9 +1,26 @@
 export type ChatModelOption = {
 	stableId: string;
+	/** Gateway catalog `id` when it differs from `stableId` (session rows may use either). */
+	catalogId?: string;
 	displayName: string;
 	provider: string;
 	reasoning: boolean;
 };
+
+export function findChatModelByStableOrCatalogId(
+	models: ChatModelOption[],
+	id: string | null | undefined,
+): ChatModelOption | undefined {
+	const trimmed = typeof id === "string" ? id.trim() : "";
+	if (!trimmed) {
+		return undefined;
+	}
+	return models.find(
+		(m) =>
+			m.stableId === trimmed ||
+			(typeof m.catalogId === "string" && m.catalogId.trim() === trimmed),
+	);
+}
 
 export function normalizeDenchModelId(
 	model: string | null | undefined,
@@ -44,8 +61,8 @@ export function resolveActiveChatModelId({
 }): string | null {
 	return (
 		modelOverride ??
-		normalizeDenchModelId(sessionModel) ??
 		selectedDenchModel ??
+		normalizeDenchModelId(sessionModel) ??
 		models[0]?.stableId ??
 		null
 	);

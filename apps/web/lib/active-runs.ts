@@ -26,6 +26,7 @@ import { resolveWebChatDir, resolveOpenClawStateDir, resolveActiveAgentId } from
 import {
 	type AgentProcessHandle,
 	type AgentEvent,
+	type ImageAttachment,
 	spawnAgentProcess,
 	spawnAgentSubscribeProcess,
 	spawnAgentStartForSession,
@@ -615,6 +616,7 @@ export function startRun(params: {
 	/** Use a specific agent ID instead of the workspace default. */
 	overrideAgentId?: string;
 	modelOverride?: string;
+	imageAttachments?: ImageAttachment[];
 }): ActiveRun {
 	const {
 		sessionId,
@@ -622,6 +624,7 @@ export function startRun(params: {
 		agentSessionId,
 		overrideAgentId,
 		modelOverride,
+		imageAttachments,
 	} = params;
 
 	const existing = activeRuns.get(sessionId);
@@ -641,6 +644,7 @@ export function startRun(params: {
 		agentSessionId,
 		overrideAgentId,
 		modelOverride,
+		imageAttachments,
 	);
 
 	const run: ActiveRun = {

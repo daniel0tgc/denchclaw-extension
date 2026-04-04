@@ -139,6 +139,12 @@ type PendingGatewayRequest = {
 	timeout: ReturnType<typeof setTimeout>;
 };
 
+export type ImageAttachment = {
+	content: string;
+	mimeType: string;
+	fileName?: string;
+};
+
 type SpawnGatewayProcessParams = {
 	mode: "start" | "subscribe";
 	message?: string;
@@ -146,6 +152,7 @@ type SpawnGatewayProcessParams = {
 	afterSeq: number;
 	lane?: string;
 	modelOverride?: string;
+	attachments?: ImageAttachment[];
 };
 
 type BuildConnectParamsOptions = {
@@ -944,6 +951,9 @@ class GatewayProcessHandle
 				...(sessionKey ? { sessionKey } : {}),
 				idempotencyKey: this.startIdempotencyKey,
 				deliver: false,
+				...(this.params.attachments?.length
+					? { attachments: this.params.attachments }
+					: {}),
 			});
 		} else {
 			startRes = await client.request("agent", {
@@ -1511,6 +1521,7 @@ export function spawnAgentProcess(
 	agentSessionId?: string,
 	overrideAgentId?: string,
 	modelOverride?: string,
+	attachments?: ImageAttachment[],
 ): AgentProcessHandle {
 	const agentId = overrideAgentId ?? resolveActiveAgentId();
 	const sessionKey = agentSessionId
@@ -1523,6 +1534,7 @@ export function spawnAgentProcess(
 		afterSeq: 0,
 		lane: agentSessionId ? `web:${agentSessionId}` : "web",
 		modelOverride,
+		attachments,
 	});
 }
 

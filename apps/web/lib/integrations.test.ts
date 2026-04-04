@@ -1,5 +1,20 @@
 import type { ExecFileException, ExecFileOptions } from "node:child_process";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const requireFs = createRequire(import.meta.url);
+const realFs = requireFs("node:fs") as typeof import("node:fs");
+
+function resolveBundledExtensionSourcePath(pluginId: string): string {
+  const cwdCandidates = [
+    join(process.cwd(), "extensions", pluginId),
+    join(process.cwd(), "..", "..", "extensions", pluginId),
+  ];
+  return (
+    cwdCandidates.find((candidate) => realFs.existsSync(candidate)) ?? cwdCandidates[cwdCandidates.length - 1]!
+  );
+}
 
 vi.mock("@/lib/workspace", () => ({
   resolveOpenClawStateDir: vi.fn(() => "/home/testuser/.openclaw-dench"),
@@ -864,10 +879,12 @@ describe("integrations state", () => {
     const mockExists = vi.mocked(existsSync);
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
+    const bundledExaSource = resolveBundledExtensionSourcePath("exa-search");
+    const bundledApolloSource = resolveBundledExtensionSourcePath("apollo-enrichment");
     const existingPaths = new Set<string>([
       "/home/testuser/.openclaw-dench/openclaw.json",
-      "/Users/vedant/Desktop/denchclaw/extensions/exa-search",
-      "/Users/vedant/Desktop/denchclaw/extensions/apollo-enrichment",
+      bundledExaSource,
+      bundledApolloSource,
     ]);
     let openClawJson = JSON.stringify({
       plugins: {
@@ -923,11 +940,11 @@ describe("integrations state", () => {
     ]);
     expect(writtenConfig.plugins.installs["exa-search"]).toEqual({
       installPath: "/home/testuser/.openclaw-dench/extensions/exa-search",
-      sourcePath: "/Users/vedant/Desktop/denchclaw/extensions/exa-search",
+      sourcePath: bundledExaSource,
     });
     expect(writtenConfig.plugins.installs["apollo-enrichment"]).toEqual({
       installPath: "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
-      sourcePath: "/Users/vedant/Desktop/denchclaw/extensions/apollo-enrichment",
+      sourcePath: bundledApolloSource,
     });
   });
 });

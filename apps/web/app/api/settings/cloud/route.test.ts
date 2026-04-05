@@ -3,6 +3,7 @@ import { GET, POST } from "./route";
 
 vi.mock("@/lib/dench-cloud-settings", () => ({
   getCloudSettingsState: vi.fn(),
+  saveActiveCloudSettings: vi.fn(),
   saveApiKey: vi.fn(),
   saveVoiceId: vi.fn(),
   selectModel: vi.fn(),
@@ -10,12 +11,14 @@ vi.mock("@/lib/dench-cloud-settings", () => ({
 
 const {
   getCloudSettingsState,
+  saveActiveCloudSettings,
   saveApiKey,
   saveVoiceId,
   selectModel,
 } = await import("@/lib/dench-cloud-settings");
 
 const mockedGet = vi.mocked(getCloudSettingsState);
+const mockedSaveActive = vi.mocked(saveActiveCloudSettings);
 const mockedSaveKey = vi.mocked(saveApiKey);
 const mockedSaveVoice = vi.mocked(saveVoiceId);
 const mockedSelectModel = vi.mocked(selectModel);
@@ -165,6 +168,72 @@ describe("cloud settings API", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save_voice", voiceId: 123 }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it("POST save_active_settings batches model, voice, and integration changes", async () => {
+    mockedSaveActive.mockResolvedValue({
+      state: validState,
+      integrationsState: {
+        denchCloud: {
+          hasKey: true,
+          isPrimaryProvider: true,
+          primaryModel: validState.primaryModel,
+        },
+        metadata: {
+          schemaVersion: 1 as const,
+          exa: { ownsSearch: true, fallbackProvider: "duckduckgo" },
+          apollo: {},
+          elevenlabs: {},
+        },
+        search: {
+          builtIn: { enabled: false, denied: true, provider: null },
+          effectiveOwner: "exa" as const,
+        },
+        integrations: [],
+      },
+      changed: true,
+      refresh: refreshOk,
+    });
+    const req = new Request("http://localhost/api/settings/cloud", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_active_settings",
+        stableId: "gpt-5.4",
+        voiceId: "voice_123",
+        integrations: {
+          exa: true,
+          apollo: true,
+          elevenlabs: false,
+        },
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mockedSaveActive).toHaveBeenCalledWith({
+      stableId: "gpt-5.4",
+      voiceId: "voice_123",
+      integrations: {
+        exa: true,
+        apollo: true,
+        elevenlabs: false,
+      },
+    });
+  });
+
+  it("POST save_active_settings rejects invalid integration payloads", async () => {
+    const req = new Request("http://localhost/api/settings/cloud", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_active_settings",
+        integrations: {
+          exa: "yes",
+        },
+      }),
     });
     const res = await POST(req);
     expect(res.status).toBe(400);

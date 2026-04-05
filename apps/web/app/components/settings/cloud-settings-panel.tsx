@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
 import { DenchIntegrationsSection } from "../integrations/dench-integrations-section";
+import type { DenchIntegrationId, DenchIntegrationState, IntegrationsState } from "@/lib/integrations";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,10 +59,67 @@ type ActionNotice = {
   message: string;
 };
 
+type IntegrationDraftState = Record<DenchIntegrationId, boolean>;
+
 const DENCH_API_KEY_URL = "https://dench.com/api";
 
 /** Sentinel for “default voice” in radio group (empty string is avoided for Radix value). */
 const DEFAULT_VOICE_RADIO_VALUE = "__dench_default_voice__";
+
+function buildIntegrationDraft(state: IntegrationsState | null): IntegrationDraftState {
+  const enabled = new Map<DenchIntegrationId, boolean>();
+  for (const integration of state?.integrations ?? []) {
+    enabled.set(integration.id, integration.enabled);
+  }
+  return {
+    exa: enabled.get("exa") ?? false,
+    apollo: enabled.get("apollo") ?? false,
+    elevenlabs: enabled.get("elevenlabs") ?? false,
+  };
+}
+
+function applyIntegrationDraft(
+  state: IntegrationsState,
+  draft: IntegrationDraftState,
+  draftIsDenchPrimary: boolean,
+): IntegrationsState {
+  return {
+    ...state,
+    denchCloud: {
+      ...state.denchCloud,
+      isPrimaryProvider: draftIsDenchPrimary,
+      primaryModel: state.denchCloud.primaryModel,
+    },
+    integrations: state.integrations.map((integration) => {
+      if (integration.lockReason !== "dench_not_primary") {
+        return {
+          ...integration,
+          enabled: draft[integration.id],
+        };
+      }
+
+      if (draftIsDenchPrimary) {
+        return {
+          ...integration,
+          enabled: draft[integration.id],
+          locked: false,
+          lockReason: null,
+          lockBadge: null,
+          available: integration.auth.configured && Boolean(integration.gatewayBaseUrl),
+        };
+      }
+
+      return {
+        ...integration,
+        enabled: draft[integration.id],
+        locked: true,
+        lockReason: "dench_not_primary",
+        lockBadge: "Use Dench Cloud",
+        available: false,
+      };
+    }),
+  };
+}
 
 function NoticeBanner({ notice }: { notice: ActionNotice }) {
   const toneClass =
@@ -212,7 +270,6 @@ function ModelSelector({
   savingVoice,
   voiceLoading,
   voices,
-  notice,
 }: {
   models: CatalogModel[];
   selectedModel: string | null;
@@ -226,7 +283,6 @@ function ModelSelector({
   savingVoice: boolean;
   voiceLoading: boolean;
   voices: VoiceOption[];
-  notice: ActionNotice | null;
 }) {
   const pickerModels: ChatModelSelectorOption[] = models.map((model) => ({
     stableId: model.stableId,
@@ -370,22 +426,30 @@ function ModelSelector({
           )}
         </div>
       </div>
-
-      {notice && <NoticeBanner notice={notice} />}
     </div>
   );
 }
 
 export function CloudSettingsPanel() {
   const [data, setData] = useState<CloudState | null>(null);
+  const [integrationsData, setIntegrationsData] = useState<IntegrationsState | null>(null);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [selecting, setSelecting] = useState(false);
-  const [savingVoice, setSavingVoice] = useState(false);
+  const [savingActive, setSavingActive] = useState(false);
+  const [repairingIntegrations, setRepairingIntegrations] = useState(false);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
+  const [draftModel, setDraftModel] = useState<string | null>(null);
+  const [draftVoiceId, setDraftVoiceId] = useState<string | null>(null);
+  const [draftIntegrations, setDraftIntegrations] = useState<IntegrationDraftState>({
+    exa: false,
+    apollo: false,
+    elevenlabs: false,
+  });
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -405,6 +469,33 @@ export function CloudSettingsPanel() {
   useEffect(() => {
     void fetchState();
   }, [fetchState]);
+
+  const fetchIntegrations = useCallback(async () => {
+    setIntegrationsLoading(true);
+    setIntegrationsError(null);
+    try {
+      const response = await fetch("/api/integrations");
+      if (!response.ok) {
+        throw new Error(`Failed to load integrations (${response.status})`);
+      }
+      const payload = (await response.json()) as IntegrationsState;
+      setIntegrationsData(payload);
+    } catch (err) {
+      setIntegrationsError(err instanceof Error ? err.message : "Failed to load integrations.");
+    } finally {
+      setIntegrationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (data?.status !== "valid") {
+      setIntegrationsData(null);
+      setIntegrationsError(null);
+      setIntegrationsLoading(false);
+      return;
+    }
+    void fetchIntegrations();
+  }, [data?.status, fetchIntegrations]);
 
   useEffect(() => {
     if (data?.status !== "valid") {
@@ -443,6 +534,21 @@ export function CloudSettingsPanel() {
       cancelled = true;
     };
   }, [data?.status, data?.gatewayUrl]);
+
+  useEffect(() => {
+    if (data?.status !== "valid" || !integrationsData) {
+      return;
+    }
+    setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
+    setDraftVoiceId(data.selectedVoiceId);
+    setDraftIntegrations(buildIntegrationDraft(integrationsData));
+  }, [
+    data?.status,
+    data?.isDenchPrimary,
+    data?.selectedDenchModel,
+    data?.selectedVoiceId,
+    integrationsData,
+  ]);
 
   const handleSaveKey = useCallback(async (apiKey: string) => {
     setSaving(true);
@@ -486,85 +592,152 @@ export function CloudSettingsPanel() {
     }
   }, []);
 
-  const handleSelectModel = useCallback(async (stableId: string) => {
-    setSelecting(true);
+  const handleDraftModelChange = useCallback((stableId: string) => {
+    setNotice(null);
+    setDraftModel(stableId);
+  }, []);
+
+  const handleDraftVoiceChange = useCallback((voiceId: string | null) => {
+    setNotice(null);
+    setDraftVoiceId(voiceId);
+  }, []);
+
+  const handleDraftIntegrationToggle = useCallback((integration: DenchIntegrationState, enabled: boolean) => {
+    setNotice(null);
+    setDraftIntegrations((current) => ({
+      ...current,
+      [integration.id]: enabled,
+    }));
+  }, []);
+
+  const resetDraft = useCallback(() => {
+    if (data?.status !== "valid" || !integrationsData) {
+      return;
+    }
+    setNotice(null);
+    setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
+    setDraftVoiceId(data.selectedVoiceId);
+    setDraftIntegrations(buildIntegrationDraft(integrationsData));
+  }, [data, integrationsData]);
+
+  const baselineModel = data?.status === "valid" && data.isDenchPrimary ? data.selectedDenchModel : null;
+  const baselineVoiceId = data?.status === "valid" ? data.selectedVoiceId : null;
+  const baselineIntegrations = useMemo(
+    () => buildIntegrationDraft(integrationsData),
+    [integrationsData],
+  );
+  const hasUnsavedChanges = Boolean(data?.status === "valid" && (
+    draftModel !== baselineModel
+    || draftVoiceId !== baselineVoiceId
+    || draftIntegrations.exa !== baselineIntegrations.exa
+    || draftIntegrations.apollo !== baselineIntegrations.apollo
+    || draftIntegrations.elevenlabs !== baselineIntegrations.elevenlabs
+  ));
+  const draftIsDenchPrimary = Boolean(draftModel);
+  const draftIntegrationsState = useMemo(() => {
+    if (!integrationsData) {
+      return null;
+    }
+    return applyIntegrationDraft(integrationsData, draftIntegrations, draftIsDenchPrimary);
+  }, [draftIntegrations, draftIsDenchPrimary, integrationsData]);
+
+  const handleSaveActiveSettings = useCallback(async () => {
+    setSavingActive(true);
     setNotice(null);
     try {
       const res = await fetch("/api/settings/cloud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "select_model", stableId }),
+        body: JSON.stringify({
+          action: "save_active_settings",
+          stableId: draftModel,
+          voiceId: draftVoiceId,
+          integrations: draftIntegrations,
+        }),
       });
       const payload = await res.json();
       if (!res.ok) {
         setNotice({
           tone: "error",
-          message: payload.error ?? "Failed to select model.",
+          message: payload.error ?? "Failed to save cloud settings.",
         });
         return;
       }
       setData(payload.state);
+      if (payload.integrationsState) {
+        setIntegrationsData(payload.integrationsState as IntegrationsState);
+      } else {
+        void fetchIntegrations();
+      }
       const refresh = payload.refresh as RefreshInfo;
-      const modelName = payload.state?.models?.find(
-        (m: CatalogModel) => m.stableId === stableId,
-      )?.displayName ?? stableId;
-      if (refresh.restarted) {
+      if (!payload.changed) {
+        setNotice({ tone: "success", message: "No changes to save." });
+      } else if (refresh.restarted) {
         setNotice({
           tone: "success",
-          message: `Switched to ${modelName} and the ${refresh.profile} gateway restarted successfully.`,
+          message: `Cloud settings saved and the ${refresh.profile} gateway restarted successfully.`,
         });
       } else if (refresh.attempted) {
         setNotice({
           tone: "warning",
-          message: `Switched to ${modelName}, but the gateway restart did not complete: ${refresh.error ?? "unknown error"}.`,
+          message: `Cloud settings saved, but the gateway restart did not complete: ${refresh.error ?? "unknown error"}.`,
         });
       } else {
-        setNotice({ tone: "success", message: `Switched to ${modelName}.` });
+        setNotice({ tone: "success", message: "Cloud settings saved successfully." });
       }
     } catch (err) {
       setNotice({
         tone: "error",
-        message: err instanceof Error ? err.message : "Failed to select model.",
+        message: err instanceof Error ? err.message : "Failed to save cloud settings.",
       });
     } finally {
-      setSelecting(false);
+      setSavingActive(false);
     }
-  }, []);
+  }, [draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
 
-  const handleSelectVoice = useCallback(async (voiceId: string | null) => {
-    setSavingVoice(true);
+  const handleRepairIntegrations = useCallback(async () => {
+    setRepairingIntegrations(true);
     setNotice(null);
     try {
-      const res = await fetch("/api/settings/cloud", {
+      const response = await fetch("/api/integrations/repair", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save_voice", voiceId }),
       });
-      const payload = await res.json();
-      if (!res.ok) {
-        setNotice({
-          tone: "error",
-          message: payload.error ?? "Failed to save voice.",
-        });
-        return;
+      const payload = await response.json() as {
+        changed: boolean;
+        repairedIds: string[];
+        refresh: RefreshInfo;
+      } & IntegrationsState & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to repair integrations.");
       }
-      setData(payload.state);
-      const selectedName = voices.find((voice) => voice.voiceId === voiceId)?.name;
-      setNotice({
-        tone: "success",
-        message: voiceId
-          ? `Saved ${selectedName ?? "your selected voice"} for ElevenLabs playback.`
-          : "Cleared the custom ElevenLabs voice selection.",
-      });
+
+      setIntegrationsData(payload);
+      if (payload.changed && payload.refresh.restarted) {
+        const repairedNames = payload.repairedIds.length > 0 ? payload.repairedIds.join(", ") : "profiles";
+        setNotice({
+          tone: "success",
+          message: `Repair completed for ${repairedNames} and the ${payload.refresh.profile} gateway restarted successfully.`,
+        });
+      } else if (payload.changed) {
+        setNotice({
+          tone: "warning",
+          message: `Repair updated the profile, but the gateway restart did not complete: ${payload.refresh.error ?? "unknown error"}.`,
+        });
+      } else {
+        setNotice({
+          tone: "success",
+          message: "No repair changes were needed for this profile.",
+        });
+      }
     } catch (err) {
       setNotice({
         tone: "error",
-        message: err instanceof Error ? err.message : "Failed to save voice.",
+        message: err instanceof Error ? err.message : "Failed to repair integrations.",
       });
     } finally {
-      setSavingVoice(false);
+      setRepairingIntegrations(false);
     }
-  }, [voices]);
+  }, []);
 
   if (loading) {
     return (
@@ -614,24 +787,58 @@ export function CloudSettingsPanel() {
 
   return (
     <div className="space-y-8">
+      {notice && <NoticeBanner notice={notice} />}
       <ModelSelector
         models={data.models}
-        selectedModel={data.selectedDenchModel}
-        selectedVoiceId={data.selectedVoiceId}
-        elevenLabsEnabled={data.elevenLabsEnabled}
-        isDenchPrimary={data.isDenchPrimary}
+        selectedModel={draftModel}
+        selectedVoiceId={draftVoiceId}
+        elevenLabsEnabled={draftIntegrations.elevenlabs}
+        isDenchPrimary={draftIsDenchPrimary}
         recommendedModelId={data.recommendedModelId}
-        onSelect={handleSelectModel}
-        onSelectVoice={handleSelectVoice}
-        selecting={selecting}
-        savingVoice={savingVoice}
+        onSelect={handleDraftModelChange}
+        onSelectVoice={handleDraftVoiceChange}
+        selecting={savingActive}
+        savingVoice={savingActive}
         voiceLoading={voiceLoading}
         voices={voices}
-        notice={notice}
       />
       <div>
         <h2 className="text-sm font-medium mb-3" style={{ color: "var(--color-text)" }}>Integrations</h2>
-        <DenchIntegrationsSection />
+        <DenchIntegrationsSection
+          data={draftIntegrationsState}
+          loading={integrationsLoading}
+          error={integrationsError}
+          savingId={null}
+          repairing={repairingIntegrations}
+          onToggle={handleDraftIntegrationToggle}
+          onRetry={() => void fetchIntegrations()}
+          onRepair={() => void handleRepairIntegrations()}
+        />
+      </div>
+      <div
+        className="rounded-xl border px-4 py-4 space-y-3"
+        style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+      >
+        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+          Changes to model, voice, and integrations are staged here and only applied when you click Save.
+        </p>
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={resetDraft}
+            disabled={!hasUnsavedChanges || savingActive}
+          >
+            Reset
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void handleSaveActiveSettings()}
+            disabled={!hasUnsavedChanges || savingActive || integrationsLoading || Boolean(integrationsError)}
+          >
+            {savingActive ? "Saving..." : "Save"}
+          </Button>
+        </div>
       </div>
     </div>
   );

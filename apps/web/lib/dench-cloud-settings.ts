@@ -15,7 +15,17 @@ import {
   rebuildComposioToolIndexIfReady,
   type RebuildComposioToolIndexResult,
 } from "./composio-tool-index";
-import { refreshIntegrationsRuntime, type IntegrationRuntimeRefresh } from "./integrations";
+import {
+  applyDenchIntegrationToggleDraft,
+  getIntegrationsState,
+  readIntegrationsMetadata,
+  refreshIntegrationsRuntime,
+  type DenchIntegrationId,
+  type DenchIntegrationToggleDraft,
+  type IntegrationRuntimeRefresh,
+  type IntegrationsState,
+  writeIntegrationsMetadata,
+} from "./integrations";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -166,7 +176,14 @@ export type CloudSettingsUpdateResult = {
   changed: boolean;
   refresh: IntegrationRuntimeRefresh;
   toolIndexRebuild?: RebuildComposioToolIndexResult;
+  integrationsState?: IntegrationsState;
   error?: string;
+};
+
+export type SaveActiveCloudSettingsInput = {
+  stableId: string | null;
+  voiceId: string | null;
+  integrations: DenchIntegrationToggleDraft;
 };
 
 async function rebuildComposioToolIndexBestEffort(): Promise<RebuildComposioToolIndexResult> {
@@ -428,5 +445,140 @@ export async function saveVoiceId(voiceId: string | null): Promise<CloudSettings
     state: await getCloudSettingsState(),
     changed: true,
     refresh,
+  };
+}
+
+export async function saveActiveCloudSettings(
+  input: SaveActiveCloudSettingsInput,
+): Promise<CloudSettingsUpdateResult> {
+  const config = readConfig();
+  const currentPrimaryModel = resolvePrimaryModel(config);
+  const desiredPrimaryModel = input.stableId ? `dench-cloud/${input.stableId}` : currentPrimaryModel;
+  const currentVoiceId = readSelectedVoiceId(config);
+  const nextVoiceId = input.voiceId?.trim() || null;
+  let changed = false;
+  let requiresRefresh = false;
+  let toolIndexRebuild: RebuildComposioToolIndexResult | undefined;
+
+  if (input.stableId && desiredPrimaryModel !== currentPrimaryModel) {
+    const apiKey = resolveDenchApiKey(config);
+    const gatewayUrl = resolveGatewayUrl(config);
+
+    if (!apiKey) {
+      return {
+        state: await getCloudSettingsState(),
+        integrationsState: getIntegrationsState(),
+        changed: false,
+        refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+        error: "No Dench Cloud API key configured.",
+      };
+    }
+
+    const catalog = await fetchDenchCloudCatalog(gatewayUrl);
+    const patch = buildDenchCloudConfigPatch({
+      gatewayUrl,
+      apiKey,
+      models: catalog.models,
+    });
+
+    const models = ensureRecord(config, "models");
+    models.mode = "merge";
+    const providers = ensureRecord(models, "providers");
+    const denchCloud = ensureRecord(providers, "dench-cloud");
+    const patchProvider = asRecord(asRecord(asRecord(patch.models)?.providers)?.["dench-cloud"]);
+    if (patchProvider) {
+      Object.assign(denchCloud, patchProvider);
+    }
+
+    const agents = ensureRecord(config, "agents");
+    const defaults = ensureRecord(agents, "defaults");
+    const modelSetting = ensureRecord(defaults, "model");
+    modelSetting.primary = desiredPrimaryModel;
+
+    const patchAgentModels = asRecord(asRecord(patch.agents)?.defaults);
+    if (patchAgentModels?.models) {
+      const existingModels = asRecord(defaults.models) ?? {};
+      defaults.models = { ...existingModels, ...(asRecord(patchAgentModels.models) ?? {}) };
+    }
+
+    syncEnabledElevenLabsCredentials(config, { gatewayUrl, apiKey });
+
+    const patchMcp = asRecord((patch as UnknownRecord).mcp);
+    if (patchMcp) {
+      const mcp = ensureRecord(config, "mcp");
+      const servers = ensureRecord(mcp, "servers");
+      const patchServers = asRecord(patchMcp.servers);
+      if (patchServers) {
+        Object.assign(servers, patchServers);
+      }
+    }
+
+    changed = true;
+    requiresRefresh = true;
+    toolIndexRebuild = await rebuildComposioToolIndexBestEffort();
+  }
+
+  if (currentVoiceId !== nextVoiceId) {
+    setSelectedVoiceId(config, nextVoiceId);
+    changed = true;
+  }
+
+  const requestedIntegrations = input.integrations ?? {};
+  const metadata = readIntegrationsMetadata();
+  let nextMetadata = metadata;
+
+  for (const id of ["exa", "apollo", "elevenlabs"] as DenchIntegrationId[]) {
+    const requested = requestedIntegrations[id];
+    if (typeof requested !== "boolean") {
+      continue;
+    }
+
+    const result = applyDenchIntegrationToggleDraft({
+      config,
+      metadata: nextMetadata,
+      id,
+      enabled: requested,
+    });
+    if (result.error) {
+      return {
+        state: await getCloudSettingsState(),
+        integrationsState: getIntegrationsState(),
+        changed: false,
+        refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+        error: result.error,
+      };
+    }
+    nextMetadata = result.metadata;
+    if (result.changed) {
+      changed = true;
+      requiresRefresh = true;
+    }
+  }
+
+  if (!changed) {
+    return {
+      state: await getCloudSettingsState(),
+      integrationsState: getIntegrationsState(),
+      changed: false,
+      refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+      ...(toolIndexRebuild ? { toolIndexRebuild } : {}),
+    };
+  }
+
+  writeConfig(config);
+  if (JSON.stringify(nextMetadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(nextMetadata);
+  }
+
+  const refresh = requiresRefresh
+    ? await refreshIntegrationsRuntime()
+    : { attempted: false, restarted: false, error: null, profile: "default" };
+
+  return {
+    state: await getCloudSettingsState(),
+    integrationsState: getIntegrationsState(),
+    changed: true,
+    refresh,
+    ...(toolIndexRebuild ? { toolIndexRebuild } : {}),
   };
 }

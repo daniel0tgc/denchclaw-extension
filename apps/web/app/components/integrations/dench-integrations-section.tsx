@@ -12,7 +12,7 @@ import type {
   IntegrationsState,
 } from "@/lib/integrations";
 
-type ActionNotice = {
+export type IntegrationActionNotice = {
   tone: "success" | "warning";
   message: string;
 };
@@ -28,7 +28,7 @@ type IntegrationRepairResponse = IntegrationsState & {
   refresh: IntegrationRuntimeRefresh;
 };
 
-function RefreshNoticeBanner({ notice }: { notice: ActionNotice }) {
+function RefreshNoticeBanner({ notice }: { notice: IntegrationActionNotice }) {
   const toneClass = notice.tone === "success"
     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
     : "border-amber-500/30 bg-amber-500/10 text-amber-100";
@@ -143,13 +143,26 @@ function IntegrationCard({
   );
 }
 
-export function DenchIntegrationsSection() {
+type DenchIntegrationsSectionProps = {
+  data?: IntegrationsState | null;
+  loading?: boolean;
+  error?: string | null;
+  savingId?: DenchIntegrationId | null;
+  repairing?: boolean;
+  notice?: IntegrationActionNotice | null;
+  onToggle?: (integration: DenchIntegrationState, enabled: boolean) => void;
+  onRetry?: () => void;
+  onRepair?: () => void;
+};
+
+export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = {}) {
+  const controlled = props.data !== undefined || props.loading !== undefined || props.error !== undefined || props.onToggle !== undefined;
   const [data, setData] = useState<IntegrationsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<DenchIntegrationId | null>(null);
   const [repairing, setRepairing] = useState(false);
-  const [notice, setNotice] = useState<ActionNotice | null>(null);
+  const [notice, setNotice] = useState<IntegrationActionNotice | null>(null);
 
   const fetchIntegrations = useCallback(async () => {
     setLoading(true);
@@ -169,10 +182,19 @@ export function DenchIntegrationsSection() {
   }, []);
 
   useEffect(() => {
-    void fetchIntegrations();
-  }, [fetchIntegrations]);
+    if (!controlled) {
+      void fetchIntegrations();
+    }
+  }, [controlled, fetchIntegrations]);
 
-  const integrations = useMemo(() => data?.integrations ?? [], [data]);
+  const resolvedData = controlled ? props.data ?? null : data;
+  const resolvedLoading = controlled ? props.loading ?? false : loading;
+  const resolvedError = controlled ? props.error ?? null : error;
+  const resolvedSavingId = controlled ? props.savingId ?? null : savingId;
+  const resolvedRepairing = controlled ? props.repairing ?? false : repairing;
+  const resolvedNotice = controlled ? props.notice ?? null : notice;
+
+  const integrations = useMemo(() => resolvedData?.integrations ?? [], [resolvedData]);
   const needsRepair = useMemo(
     () => integrations.some(
       (integration) =>
@@ -183,10 +205,16 @@ export function DenchIntegrationsSection() {
   );
 
   const applyState = useCallback((nextState: IntegrationsState) => {
-    setData(nextState);
-  }, []);
+    if (!controlled) {
+      setData(nextState);
+    }
+  }, [controlled]);
 
   const handleToggle = useCallback(async (integration: DenchIntegrationState, enabled: boolean) => {
+    if (props.onToggle) {
+      props.onToggle(integration, enabled);
+      return;
+    }
     setSavingId(integration.id);
     setNotice(null);
     try {
@@ -226,9 +254,13 @@ export function DenchIntegrationsSection() {
     } finally {
       setSavingId(null);
     }
-  }, [applyState]);
+  }, [applyState, props]);
 
   const handleRepair = useCallback(async () => {
+    if (props.onRepair) {
+      props.onRepair();
+      return;
+    }
     setRepairing(true);
     setNotice(null);
     try {
@@ -267,9 +299,9 @@ export function DenchIntegrationsSection() {
     } finally {
       setRepairing(false);
     }
-  }, [applyState]);
+  }, [applyState, props]);
 
-  if (loading) {
+  if (resolvedLoading) {
     return (
       <div className="flex items-center justify-center py-8">
         <div
@@ -280,25 +312,36 @@ export function DenchIntegrationsSection() {
     );
   }
 
-  if (error) {
+  if (resolvedError) {
     return (
       <div
         className="rounded-xl border px-4 py-4 text-center"
         style={{ borderColor: "var(--color-border)" }}
       >
-        <p className="text-sm mb-2" style={{ color: "var(--color-text-muted)" }}>{error}</p>
-        <Button type="button" variant="outline" size="sm" onClick={() => void fetchIntegrations()}>
+        <p className="text-sm mb-2" style={{ color: "var(--color-text-muted)" }}>{resolvedError}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            if (props.onRetry) {
+              props.onRetry();
+              return;
+            }
+            void fetchIntegrations();
+          }}
+        >
           Retry
         </Button>
       </div>
     );
   }
 
-  if (!data) return null;
+  if (!resolvedData) return null;
 
   return (
     <div className="space-y-4">
-      {notice && <RefreshNoticeBanner notice={notice} />}
+      {resolvedNotice && <RefreshNoticeBanner notice={resolvedNotice} />}
 
       {needsRepair && (
         <Button
@@ -306,9 +349,9 @@ export function DenchIntegrationsSection() {
           variant="outline"
           size="sm"
           onClick={() => void handleRepair()}
-          disabled={repairing}
+          disabled={resolvedRepairing}
         >
-          {repairing ? "Repairing..." : "Repair older profiles"}
+          {resolvedRepairing ? "Repairing..." : "Repair older profiles"}
         </Button>
       )}
 
@@ -317,7 +360,7 @@ export function DenchIntegrationsSection() {
           <IntegrationCard
             key={integration.id}
             integration={integration}
-            isSaving={savingId === integration.id}
+            isSaving={resolvedSavingId === integration.id}
             onToggle={handleToggle}
           />
         ))}

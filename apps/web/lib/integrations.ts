@@ -1217,3 +1217,17 @@ export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationTo
     error: null,
   };
 }
+
+/**
+ * Resolve the Dench Cloud API key and gateway URL for server-side enrichment calls.
+ */
+export function resolveDenchGatewayCredentials(): {
+  apiKey: string | null;
+  gatewayUrl: string | null;
+} {
+  const config = readOpenClawConfigForIntegrations();
+  return {
+    apiKey: resolveDenchApiKey(config),
+    gatewayUrl: resolveGatewayBaseUrl(config),
+  };
+}

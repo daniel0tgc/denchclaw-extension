@@ -106,6 +106,8 @@ export type DataTableProps<TData, TValue> = {
 	};
 	// server-side search callback (replaces client-side fuzzy filter)
 	onServerSearch?: (query: string) => void;
+	/** When true, column header click is disabled (no sort-on-click). */
+	disableHeaderClickSort?: boolean;
 };
 
 /* ─── Fuzzy filter ─── */
@@ -212,6 +214,7 @@ export function DataTable<TData, TValue>({
 	getRowId,
 	serverPagination,
 	onServerSearch,
+	disableHeaderClickSort = false,
 }: DataTableProps<TData, TValue>) {
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [globalFilter, setGlobalFilter] = useState("");
@@ -335,16 +338,26 @@ export function DataTable<TData, TValue>({
 			}
 		: null;
 
-	// Build actions column
-	const actionsColumn: ColumnDef<TData> | null = useMemo(() => (
-		rowActions
-			? {
+	// Build actions column — use refs so the column definition (and
+	// critically its `header` function reference) stays stable across
+	// re-renders.  When the function reference changes, TanStack's
+	// flexRender treats it as a new component and remounts the header,
+	// destroying popover state.
+	const rowActionsRef = useRef(rowActions);
+	rowActionsRef.current = rowActions;
+	const rowActionsHeaderRef = useRef(rowActionsHeader);
+	rowActionsHeaderRef.current = rowActionsHeader;
+
+	const hasRowActions = !!rowActions;
+	const actionsColumn: ColumnDef<TData> | null = useMemo(() => {
+		if (!hasRowActions) return null;
+		return {
 					id: "actions",
-					header: () => rowActionsHeader ?? null,
-					cell: ({ row }) => (
+					header: () => rowActionsHeaderRef.current ?? null,
+					cell: ({ row }: { row: { original: TData } }) => (
 						<RowActionsMenu
 							row={row.original}
-							actions={rowActions(row.original)}
+							actions={rowActionsRef.current?.(row.original) ?? []}
 						/>
 					),
 					size: 48,
@@ -352,9 +365,9 @@ export function DataTable<TData, TValue>({
 					enableSorting: false,
 					enableHiding: false,
 					enableResizing: false,
-				}
-			: null
-	), [rowActions, rowActionsHeader]);
+				};
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [hasRowActions]);
 
 	const allColumns = useMemo(() => {
 		const cols: ColumnDef<TData, TValue>[] = [];
@@ -688,7 +701,7 @@ export function DataTable<TData, TValue>({
 															<>
 																<span
 																	className={innerClassName}
-																	onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+																	onClick={canSort && !disableHeaderClickSort ? header.column.getToggleSortingHandler() : undefined}
 																	style={{ color: "var(--color-text-muted)", cursor: "grab" }}
 																	{...dragListeners}
 																>
@@ -716,7 +729,7 @@ export function DataTable<TData, TValue>({
 												>
 													<span
 														className={innerClassName}
-														onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+														onClick={canSort && !disableHeaderClickSort ? header.column.getToggleSortingHandler() : undefined}
 														style={{ color: "var(--color-text-muted)" }}
 													>
 														{content}

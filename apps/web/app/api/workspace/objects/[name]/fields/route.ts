@@ -92,9 +92,12 @@ export async function POST(
 		: ", NULL";
 
 	const actionConfig: unknown = body.action_config;
+	const rawDefaultValue: unknown = body.default_value;
 	const defaultValueSql = fieldType === "action" && actionConfig
 		? `'${sqlEscape(JSON.stringify(actionConfig))}'`
-		: "NULL";
+		: typeof rawDefaultValue === "string"
+			? `'${sqlEscape(rawDefaultValue)}'`
+			: "NULL";
 
 	const ok = duckdbExecOnFile(
 		dbFile,

@@ -86,6 +86,7 @@ export type DataTableProps<TData, TValue> = {
 	onRowClick?: (row: TData, index: number) => void;
 	getFirstDataColumnFaviconUrl?: (row: Row<TData>, table: Table<TData>) => string | null | undefined;
 	rowActions?: (row: TData) => RowAction<TData>[];
+	rowActionsHeader?: React.ReactNode;
 	// toolbar
 	toolbarExtra?: React.ReactNode;
 	title?: string;
@@ -202,6 +203,7 @@ export function DataTable<TData, TValue>({
 	onRowClick,
 	getFirstDataColumnFaviconUrl,
 	rowActions,
+	rowActionsHeader,
 	toolbarExtra,
 	title,
 	titleIcon,
@@ -334,22 +336,25 @@ export function DataTable<TData, TValue>({
 		: null;
 
 	// Build actions column
-	const actionsColumn: ColumnDef<TData> | null = rowActions
-		? {
-				id: "actions",
-				header: () => null,
-				cell: ({ row }) => (
-					<RowActionsMenu
-						row={row.original}
-						actions={rowActions(row.original)}
-					/>
-				),
-				size: 48,
-				minSize: 48,
-				enableSorting: false,
-				enableHiding: false,
-			}
-		: null;
+	const actionsColumn: ColumnDef<TData> | null = useMemo(() => (
+		rowActions
+			? {
+					id: "actions",
+					header: () => rowActionsHeader ?? null,
+					cell: ({ row }) => (
+						<RowActionsMenu
+							row={row.original}
+							actions={rowActions(row.original)}
+						/>
+					),
+					size: 48,
+					minSize: 48,
+					enableSorting: false,
+					enableHiding: false,
+					enableResizing: false,
+				}
+			: null
+	), [rowActions, rowActionsHeader]);
 
 	const allColumns = useMemo(() => {
 		const cols: ColumnDef<TData, TValue>[] = [];
@@ -622,6 +627,7 @@ export function DataTable<TData, TValue>({
 												const isSelectCol = header.id === "select";
 												const isActionsCol = header.id === "actions";
 												const isAddCol = header.id === "__add_column";
+												const isRightSticky = isActionsCol || isAddCol;
 												const canSort = header.column.getCanSort();
 												const isSorted = header.column.getIsSorted();
 												const isLastCol = colIdx === headerGroup.headers.length - 1;
@@ -630,12 +636,13 @@ export function DataTable<TData, TValue>({
 													background: "var(--color-surface)",
 													position: "sticky",
 													top: 0,
-													zIndex: isSticky || isSelectCol ? 31 : 30,
+													zIndex: isRightSticky ? 32 : isSticky || isSelectCol ? 31 : 30,
 													...(isSticky ? {
 														left: enableRowSelection ? 40 : 0,
 														boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.15), 2px 0 4px -1px rgba(0,0,0,0.08)" : "none",
 													} : {}),
 													...(isSelectCol ? { left: 0, position: "sticky", zIndex: 31, width: 40 } : {}),
+											...(isRightSticky ? { right: 0, position: "sticky", zIndex: 32 } : {}),
 													width: `calc(var(--header-${header.id}-size) * 1px)`,
 												};
 
@@ -874,6 +881,9 @@ function DataTableBodyInner({
 							const isFirstData = colIdx === (enableRowSelection ? 1 : 0);
 							const isSticky = stickyFirstColumn && isFirstData;
 							const isSelectCol = cell.column.id === "select";
+							const isActionsCol = cell.column.id === "actions";
+							const isAddCol = cell.column.id === "__add_column";
+							const isRightSticky = isActionsCol || isAddCol;
 							const isLastCol = colIdx === visibleCells.length - 1;
 							const firstDataColumnFaviconUrl = isFirstData && !isSelectCol
 								? getFirstDataColumnFaviconUrl?.(row, table)
@@ -903,6 +913,14 @@ function DataTableBodyInner({
 											zIndex: 2,
 											background: stickyBg,
 											width: 40,
+										}
+									: {}),
+								...(isRightSticky
+									? {
+											position: "sticky" as const,
+											right: 0,
+											zIndex: 2,
+											background: rowBg,
 										}
 									: {}),
 							};

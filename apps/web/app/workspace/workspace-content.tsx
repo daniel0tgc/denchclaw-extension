@@ -4243,7 +4243,7 @@ function ObjectView({
         className="px-5 py-1.5 flex items-center gap-4 flex-shrink-0"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
-        <ViewTypeSwitcher value={currentViewType} onChange={handleViewTypeChange} />
+        <ViewTypeSwitcher value={currentViewType} onChange={handleViewTypeChange} collapsed={filters.rules.length > 0} />
         <div
           className="w-px h-4 flex-shrink-0"
           style={{ background: "var(--color-border)" }}

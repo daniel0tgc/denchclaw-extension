@@ -976,18 +976,6 @@ export function ObjectTable({
 			});
 		}
 
-		cols.push({
-			id: "__add_column",
-			header: () => (
-				<AddColumnPopover objectName={objectName} onCreated={() => onRefresh?.()} />
-			),
-			cell: () => null,
-			size: 44,
-			minSize: 44,
-			enableSorting: false,
-			enableHiding: false,
-			enableResizing: false,
-		});
 
 		return cols;
 	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onRefresh, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn]);
@@ -1101,6 +1089,10 @@ export function ObjectTable({
 
 	const selectedCount = Object.keys(rowSelection).filter((k) => rowSelection[k]).length;
 
+	const rowActionsHeader = useMemo(() => (
+		<AddColumnPopover objectName={objectName} onCreated={() => onRefresh?.()} />
+	), [objectName, onRefresh]);
+
 	return (
 	<>
 		<DataTable
@@ -1118,6 +1110,7 @@ export function ObjectTable({
 			onAdd={handleAdd}
 			addButtonLabel="+ Add"
 			rowActions={getRowActions}
+			rowActionsHeader={rowActionsHeader}
 			stickyFirstColumn
 			activeRowId={activeEntryId}
 			getRowId={(row) => String(row.entry_id ?? "")}

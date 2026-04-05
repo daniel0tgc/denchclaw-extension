@@ -65,6 +65,8 @@ const DENCH_API_KEY_URL = "https://dench.com/api";
 
 /** Sentinel for “default voice” in radio group (empty string is avoided for Radix value). */
 const DEFAULT_VOICE_RADIO_VALUE = "__dench_default_voice__";
+const SUBTLE_PICKER_TRIGGER_CLASS =
+  "w-full max-w-full rounded-xl border border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[var(--color-surface)] px-3 py-2.5 hover:opacity-100";
 
 function buildIntegrationDraft(state: IntegrationsState | null): IntegrationDraftState {
   const enabled = new Map<DenchIntegrationId, boolean>();
@@ -302,15 +304,28 @@ function ModelSelector({
         className="flex items-center gap-3 rounded-xl border px-4 py-3"
         style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
       >
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-lg shrink-0"
-          style={{ background: "var(--color-surface-hover)", color: "var(--color-text)" }}
-        >
-          <CloudIcon />
-        </div>
+        <img
+          src="/dench-workspace-icon.png"
+          alt=""
+          width={36}
+          height={36}
+          className="h-9 w-9 shrink-0 rounded-lg object-contain"
+          draggable={false}
+        />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-            Dench Cloud
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              Dench Cloud
+            </span>
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{
+                background: isDenchPrimary ? "rgba(16,185,129,0.15)" : "var(--color-surface-hover)",
+                color: isDenchPrimary ? "rgb(16,185,129)" : "var(--color-text-muted)",
+              }}
+            >
+              {isDenchPrimary ? "Active" : "Available"}
+            </span>
           </div>
           <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>
             {isDenchPrimary
@@ -318,15 +333,15 @@ function ModelSelector({
               : "Connected. Select a model to use Dench Cloud as your primary provider."}
           </div>
         </div>
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium"
-          style={{
-            background: isDenchPrimary ? "rgba(16,185,129,0.15)" : "var(--color-surface-hover)",
-            color: isDenchPrimary ? "rgb(16,185,129)" : "var(--color-text-muted)",
-          }}
+        <a
+          href="https://dench.com/usage"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-xs font-medium shrink-0 transition-opacity hover:opacity-80"
+          style={{ color: "var(--color-accent)" }}
         >
-          {isDenchPrimary ? "Active" : "Available"}
-        </span>
+          Usage <ExternalLinkIcon />
+        </a>
       </div>
 
       <div>
@@ -336,16 +351,19 @@ function ModelSelector({
         >
           Primary Model
         </label>
-        <ChatModelSelector
-          models={pickerModels}
-          selectedModel={isDenchPrimary ? selectedModel : null}
-          onSelect={onSelect}
-          disabled={selecting}
-          loading={selecting}
-          fallbackToFirst={isDenchPrimary}
-          placeholder="Choose a model..."
-          ariaLabel="Select primary model"
-        />
+        <div className="max-w-[420px]">
+          <ChatModelSelector
+            models={pickerModels}
+            selectedModel={isDenchPrimary ? selectedModel : null}
+            onSelect={onSelect}
+            disabled={selecting}
+            loading={selecting}
+            fallbackToFirst={isDenchPrimary}
+            placeholder="Choose a model..."
+            ariaLabel="Select primary model"
+            triggerClassName={SUBTLE_PICKER_TRIGGER_CLASS}
+          />
+        </div>
       </div>
 
       <div>
@@ -355,64 +373,69 @@ function ModelSelector({
         >
           ElevenLabs Voice
         </label>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            className="inline-flex max-w-full items-center gap-1.5 rounded-lg p-0 text-sm font-medium transition-opacity hover:opacity-100 disabled:cursor-default disabled:opacity-60 cursor-pointer outline-none ring-0 border-none"
-            style={{ color: "var(--color-text-secondary)", opacity: 0.9 }}
-            aria-label="Select ElevenLabs voice"
-            title={selectedVoice?.name ?? undefined}
-            disabled={voiceLoading || savingVoice || voices.length === 0}
-          >
-            <span
-              className="max-w-[240px] truncate"
-              style={
-                voiceLoading || (!selectedVoice && voices.length === 0)
-                  ? { color: "var(--color-text-muted)" }
-                  : undefined
-              }
-            >
-              {voiceLoading
-                ? "Loading voices..."
-                : voices.length === 0
-                  ? "No voices available"
-                  : selectedVoice
-                    ? `${selectedVoice.name}${selectedVoice.category ? ` · ${selectedVoice.category}` : ""}`
-                    : "Default voice (first available)"}
-            </span>
-            {voiceLoading || savingVoice ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            )}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            side="bottom"
-            sideOffset={8}
-            className="min-w-[15rem] max-w-[20rem] p-1.5"
-          >
-            <DropdownMenuRadioGroup
-              value={selectedVoiceId ?? DEFAULT_VOICE_RADIO_VALUE}
-              onValueChange={(value) => {
-                onSelectVoice(
-                  value === DEFAULT_VOICE_RADIO_VALUE ? null : value,
-                );
+        <div className="max-w-[420px]">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={`inline-flex items-center gap-1.5 text-sm font-medium transition-opacity disabled:cursor-default disabled:opacity-60 cursor-pointer outline-none ring-0 ${SUBTLE_PICKER_TRIGGER_CLASS}`}
+              style={{
+                color: "var(--color-text-secondary)",
+                opacity: 0.9,
               }}
+              aria-label="Select ElevenLabs voice"
+              title={selectedVoice?.name ?? undefined}
+              disabled={voiceLoading || savingVoice || voices.length === 0}
             >
-              <DropdownMenuRadioItem value={DEFAULT_VOICE_RADIO_VALUE}>
-                Default voice (first available)
-              </DropdownMenuRadioItem>
-              {voices.map((voice) => (
-                <DropdownMenuRadioItem key={voice.voiceId} value={voice.voiceId}>
-                  <span className="truncate">
-                    {voice.name}
-                    {voice.category ? ` · ${voice.category}` : ""}
-                  </span>
+              <span
+                className="max-w-[240px] truncate"
+                style={
+                  voiceLoading || (!selectedVoice && voices.length === 0)
+                    ? { color: "var(--color-text-muted)" }
+                    : undefined
+                }
+              >
+                {voiceLoading
+                  ? "Loading voices..."
+                  : voices.length === 0
+                    ? "No voices available"
+                    : selectedVoice
+                      ? `${selectedVoice.name}${selectedVoice.category ? ` · ${selectedVoice.category}` : ""}`
+                      : "Default voice (first available)"}
+              </span>
+              {voiceLoading || savingVoice ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              side="bottom"
+              sideOffset={8}
+              className="min-w-[15rem] max-w-[20rem] p-1.5"
+            >
+              <DropdownMenuRadioGroup
+                value={selectedVoiceId ?? DEFAULT_VOICE_RADIO_VALUE}
+                onValueChange={(value) => {
+                  onSelectVoice(
+                    value === DEFAULT_VOICE_RADIO_VALUE ? null : value,
+                  );
+                }}
+              >
+                <DropdownMenuRadioItem value={DEFAULT_VOICE_RADIO_VALUE}>
+                  Default voice (first available)
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                {voices.map((voice) => (
+                  <DropdownMenuRadioItem key={voice.voiceId} value={voice.voiceId}>
+                    <span className="truncate">
+                      {voice.name}
+                      {voice.category ? ` · ${voice.category}` : ""}
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <div className="mt-2 space-y-1">
           <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
             {elevenLabsEnabled
@@ -787,7 +810,6 @@ export function CloudSettingsPanel() {
 
   return (
     <div className="space-y-8">
-      {notice && <NoticeBanner notice={notice} />}
       <ModelSelector
         models={data.models}
         selectedModel={draftModel}
@@ -815,30 +837,31 @@ export function CloudSettingsPanel() {
           onRepair={() => void handleRepairIntegrations()}
         />
       </div>
-      <div
-        className="rounded-xl border px-4 py-4 space-y-3"
-        style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-      >
-        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
-          Changes to model, voice, and integrations are staged here and only applied when you click Save.
-        </p>
-        <div className="flex items-center justify-end gap-2">
-          <Button
+      <div className="flex items-center justify-end gap-2 pt-2">
+          <button
             type="button"
-            variant="outline"
+            className="h-9 rounded-lg px-4 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 cursor-pointer"
+            style={{
+              color: "var(--color-text-muted)",
+              background: "transparent",
+            }}
             onClick={resetDraft}
             disabled={!hasUnsavedChanges || savingActive}
           >
             Reset
-          </Button>
-          <Button
+          </button>
+          <button
             type="button"
+            className="h-9 min-w-24 rounded-lg px-5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40 cursor-pointer"
+            style={{
+              background: "var(--color-accent)",
+              color: "var(--color-bg)",
+            }}
             onClick={() => void handleSaveActiveSettings()}
             disabled={!hasUnsavedChanges || savingActive || integrationsLoading || Boolean(integrationsError)}
           >
             {savingActive ? "Saving..." : "Save"}
-          </Button>
-        </div>
+          </button>
       </div>
     </div>
   );

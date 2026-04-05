@@ -2755,6 +2755,7 @@ function WorkspacePageInner() {
                         gatewaySessionKey={isGateway ? tab.sessionKey : undefined}
                         gatewaySessionId={isGateway ? tab.sessionId : undefined}
                         gatewayChannel={isGateway ? tab.channel : undefined}
+                        onOpenCloudSettings={() => handleNavigate("cloud")}
                         visible={isVisible}
                       />
                     </div>
@@ -2954,6 +2955,7 @@ function WorkspacePageInner() {
                   onFilePathClick={handleFilePathClickFromChat}
                   onComposioAction={handleComposioActionFromChat}
                   onActiveSessionChange={setFileChatSessionId}
+                  onOpenCloudSettings={() => handleNavigate("cloud")}
                 />
               </div>
             </aside>
@@ -3018,6 +3020,7 @@ function WorkspacePageInner() {
                   onFilePathClick={(path) => { handleFilePathClickFromChat(path); setMobileFileChatOpen(false); }}
                   onComposioAction={(action) => { handleComposioActionFromChat(action); setMobileFileChatOpen(false); }}
                   onActiveSessionChange={setFileChatSessionId}
+                  onOpenCloudSettings={() => handleNavigate("cloud")}
                 />
               </div>
             </div>

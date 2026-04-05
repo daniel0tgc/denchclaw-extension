@@ -2,6 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
+import { useRouter } from "next/navigation";
 import {
 	forwardRef,
 	useCallback,
@@ -14,14 +15,9 @@ import {
 import { HeroSuggestions } from "./hero-suggestions";
 import { HeroRecommendedAppsBadge } from "./hero-recommended-apps-badge";
 import { ChatMessage } from "./chat-message";
+import { ChatModelSelector, type ChatModelSelectorOption } from "./chat-model-selector";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 import { ChatVoiceInputButton } from "./chat-voice-input-button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 import { UnicodeSpinner } from "./unicode-spinner";
 import type { ChatPanelRuntimeState } from "@/lib/chat-session-registry";
 import {
@@ -31,6 +27,7 @@ import {
 import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
 import { prepareFilesForChatUpload } from "@/lib/chat-image-preparation";
+import { buildFileLink } from "@/lib/workspace-links";
 
 
 // ── Attachment types & helpers ──
@@ -780,6 +777,8 @@ type ChatPanelProps = {
 	onRuntimeStateChange?: (state: ChatPanelRuntimeState) => void;
 	/** Called when the conversation advances and the hosting tab should persist. */
 	onConversationActivity?: () => void;
+	/** Open the Cloud settings surface using the parent workspace navigation flow. */
+	onOpenCloudSettings?: () => void;
 	/** Gateway session key for channel sessions (telegram, discord, etc.). */
 	gatewaySessionKey?: string;
 	/** Gateway session UUID for loading transcripts. */
@@ -795,7 +794,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		{
 			fileContext,
 			compact,
-			sessionTitle,
+			sessionTitle: _sessionTitle,
 			initialSessionId,
 			onFileChanged,
 			onActiveSessionChange,
@@ -804,15 +803,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			onSubagentClick,
 			onFilePathClick,
 			onComposioAction,
-			onDeleteSession,
+			onDeleteSession: _onDeleteSession,
 			onRenameSession: _onRenameSession,
 			sessionKey: subagentSessionKey,
 			subagentTask,
 			subagentLabel,
 			onBack,
-			hideHeaderActions,
+			hideHeaderActions: _hideHeaderActions,
 			onRuntimeStateChange,
 			onConversationActivity,
+			onOpenCloudSettings,
 			gatewaySessionKey,
 			gatewaySessionId,
 			gatewayChannel: _gatewayChannel,
@@ -820,6 +820,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		},
 		ref,
 	) {
+		const router = useRouter();
 		const isSubagentMode = !!subagentSessionKey;
 		const isGatewayMode = !!gatewaySessionKey;
 		const editorRef = useRef<ChatEditorHandle>(null);
@@ -875,6 +876,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 		const [rawView, _setRawView] = useState(false);
 		const [cloudState, setCloudState] = useState<ChatCloudState | null>(null);
+		const chatHeaderModels = useMemo<ChatModelSelectorOption[]>(
+			() => (cloudState?.models ?? []).map((model) => ({
+				...model,
+			})),
+			[cloudState?.models],
+		);
+		const activeHeaderModel = cloudState?.selectedDenchModel ?? null;
 		// ── Hero state (new chat screen) ──
 		const greeting = "What can I help with?";
 
@@ -887,6 +895,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			editorRef.current?.appendText(text);
 			setEditorEmpty(false);
 		}, []);
+
+		const openCloudSettings = useCallback(() => {
+			if (onOpenCloudSettings) {
+				onOpenCloudSettings();
+				return;
+			}
+			router.push(buildFileLink("~cloud"), { scroll: false });
+		}, [onOpenCloudSettings, router]);
 
 		const filePath = fileContext?.path ?? null;
 
@@ -2347,90 +2363,41 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						</div>
 					</>
 				) : (
-					<>
-					<div className="min-w-0 flex-1">
-						{compact && fileContext ? (
-							<h2
-								className="text-xs font-semibold truncate"
-								style={{
-									color: "var(--color-text)",
-								}}
-							>
-								Chat: {fileContext.filename}
-							</h2>
-						) : currentSessionId ? (
-							<h2
-								className="text-sm font-semibold"
-								style={{
-									color: "var(--color-text)",
-								}}
-							>
-								{sessionTitle || "Chat Session"}
-							</h2>
-						) : null}
+					<div className="min-w-0 flex flex-1 items-center">
+						<div
+							role="button"
+							tabIndex={0}
+							onClick={openCloudSettings}
+							onKeyDown={(event) => {
+								if (event.key === "Enter" || event.key === " ") {
+									event.preventDefault();
+									openCloudSettings();
+								}
+							}}
+							className="inline-flex min-w-0 cursor-pointer items-center rounded-lg transition-opacity hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-(--color-border-strong)"
+							title="Open Cloud settings"
+						>
+							<div className="pointer-events-none inline-flex h-6 w-[200px] items-center md:w-[236px]">
+								{chatHeaderModels.length > 0 ? (
+									<ChatModelSelector
+										models={chatHeaderModels}
+										selectedModel={activeHeaderModel}
+										onSelect={() => {}}
+										disabled
+										fallbackToFirst
+										placeholder="Configure"
+										ariaLabel="Current chat model"
+										triggerClassName="w-full"
+									/>
+								) : (
+									<div
+										className="h-6 w-full"
+										aria-hidden="true"
+									/>
+								)}
+							</div>
+						</div>
 					</div>
-					{!hideHeaderActions && (
-					<div className="flex items-center gap-1 shrink-0">
-						{currentSessionId && onDeleteSession && (
-							<DropdownMenu>
-								<DropdownMenuTrigger
-									className="p-1.5 rounded-lg"
-									style={{ color: "var(--color-text-muted)" }}
-									title="More options"
-									aria-label="More options"
-								>
-									<svg
-										width="16"
-										height="16"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<circle cx="12" cy="12" r="1" />
-										<circle cx="5" cy="12" r="1" />
-										<circle cx="19" cy="12" r="1" />
-									</svg>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="end" side="bottom">
-									<DropdownMenuItem
-										variant="destructive"
-										onSelect={() => onDeleteSession(currentSessionId)}
-									>
-										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-										Delete this chat
-									</DropdownMenuItem>
-								</DropdownMenuContent>
-							</DropdownMenu>
-						)}
-						<button
-								type="button"
-								onClick={() => handleNewSession()}
-								className="p-1.5 rounded-lg"
-								style={{
-									color: "var(--color-text-muted)",
-								}}
-								title="New chat"
-							>
-								<svg
-									width="14"
-									height="14"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-								>
-									<path d="M12 5v14" />
-									<path d="M5 12h14" />
-								</svg>
-							</button>
-					</div>
-					)}
-					</>
 				)}
 				</header>
 

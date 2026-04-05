@@ -12,6 +12,7 @@ import {
 	useState,
 } from "react";
 import { HeroSuggestions } from "./hero-suggestions";
+import { HeroRecommendedAppsBadge } from "./hero-recommended-apps-badge";
 import { ChatMessage } from "./chat-message";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 import { ChatVoiceInputButton } from "./chat-voice-input-button";
@@ -2503,7 +2504,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					) : (showHeroState && !mounted) ? (
 						<div className={`flex items-center justify-center h-full ${compact ? "min-h-[40vh]" : "min-h-[60vh]"}`} />
 					) : showHeroState ? (
-						<div className={`flex flex-col items-center justify-center py-8 md:py-12 ${compact ? "min-h-[60vh]" : "min-h-[75vh]"}`}>
+						<div className={`relative flex flex-col items-center justify-center py-8 md:py-12 ${compact ? "min-h-[60vh]" : "min-h-[75vh]"}`}>
 							{/* Hero greeting */}
 							{greeting && (
 								<h1
@@ -2523,6 +2524,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							<HeroSuggestions
 								compact={!!compact}
 								onPromptClick={handlePromptClick}
+							/>
+							<HeroRecommendedAppsBadge
+								className="absolute inset-x-0 bottom-6 md:bottom-10"
 							/>
 						</div>
 					) : messages.length === 0 ? (

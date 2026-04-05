@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import type { UIMessage } from "ai";
 import posthog from "posthog-js";
 import { useThumbSurvey } from "posthog-js/react/surveys";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Components } from "react-markdown";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -403,44 +403,114 @@ function _AttachFileIcon({ category }: { category: string }) {
 }
 
 function AttachedFilesCard({ paths }: { paths: string[] }) {
-	return (
-		<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
-			{paths.map((filePath, i) => {
-				const category = getCategoryFromPath(filePath);
-				const src = category === "image"
-					? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
-					: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
-				const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
+	const [openImage, setOpenImage] = useState<{ src: string; alt: string } | null>(null);
 
-				return (
-					<div
-						key={i}
-						className="relative rounded-xl overflow-hidden shrink-0"
+	useEffect(() => {
+		if (!openImage) {return;}
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				setOpenImage(null);
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [openImage]);
+
+	return (
+		<>
+			<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
+				{paths.map((filePath, i) => {
+					const category = getCategoryFromPath(filePath);
+					const src = category === "image"
+						? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
+						: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
+					const alt = filePath.split("/").pop() ?? "";
+					const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
+
+					return (
+						<div
+							key={i}
+							className="relative rounded-xl overflow-hidden shrink-0"
+						>
+							{category === "image" ? (
+								<button
+									type="button"
+									className="block cursor-zoom-in"
+									aria-label={`Open image ${alt}`}
+									onClick={() => setOpenImage({ src, alt })}
+								>
+									<img
+										src={src}
+										alt={alt}
+										className="block rounded-xl object-cover"
+										style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+										loading="lazy"
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+								</button>
+							) : (
+								<>
+									<img
+										src={src}
+										alt={alt}
+										className="block rounded-xl object-cover"
+										style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+										loading="lazy"
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+									<span
+										className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
+										style={{
+											background: "rgba(255,255,255,0.85)",
+											color: "rgba(0,0,0,0.5)",
+											backdropFilter: "blur(4px)",
+										}}
+									>
+										{ext}
+									</span>
+								</>
+							)}
+						</div>
+					);
+				})}
+			</div>
+			{openImage && (
+				<div
+					role="dialog"
+					aria-modal="true"
+					aria-label={`Image preview ${openImage.alt}`}
+					className="fixed inset-0 z-50 flex items-center justify-center p-4"
+					style={{ background: "rgba(0,0,0,0.8)" }}
+					onClick={() => setOpenImage(null)}
+				>
+					<button
+						type="button"
+						aria-label="Close image preview"
+						className="absolute top-4 right-4 flex h-10 w-10 items-center justify-center rounded-full"
+						style={{
+							background: "rgba(255,255,255,0.14)",
+							color: "white",
+							backdropFilter: "blur(6px)",
+						}}
+						onClick={(event) => {
+							event.stopPropagation();
+							setOpenImage(null);
+						}}
 					>
-						<img
-							src={src}
-							alt={filePath.split("/").pop() ?? ""}
-							className="block rounded-xl object-cover"
-							style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
-							loading="lazy"
-							onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-						/>
-						{category !== "image" && (
-							<span
-								className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
-								style={{
-									background: "rgba(255,255,255,0.85)",
-									color: "rgba(0,0,0,0.5)",
-									backdropFilter: "blur(4px)",
-								}}
-							>
-								{ext}
-							</span>
-						)}
-					</div>
-				);
-			})}
-		</div>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+							<path d="M18 6 6 18" />
+							<path d="m6 6 12 12" />
+						</svg>
+					</button>
+					<img
+						src={openImage.src}
+						alt={openImage.alt}
+						className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain"
+						onClick={(event) => event.stopPropagation()}
+					/>
+				</div>
+			)}
+		</>
 	);
 }
 

@@ -5,6 +5,10 @@ import {
 	reactivateSubscribeRun,
 	type SseEvent,
 } from "@/lib/active-runs";
+import {
+	buildChatImageHydrationErrorMessage,
+	hydrateMessageImageAttachments,
+} from "@/lib/chat-image-attachments";
 
 export const runtime = "nodejs";
 
@@ -14,6 +18,16 @@ export async function POST(req: Request) {
 	if (!sessionKey || !message?.trim()) {
 		return new Response("sessionKey and message are required", { status: 400 });
 	}
+	const imageHydration = hydrateMessageImageAttachments(message);
+	const imageHydrationError = buildChatImageHydrationErrorMessage(
+		imageHydration.skipped,
+	);
+	if (imageHydrationError) {
+		return new Response(imageHydrationError, { status: 400 });
+	}
+	const imageAttachments = imageHydration.attachments.length > 0
+		? imageHydration.attachments
+		: undefined;
 
 	let run = getActiveRun(sessionKey);
 	if (run?.status === "running") {
@@ -21,7 +35,7 @@ export async function POST(req: Request) {
 	}
 
 	if (run) {
-		reactivateSubscribeRun(sessionKey, message);
+		reactivateSubscribeRun(sessionKey, message, imageAttachments);
 	} else {
 		const sessionLabel = sessionKey.split(":").slice(2).join(":");
 		run = startSubscribeRun({
@@ -30,7 +44,7 @@ export async function POST(req: Request) {
 			task: message.slice(0, 200),
 			label: sessionLabel,
 		});
-		reactivateSubscribeRun(sessionKey, message);
+		reactivateSubscribeRun(sessionKey, message, imageAttachments);
 	}
 
 	const encoder = new TextEncoder();

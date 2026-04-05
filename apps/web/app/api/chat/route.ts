@@ -31,60 +31,12 @@ import {
 	isLikelyOpenAiModelId,
 	needsOpenAiSwitchAcknowledgement,
 } from "@/lib/chat-models";
+import {
+	buildChatImageHydrationErrorMessage,
+	hydrateMessageImageAttachments,
+} from "@/lib/chat-image-attachments";
 
 export const runtime = "nodejs";
-
-const IMAGE_EXTENSIONS = new Set([
-	".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".tiff",
-]);
-
-const EXT_TO_MIME: Record<string, string> = {
-	".jpg": "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png": "image/png",
-	".gif": "image/gif",
-	".webp": "image/webp",
-	".bmp": "image/bmp",
-	".heic": "image/heic",
-	".tiff": "image/tiff",
-};
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
-
-function extractImageAttachmentsFromMessage(
-	text: string,
-): ImageAttachment[] {
-	const match = text.match(/\[Attached files: (.+?)\]/);
-	if (!match) return [];
-	const workspaceRoot = resolveWorkspaceRoot();
-	const paths = match[1]
-		.split(", ")
-		.map((p) => p.trim())
-		.filter(Boolean);
-	const attachments: ImageAttachment[] = [];
-	for (const filePath of paths) {
-		const ext = extname(filePath).toLowerCase();
-		if (!IMAGE_EXTENSIONS.has(ext)) continue;
-		const absPath = filePath.startsWith("/")
-			? filePath
-			: workspaceRoot
-				? join(workspaceRoot, filePath)
-				: filePath;
-		if (!existsSync(absPath)) continue;
-		try {
-			const data = readFileSync(absPath);
-			if (data.length > MAX_IMAGE_BYTES) continue;
-			attachments.push({
-				content: data.toString("base64"),
-				mimeType: EXT_TO_MIME[ext] ?? "application/octet-stream",
-				fileName: basename(filePath),
-			});
-		} catch {
-			// skip unreadable files
-		}
-	}
-	return attachments;
-}
 
 function deriveSubagentInfo(sessionKey: string): { parentSessionId: string; task: string } | null {
 	const registryPath = join(resolveOpenClawStateDir(), "subagents", "runs.json");
@@ -223,6 +175,16 @@ export async function POST(req: Request) {
 			`[Context: workspace file '${wsPrefix}/$1']`,
 		);
 	}
+	const imageHydration = hydrateMessageImageAttachments(agentMessage);
+	const imageHydrationError = buildChatImageHydrationErrorMessage(
+		imageHydration.skipped,
+	);
+	if (imageHydrationError) {
+		return new Response(imageHydrationError, { status: 400 });
+	}
+	const imageAttachments = imageHydration.attachments.length > 0
+		? imageHydration.attachments
+		: undefined;
 
 	const runKey = isSubagentSession && sessionKey ? sessionKey : (sessionId as string);
 
@@ -243,7 +205,7 @@ export async function POST(req: Request) {
 			id: lastUserMessage.id,
 			text: userText,
 		});
-		reactivateSubscribeRun(sessionKey, agentMessage);
+		reactivateSubscribeRun(sessionKey, agentMessage, imageAttachments);
 	} else if (sessionId && lastUserMessage) {
 		await persistUserMessage(sessionId, {
 			id: lastUserMessage.id,
@@ -258,8 +220,6 @@ export async function POST(req: Request) {
 			?? resolveActiveAgentId();
 		const gatewayThreadId = sessionMeta?.gatewaySessionId ?? sessionId;
 
-		const imageAttachments = extractImageAttachmentsFromMessage(agentMessage);
-
 		try {
 			startRun({
 				sessionId,
@@ -267,9 +227,7 @@ export async function POST(req: Request) {
 				agentSessionId: gatewayThreadId,
 				overrideAgentId: effectiveAgentId,
 				modelOverride: normalizedModelOverride,
-				imageAttachments: imageAttachments.length > 0
-					? imageAttachments
-					: undefined,
+				imageAttachments,
 			});
 		} catch (err) {
 			return new Response(

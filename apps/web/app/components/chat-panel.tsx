@@ -29,6 +29,7 @@ import {
 } from "./chat-stream-status";
 import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
+import { prepareFilesForChatUpload } from "@/lib/chat-image-preparation";
 
 
 // ── Attachment types & helpers ──
@@ -851,6 +852,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Stream-level error (empty response detection) ──
 		const [streamError, setStreamError] = useState<string | null>(null);
+		const [attachmentError, setAttachmentError] = useState<string | null>(null);
 
 		// Track persisted messages to avoid double-saves
 		const savedMessageIdsRef = useRef<Set<string>>(new Set());
@@ -1749,9 +1751,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							body: JSON.stringify({ sessionKey: gatewaySessionKey, message: messageText }),
 						});
 						if (res.ok && res.body) {
+							setStreamError(null);
 							await attemptReconnect(gatewaySessionKey, [], { sessionKey: gatewaySessionKey });
+						} else {
+							const gatewayError = await res.text().catch(() => "");
+							setStreamError(gatewayError || "Failed to send message.");
 						}
-					} catch { /* ignore */ }
+					} catch {
+						setStreamError("Failed to send message.");
+					}
 				} else {
 					void sendMessage({ text: messageText });
 				}
@@ -2026,8 +2034,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them.
 		 *  Shows files instantly with a local preview, then uploads in the background. */
 		const uploadAndAttachNativeFiles = useCallback(
-			(files: FileList) => {
-				const fileArray = Array.from(files);
+			async (files: FileList) => {
+				setAttachmentError(null);
+				const {
+					files: preparedFiles,
+					errors: preparationErrors,
+				} = await prepareFilesForChatUpload(files);
+				if (preparationErrors.length > 0) {
+					const summary = preparationErrors.length === 1
+						? preparationErrors[0]
+						: `${preparationErrors.length} images couldn't be prepared for vision. ${preparationErrors[0]}`;
+					setAttachmentError(summary);
+				}
+				if (preparedFiles.length === 0) {
+					return;
+				}
+				const fileArray = preparedFiles;
 
 				// Immediately add placeholder entries with local blob URLs
 				const placeholders: AttachedFile[] = fileArray.map((file) => ({
@@ -2170,7 +2192,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 									className="hidden"
 									onChange={(e) => {
 										if (e.target.files && e.target.files.length > 0) {
-											uploadAndAttachNativeFiles(e.target.files);
+											void uploadAndAttachNativeFiles(e.target.files);
 										}
 										e.target.value = "";
 									}}
@@ -2285,7 +2307,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (files && files.length > 0) {
 				e.preventDefault();
 				e.stopPropagation();
-				uploadAndAttachNativeFiles(files);
+				void uploadAndAttachNativeFiles(files);
 			}
 		};
 
@@ -2566,8 +2588,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					)}
 				</div>
 
-				{/* Transport / stream-level error display */}
-				{(error || streamError) && (
+				{/* Transport / attachment error display */}
+				{(error || streamError || attachmentError) && (
 					<div
 						className="px-3 py-2 flex items-center gap-2 sticky bottom-[72px] z-10"
 						style={{
@@ -2601,7 +2623,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								y2="16"
 							/>
 						</svg>
-						<p className="text-xs">{error?.message ?? streamError}</p>
+						<p className="text-xs">{error?.message ?? streamError ?? attachmentError}</p>
 					</div>
 				)}
 				</div>

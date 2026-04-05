@@ -1,14 +1,25 @@
+import type { PathOrFileDescriptor } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock active-runs module
 vi.mock("@/lib/active-runs", () => ({
   startRun: vi.fn(),
+  startSubscribeRun: vi.fn(),
   hasActiveRun: vi.fn(() => false),
   subscribeToRun: vi.fn(),
   persistUserMessage: vi.fn(),
+  persistSubscribeUserMessage: vi.fn(),
+  reactivateSubscribeRun: vi.fn(() => true),
   abortRun: vi.fn(() => false),
   getActiveRun: vi.fn(),
   getRunningSessionIds: vi.fn(() => []),
+}));
+
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(() => false),
+  readFileSync: vi.fn((_path: PathOrFileDescriptor, options?: unknown) =>
+    typeof options === "string" ? "{}" : Buffer.from("")
+  ),
 }));
 
 // Mock workspace module
@@ -50,9 +61,12 @@ describe("Chat API routes", () => {
     // Re-wire mocks
     vi.mock("@/lib/active-runs", () => ({
       startRun: vi.fn(),
+      startSubscribeRun: vi.fn(),
       hasActiveRun: vi.fn(() => false),
       subscribeToRun: vi.fn(),
       persistUserMessage: vi.fn(),
+      persistSubscribeUserMessage: vi.fn(),
+      reactivateSubscribeRun: vi.fn(() => true),
       abortRun: vi.fn(() => false),
       getActiveRun: vi.fn(),
       getRunningSessionIds: vi.fn(() => []),
@@ -128,6 +142,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -155,6 +170,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      vi.mocked(startRun).mockClear();
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -296,7 +312,7 @@ describe("Chat API routes", () => {
     it("maps partial tool output into AI SDK preliminary output chunks", async () => {
       const { hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
-      vi.mocked(subscribeToRun).mockImplementation(((_sessionId, callback) => {
+      vi.mocked(subscribeToRun).mockImplementation(((_sessionId: string, callback: (event: unknown) => void) => {
         callback({
           type: "tool-output-partial",
           toolCallId: "tool-1",
@@ -414,6 +430,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -436,6 +453,85 @@ describe("Chat API routes", () => {
           message: expect.stringContaining("workspace/doc.md"),
         }),
       );
+    });
+
+    it("hydrates attached images and forwards them to the run starter", async () => {
+      const { existsSync, readFileSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockImplementation((_path: PathOrFileDescriptor, options?: unknown) =>
+        typeof options === "string" ? "{}" : Buffer.from("vision-image")
+      );
+
+      const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
+      vi.mocked(hasActiveRun).mockReturnValue(false);
+      vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "m1",
+              role: "user",
+              parts: [{ type: "text", text: "[Attached files: assets/uploaded.png]\n\nwhat is in this image?" }],
+            },
+          ],
+          sessionId: "s1",
+        }),
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(200);
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          imageAttachments: [
+            expect.objectContaining({
+              fileName: "uploaded.png",
+              mimeType: "image/png",
+              content: Buffer.from("vision-image").toString("base64"),
+            }),
+          ],
+        }),
+      );
+    });
+
+    it("rejects attached images that exceed the vision size limit", async () => {
+      const { existsSync, readFileSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockImplementation((_path: PathOrFileDescriptor, options?: unknown) =>
+        typeof options === "string" ? "{}" : Buffer.alloc(5 * 1024 * 1024 + 1)
+      );
+
+      const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
+      vi.mocked(hasActiveRun).mockReturnValue(false);
+      vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "m1",
+              role: "user",
+              parts: [{ type: "text", text: "[Attached files: assets/too-large.png]" }],
+            },
+          ],
+          sessionId: "s1",
+        }),
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(400);
+      await expect(res.text()).resolves.toContain("exceeds the 5 MB limit");
+      expect(startRun).toHaveBeenCalledTimes(startRunCallCount);
     });
   });
 

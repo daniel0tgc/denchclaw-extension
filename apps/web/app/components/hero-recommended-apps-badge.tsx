@@ -7,7 +7,12 @@ import {
 	SiNotion,
 	SiSlack,
 } from "react-icons/si";
-import type { ComposioConnection, ComposioConnectionsResponse, ComposioToolkit } from "@/lib/composio";
+import type {
+	ComposioConnection,
+	ComposioConnectionsResponse,
+	ComposioToolkit,
+	ComposioToolkitsResponse,
+} from "@/lib/composio";
 import {
 	extractComposioConnections,
 	extractComposioToolkits,
@@ -105,7 +110,7 @@ export function HeroRecommendedAppsBadge({
 				}
 
 				if (!toolkitsRes.ok) {return;}
-				const toolkitsPayload = await toolkitsRes.json() as { items?: unknown[] };
+				const toolkitsPayload = (await toolkitsRes.json()) as ComposioToolkitsResponse;
 				const toolkitItems = extractComposioToolkits(toolkitsPayload).items;
 				if (!cancelled) {
 					setToolkitLogoMap(

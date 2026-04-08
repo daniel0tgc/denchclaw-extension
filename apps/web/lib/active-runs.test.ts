@@ -262,6 +262,145 @@ describe("active-runs", () => {
 			).toBe(true);
 		});
 
+		it("recovers a missing live reply from the latest transcript turn", async () => {
+			const { child, startRun, subscribeToRun } = await setup();
+			const fs = await import("node:fs");
+
+			const sessionId = "s-transcript-recovery";
+			const sessionKey = `agent:main:web:${sessionId}`;
+			const transcriptSessionId = "transcript-recovery";
+			const sessionsJsonPath = "/tmp/mock-state/agents/main/sessions/sessions.json";
+			const transcriptPath = `/tmp/mock-state/agents/main/sessions/${transcriptSessionId}.jsonl`;
+
+			vi.mocked(fs.existsSync).mockImplementation((path) =>
+				path === sessionsJsonPath || path === transcriptPath,
+			);
+			vi.mocked(fs.readFileSync).mockImplementation((path) => {
+				if (path === sessionsJsonPath) {
+					return JSON.stringify({
+						[sessionKey]: { sessionId: transcriptSessionId },
+					});
+				}
+				if (path === transcriptPath) {
+					return `${JSON.stringify({
+						type: "message",
+						timestamp: new Date().toISOString(),
+						message: {
+							role: "assistant",
+							content: [
+								{
+									type: "text",
+									text: "Recovered from transcript",
+								},
+							],
+							stopReason: "stop",
+							responseId: "resp_recovered",
+							timestamp: Date.now(),
+						},
+					})}\n`;
+				}
+				return "";
+			});
+
+			const events: SseEvent[] = [];
+
+			startRun({
+				sessionId,
+				message: "hello",
+				agentSessionId: sessionId,
+			});
+
+			subscribeToRun(
+				sessionId,
+				(event) => {
+					if (event) {events.push(event);}
+				},
+				{ replay: false },
+			);
+
+			child.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			child._emit("close", 0);
+
+			expect(
+				events.some(
+					(e) => e.type === "text-delta" && e.delta === "Recovered from transcript",
+				),
+			).toBe(true);
+			expect(
+				events.some(
+					(e) =>
+						e.type === "text-delta" &&
+						typeof e.delta === "string" &&
+						e.delta.includes("No response"),
+				),
+			).toBe(false);
+		});
+
+		it("surfaces an upstream-empty-response message when the transcript turn is empty", async () => {
+			const { child, startRun, subscribeToRun } = await setup();
+			const fs = await import("node:fs");
+
+			const sessionId = "s-empty-upstream";
+			const sessionKey = `agent:main:web:${sessionId}`;
+			const transcriptSessionId = "transcript-empty";
+			const sessionsJsonPath = "/tmp/mock-state/agents/main/sessions/sessions.json";
+			const transcriptPath = `/tmp/mock-state/agents/main/sessions/${transcriptSessionId}.jsonl`;
+
+			vi.mocked(fs.existsSync).mockImplementation((path) =>
+				path === sessionsJsonPath || path === transcriptPath,
+			);
+			vi.mocked(fs.readFileSync).mockImplementation((path) => {
+				if (path === sessionsJsonPath) {
+					return JSON.stringify({
+						[sessionKey]: { sessionId: transcriptSessionId },
+					});
+				}
+				if (path === transcriptPath) {
+					return `${JSON.stringify({
+						type: "message",
+						timestamp: new Date().toISOString(),
+						message: {
+							role: "assistant",
+							content: [],
+							stopReason: "stop",
+							responseId: "resp_empty",
+							timestamp: Date.now(),
+						},
+					})}\n`;
+				}
+				return "";
+			});
+
+			const events: SseEvent[] = [];
+
+			startRun({
+				sessionId,
+				message: "hello",
+				agentSessionId: sessionId,
+			});
+
+			subscribeToRun(
+				sessionId,
+				(event) => {
+					if (event) {events.push(event);}
+				},
+				{ replay: false },
+			);
+
+			child.stdout.end();
+			await new Promise((r) => setTimeout(r, 50));
+			child._emit("close", 0);
+
+			expect(
+				events.some(
+					(e) =>
+						e.type === "text-delta" &&
+						e.delta === "[error] Agent finished with an empty upstream response.",
+				),
+			).toBe(true);
+		});
+
 		it("replays buffered events to a late subscriber when the run already completed", async () => {
 			const { child, startRun, subscribeToRun } = await setup();
 

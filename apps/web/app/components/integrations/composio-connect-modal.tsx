@@ -422,11 +422,8 @@ export function ComposioConnectModal({
             </div>
           ) : (
             <div
-              className="rounded-xl border border-dashed px-3 py-5 text-center text-sm text-muted-foreground"
-              style={{
-                borderColor: "var(--color-border)",
-                background: "var(--color-surface-hover)",
-              }}
+              className="px-3 py-5 text-center text-sm"
+              style={{ color: "#a3a3a3" }}
             >
               No accounts connected yet. Connect your {toolkit.name} account to get started.
             </div>
@@ -438,11 +435,18 @@ export function ComposioConnectModal({
           className="flex items-center justify-end gap-2 px-6 py-4"
           style={{ borderTop: "1px solid var(--color-border)" }}
         >
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+          <button
+            type="button"
+            className="rounded-full px-4 py-1.5 text-sm font-medium transition-all bg-stone-100 hover:bg-stone-200/50"
+            style={{ color: "#57534e" }}
+            onClick={() => onOpenChange(false)}
+          >
             Close
-          </Button>
-          <Button
-            size="sm"
+          </button>
+          <button
+            type="button"
+            className="rounded-full px-4 py-1.5 text-sm font-medium"
+            style={{ background: "var(--color-accent)", color: "#fff" }}
             onClick={() => void handleConnect()}
             disabled={connecting}
           >
@@ -453,7 +457,7 @@ export function ComposioConnectModal({
                 : connected
                 ? "Connect another account"
                 : `Connect ${toolkit.name}`}
-          </Button>
+          </button>
         </div>
       </DialogContent>
     </Dialog>

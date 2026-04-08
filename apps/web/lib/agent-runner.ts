@@ -175,6 +175,7 @@ const GATEWAY_RECONNECT_BASE_MS = 300;
 const GATEWAY_RECONNECT_MAX_MS = 5_000;
 const GATEWAY_RECONNECT_MAX_ATTEMPTS = 6;
 const GATEWAY_RPC_RETRY_BASE_MS = 250;
+const MAX_GATEWAY_FILTER_DROP_LOGS = 8;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const RETRYABLE_GATEWAY_CLOSE_CODES = new Set([1000, 1005, 1006, 1012]);
 
@@ -787,6 +788,7 @@ class GatewayProcessHandle
 	private lastGlobalSeq = 0;
 	private replayFloorSeq = 0;
 	private sessionStarted = false;
+	private filterDropLogCount = 0;
 	private readonly startIdempotencyKey = randomUUID();
 
 	constructor(private readonly params: SpawnGatewayProcessParams) {
@@ -1156,6 +1158,44 @@ class GatewayProcessHandle
 		return sessionKey === expected;
 	}
 
+	private logFilteredGatewayEvent(
+		reason: string,
+		frame: GatewayEventFrame,
+		context?: Record<string, unknown>,
+	): void {
+		if (this.filterDropLogCount >= MAX_GATEWAY_FILTER_DROP_LOGS) {
+			return;
+		}
+		this.filterDropLogCount += 1;
+		const payload = asRecord(frame.payload);
+		const stream =
+			typeof payload?.stream === "string" ? payload.stream : undefined;
+		const sessionKey =
+			typeof payload?.sessionKey === "string" ? payload.sessionKey : undefined;
+		const runId =
+			typeof payload?.runId === "string" ? payload.runId : undefined;
+		const globalSeq =
+			typeof payload?.globalSeq === "number"
+				? payload.globalSeq
+				: typeof frame.seq === "number"
+					? frame.seq
+					: undefined;
+		console.warn("[gateway-agent-runner] Dropped gateway event", {
+			reason,
+			mode: this.params.mode,
+			event: frame.event,
+			stream,
+			sessionKey,
+			expectedSessionKey: this.params.sessionKey,
+			runId,
+			expectedRunId: this.runId,
+			globalSeq,
+			replayFloorSeq: this.replayFloorSeq,
+			recoveryActive: Date.now() <= this.lifecycleErrorRecoveryUntil,
+			...context,
+		});
+	}
+
 	private handleGatewayEvent(frame: GatewayEventFrame): void {
 		if (this.finished) {
 			return;
@@ -1173,6 +1213,7 @@ class GatewayProcessHandle
 			const sessionKey =
 				typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
 			if (!this.shouldAcceptSessionEvent(sessionKey)) {
+				this.logFilteredGatewayEvent("session-key-mismatch", frame);
 				return;
 			}
 			const runId = typeof payload.runId === "string" ? payload.runId : undefined;
@@ -1185,6 +1226,7 @@ class GatewayProcessHandle
 					this.runId = runId;
 					this.clearLifecycleErrorCloseTimer();
 				} else {
+					this.logFilteredGatewayEvent("run-id-mismatch", frame);
 					return;
 				}
 			}
@@ -1197,6 +1239,9 @@ class GatewayProcessHandle
 				typeof eventGlobalSeq === "number" &&
 				eventGlobalSeq <= this.replayFloorSeq
 			) {
+				this.logFilteredGatewayEvent("global-seq-replay", frame, {
+					eventGlobalSeq,
+				});
 				return;
 			}
 			this.sessionStarted = true;
@@ -1273,6 +1318,7 @@ class GatewayProcessHandle
 				return;
 			}
 			if (!this.shouldAcceptSessionEvent(sessionKey)) {
+				this.logFilteredGatewayEvent("session-key-mismatch", frame);
 				return;
 			}
 			const payloadGlobalSeq =
@@ -1284,6 +1330,9 @@ class GatewayProcessHandle
 				typeof eventGlobalSeq === "number" &&
 				eventGlobalSeq <= this.replayFloorSeq
 			) {
+				this.logFilteredGatewayEvent("global-seq-replay", frame, {
+					eventGlobalSeq,
+				});
 				return;
 			}
 			this.sessionStarted = true;
@@ -1319,6 +1368,7 @@ class GatewayProcessHandle
 			const sessionKey =
 				typeof payload.sessionKey === "string" ? payload.sessionKey : undefined;
 			if (!this.shouldAcceptSessionEvent(sessionKey)) {
+				this.logFilteredGatewayEvent("session-key-mismatch", frame);
 				return;
 			}
 			const payloadGlobalSeq =
@@ -1330,6 +1380,9 @@ class GatewayProcessHandle
 				typeof eventGlobalSeq === "number" &&
 				eventGlobalSeq <= this.replayFloorSeq
 			) {
+				this.logFilteredGatewayEvent("global-seq-replay", frame, {
+					eventGlobalSeq,
+				});
 				return;
 			}
 			this.sessionStarted = true;

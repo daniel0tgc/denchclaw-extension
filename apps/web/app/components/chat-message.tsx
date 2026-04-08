@@ -419,7 +419,7 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 				return (
 					<div
 						key={i}
-						className="relative rounded-xl overflow-hidden shrink-0 cursor-pointer transition-all hover:opacity-90"
+						className="relative rounded-xl overflow-hidden shrink-0 cursor-pointer transition-all duration-200 hover:opacity-95"
 						onClick={() => setPreviewSrc(src)}
 					>
 						<img
@@ -447,12 +447,12 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 			})}
 		</div>
 		<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
-			<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-none" showCloseButton={false}>
+			<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-[0_0_120px_rgba(0,0,0,0.4)]" showCloseButton={false}>
 				<button
 					type="button"
 					onClick={() => setPreviewSrc(null)}
-					className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer"
-					style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)" }}
+					className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer outline-none transition-all hover:opacity-85"
+					style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
 				>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
 				</button>
@@ -628,17 +628,17 @@ function PreviewableImage({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLIm
 				src={src}
 				alt={alt ?? ""}
 				loading="lazy"
-				className="cursor-pointer transition-all hover:opacity-90"
+				className="cursor-pointer transition-all duration-200 hover:opacity-95"
 				onClick={() => setOpen(true)}
 				{...props}
 			/>
 			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-none" showCloseButton={false}>
+				<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-[0_0_120px_rgba(0,0,0,0.4)]" showCloseButton={false}>
 					<button
 						type="button"
 						onClick={() => setOpen(false)}
-						className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer"
-						style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)" }}
+						className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer outline-none transition-all hover:opacity-85"
+						style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
 					>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
 					</button>

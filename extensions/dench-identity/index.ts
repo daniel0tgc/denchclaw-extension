@@ -1,19 +1,59 @@
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { readDenchAuthProfileKey, resolveDenchGatewayUrl } from "../shared/dench-auth.js";
 import {
-  loadComposioToolCheatSheetMarkdown,
+  createComposioSearchContextSecret,
+  signComposioSearchContext,
+} from "../shared/composio-search-context.js";
+import {
+  readComposioToolCatalogFile,
   readComposioMcpStatusFile,
   readComposioToolIndexFile,
+  type ComposioManagedAccount,
   type ComposioToolIndexFile,
 } from "./composio-cheat-sheet.js";
+import {
+  searchComposioTools,
+  type ComposioToolSearchResult,
+} from "./composio-tool-search.js";
 
 export const id = "dench-identity";
 
 type UnknownRecord = Record<string, unknown>;
 
 const COMPOSIO_RESOLVE_TOOL_NAME = "composio_resolve_tool";
+const COMPOSIO_SEARCH_TOOLS_NAME = "composio_search_tools";
+const COMPOSIO_CALL_TOOL_NAME = "composio_call_tool";
+const DENCH_INTEGRATIONS_DISPLAY_NAME = "Dench Integrations";
+const DENCH_INTEGRATION_DISPLAY_NAME = "Dench Integration";
+
+const COMPOSIO_SEARCH_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    query: {
+      type: "string",
+      description: "Natural-language description of the third-party app action or data you need.",
+    },
+    app: {
+      type: "string",
+      description: "Optional connected app slug/name to narrow search, for example gmail, github, slack, stripe, or notion.",
+    },
+    account: {
+      type: "string",
+      description: "Optional connected account label, email, or identity to preselect an account when searching.",
+    },
+    top_k: {
+      type: "integer",
+      description: "Maximum number of search results to return. Defaults to 5.",
+    },
+    session_id: {
+      type: "string",
+      description: "Optional integration search session id from a previous composio_search_tools response.",
+    },
+  },
+  required: ["query"],
+} as const;
 
 const COMPOSIO_RESOLVE_TOOL_PARAMETERS = {
   type: "object",
@@ -30,6 +70,10 @@ const COMPOSIO_RESOLVE_TOOL_PARAMETERS = {
     userRequest: {
       type: "string",
       description: "Optional full user request for extra matching context.",
+    },
+    account: {
+      type: "string",
+      description: "Optional connected account label, email, or stable identity when multiple accounts are connected.",
     },
   },
   required: ["intent"],
@@ -56,6 +100,9 @@ const APP_ALIASES: Record<string, string> = {
   twitter: "x",
   x: "x",
   linear: "linear",
+  stripe: "stripe",
+  billing: "stripe",
+  payments: "stripe",
 };
 
 const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
@@ -187,6 +234,47 @@ const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
       example_prompts: ["list Linear issues", "show Linear tickets"],
     },
   ],
+  stripe: [
+    {
+      intent: "List subscriptions",
+      tool: "STRIPE_LIST_SUBSCRIPTIONS",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: [
+        "list subscriptions",
+        "show subscriptions with trial info",
+        "calculate recurring revenue from subscriptions",
+      ],
+    },
+    {
+      intent: "Search subscriptions",
+      tool: "STRIPE_SEARCH_SUBSCRIPTIONS",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: ["search Stripe subscriptions", "find a Stripe subscription"],
+    },
+    {
+      intent: "List customers",
+      tool: "STRIPE_LIST_CUSTOMERS",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: ["list Stripe customers"],
+    },
+    {
+      intent: "List invoices",
+      tool: "STRIPE_LIST_INVOICES",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: ["list Stripe invoices"],
+    },
+    {
+      intent: "Retrieve balance",
+      tool: "STRIPE_RETRIEVE_BALANCE",
+      required_args: [],
+      arg_hints: {},
+      example_prompts: ["show Stripe balance"],
+    },
+  ],
 };
 
 function jsonResult(payload: unknown) {
@@ -281,10 +369,11 @@ type ResolverToolCandidate = {
   description_short: string;
   required_args: string[];
   arg_hints: Record<string, string>;
+  input_schema?: Record<string, unknown>;
   default_args?: Record<string, unknown>;
   example_args?: Record<string, unknown>;
   example_prompts?: string[];
-  source: "indexed" | "recipe" | "ondemand";
+  source: "featured" | "recipe" | "catalog" | "fallback";
 };
 
 type ResolverMcpTool = {
@@ -362,11 +451,12 @@ function buildResolverCandidateFromCatalog(tool: ResolverMcpTool): ResolverToolC
     description_short: tool.description?.trim() ?? "",
     required_args: extractResolverRequiredArgs(tool.inputSchema),
     arg_hints: buildResolverArgHints(tool.name, tool.inputSchema),
-    source: "ondemand",
+    ...(tool.inputSchema ? { input_schema: tool.inputSchema as Record<string, unknown> } : {}),
+    source: "catalog",
   };
 }
 
-function buildIndexedToolCandidates(
+function buildFeaturedToolCandidates(
   app: ComposioToolIndexFile["connected_apps"][number],
 ): ResolverToolCandidate[] {
   const out = new Map<string, ResolverToolCandidate>();
@@ -376,7 +466,7 @@ function buildIndexedToolCandidates(
   for (const tool of app.tools) {
     out.set(tool.name, {
       ...tool,
-      source: "indexed",
+      source: "featured",
     });
   }
   for (const [intent, toolName] of Object.entries(app.recipes)) {
@@ -392,11 +482,56 @@ function buildIndexedToolCandidates(
       required_args: fallbackRecipe?.required_args ?? [],
       arg_hints: fallbackRecipe?.arg_hints ?? {},
       ...(fallbackRecipe?.default_args ? { default_args: fallbackRecipe.default_args } : {}),
+      ...(fallbackRecipe?.default_args ? { example_args: fallbackRecipe.default_args } : {}),
       example_prompts: fallbackRecipe?.example_prompts ?? [intent],
       source: "recipe",
     });
   }
   return Array.from(out.values());
+}
+
+function mergeResolverCandidates(
+  featured: ResolverToolCandidate[],
+  catalog: ResolverToolCandidate[],
+): ResolverToolCandidate[] {
+  const merged = new Map<string, ResolverToolCandidate>();
+  for (const tool of catalog) {
+    merged.set(tool.name, tool);
+  }
+  for (const tool of featured) {
+    const existing = merged.get(tool.name);
+    if (!existing) {
+      merged.set(tool.name, tool);
+      continue;
+    }
+    merged.set(tool.name, {
+      ...existing,
+      ...tool,
+      required_args: tool.required_args.length > 0 ? tool.required_args : existing.required_args,
+      arg_hints: Object.keys(tool.arg_hints).length > 0 ? tool.arg_hints : existing.arg_hints,
+      input_schema: tool.input_schema ?? existing.input_schema,
+      default_args: tool.default_args ?? existing.default_args,
+      example_args: tool.example_args ?? existing.example_args,
+      example_prompts: tool.example_prompts?.length ? tool.example_prompts : existing.example_prompts,
+      source: tool.source,
+    });
+  }
+  return Array.from(merged.values());
+}
+
+function resolverSourcePriority(source: ResolverToolCandidate["source"]): number {
+  switch (source) {
+    case "recipe":
+      return 0;
+    case "featured":
+      return 1;
+    case "catalog":
+      return 2;
+    case "fallback":
+      return 3;
+    default:
+      return 9;
+  }
 }
 
 function chooseBestTool(
@@ -429,7 +564,14 @@ function chooseBestTool(
       ].join(" "),
       queryTokens,
     );
-    if (score > bestScore) {
+    if (
+      score > bestScore ||
+      (
+        score === bestScore &&
+        bestTool &&
+        resolverSourcePriority(tool.source) < resolverSourcePriority(bestTool.source)
+      )
+    ) {
       bestTool = tool;
       bestScore = score;
     }
@@ -453,13 +595,376 @@ function resolveComposioApiKeyFromApi(_api: OpenClawPluginApi): string | null {
   return readDenchAuthProfileKey() ?? null;
 }
 
-function extractToolsFromJsonRpcMessage(payload: unknown): ResolverMcpTool[] {
-  const result = asRecord(asRecord(payload)?.result);
-  const tools = result?.tools;
-  if (!Array.isArray(tools)) {
+function asRecordArray(value: unknown): UnknownRecord[] {
+  if (!Array.isArray(value)) {
     return [];
   }
-  return tools
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is UnknownRecord => Boolean(item));
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function resolveComposioSearchSecret(api: OpenClawPluginApi, workspaceDir: string): string {
+  return createComposioSearchContextSecret({
+    workspaceDir,
+    gatewayUrl: resolveGatewayUrlFromApi(api),
+    apiKey: resolveComposioApiKeyFromApi(api),
+  });
+}
+
+async function postComposioGatewayJson(params: {
+  api: OpenClawPluginApi;
+  path: string;
+  body: Record<string, unknown>;
+}): Promise<UnknownRecord | null> {
+  const gatewayUrl = resolveGatewayUrlFromApi(params.api);
+  const apiKey = resolveComposioApiKeyFromApi(params.api);
+  if (!gatewayUrl || !apiKey) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${gatewayUrl.replace(/\/$/, "")}${params.path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(params.body),
+    });
+    const text = await response.text();
+    const parsed = text.trim().length > 0 ? JSON.parse(text) as unknown : {};
+    if (!response.ok) {
+      return {
+        error: readString(asRecord(parsed)?.error)
+          ?? readString(asRecord(asRecord(parsed)?.error)?.message)
+          ?? `Gateway request failed with HTTP ${response.status}.`,
+      };
+    }
+    return asRecord(parsed);
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function readGatewayConnectionItems(payload: unknown): UnknownRecord[] {
+  const direct = asRecordArray(payload);
+  if (direct.length > 0) {
+    return direct;
+  }
+  const record = asRecord(payload);
+  const items = asRecordArray(record?.items);
+  if (items.length > 0) {
+    return items;
+  }
+  return asRecordArray(record?.connections);
+}
+
+function buildGatewayStatusAccountFromConnection(connection: UnknownRecord): UnknownRecord | null {
+  const id = readString(connection.connectionId ?? connection.id)?.trim();
+  if (!id) {
+    return null;
+  }
+  const account = asRecord(connection.account);
+  const alias = readString(connection.account_label ?? account?.label)?.trim();
+  const email = readString(connection.account_email ?? account?.email)?.trim();
+  const name = readString(connection.account_name ?? account?.name ?? account?.label)?.trim();
+  const userInfo: UnknownRecord = {};
+  if (email) {
+    userInfo.email = email;
+  }
+  if (name) {
+    userInfo.name = name;
+  }
+  return {
+    id,
+    ...(alias ? { alias } : {}),
+    ...(Object.keys(userInfo).length > 0 ? { user_info: userInfo } : {}),
+    is_default: false,
+  };
+}
+
+async function fetchGatewayLiveToolkitStatuses(params: {
+  api: OpenClawPluginApi;
+}): Promise<UnknownRecord[] | null> {
+  const gatewayUrl = resolveGatewayUrlFromApi(params.api);
+  const apiKey = resolveComposioApiKeyFromApi(params.api);
+  if (!gatewayUrl || !apiKey) {
+    return null;
+  }
+  try {
+    const response = await fetch(`${gatewayUrl.replace(/\/$/, "")}/v1/composio/connections`, {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json() as unknown;
+    const toolkitMap = new Map<string, {
+      toolkit: string;
+      toolkit_name?: string;
+      accounts: UnknownRecord[];
+    }>();
+    for (const connection of readGatewayConnectionItems(payload)) {
+      const status = readString(connection.status)?.trim().toUpperCase();
+      if (status !== "ACTIVE") {
+        continue;
+      }
+      const toolkitSlug = normalizeResolverApp(
+        readString(connection.toolkit_slug ?? asRecord(connection.toolkit)?.slug) ?? "",
+      );
+      if (!toolkitSlug) {
+        continue;
+      }
+      const entry = toolkitMap.get(toolkitSlug) ?? {
+        toolkit: toolkitSlug,
+        toolkit_name: readString(connection.toolkit_name ?? asRecord(connection.toolkit)?.name),
+        accounts: [],
+      };
+      const account = buildGatewayStatusAccountFromConnection(connection);
+      if (account) {
+        const accountId = readString(account.id);
+        if (accountId && !entry.accounts.some((existing) => readString(existing.id) === accountId)) {
+          entry.accounts.push(account);
+        }
+      }
+      toolkitMap.set(toolkitSlug, entry);
+    }
+    const statuses = Array.from(toolkitMap.values()).map((entry) => ({
+      toolkit: entry.toolkit,
+      ...(entry.toolkit_name ? { toolkit_name: entry.toolkit_name } : {}),
+      has_active_connection: true,
+      ...(entry.accounts.length > 0 ? { accounts: entry.accounts } : {}),
+      status_message: null,
+    }));
+    return statuses;
+  } catch {
+    return null;
+  }
+}
+
+function reconcileGatewayToolkitStatuses(params: {
+  searchStatuses: UnknownRecord[];
+  liveStatuses: UnknownRecord[] | null;
+}): {
+  statuses: UnknownRecord[];
+  repairedToolkits: string[];
+} {
+  if (!params.liveStatuses || params.liveStatuses.length === 0) {
+    return {
+      statuses: params.searchStatuses,
+      repairedToolkits: [],
+    };
+  }
+  const liveByToolkit = new Map<string, UnknownRecord>();
+  for (const status of params.liveStatuses) {
+    const toolkitSlug = normalizeResolverApp(
+      readString(status.toolkit ?? status.toolkit_slug) ?? "",
+    );
+    if (toolkitSlug) {
+      liveByToolkit.set(toolkitSlug, status);
+    }
+  }
+  const seen = new Set<string>();
+  const repairedToolkits: string[] = [];
+  const statuses = params.searchStatuses.map((status) => {
+    const toolkitSlug = normalizeResolverApp(
+      readString(status.toolkit ?? status.toolkit_slug) ?? "",
+    );
+    if (!toolkitSlug) {
+      return status;
+    }
+    seen.add(toolkitSlug);
+    const liveStatus = liveByToolkit.get(toolkitSlug);
+    if (!liveStatus) {
+      return status;
+    }
+    if (readBoolean(status.has_active_connection) === false) {
+      repairedToolkits.push(toolkitSlug);
+    }
+    const liveAccounts = asRecordArray(liveStatus.accounts);
+    return {
+      ...status,
+      ...liveStatus,
+      toolkit: toolkitSlug,
+      has_active_connection: true,
+      ...(liveAccounts.length > 0 ? { accounts: liveAccounts } : {}),
+      status_message: null,
+    };
+  });
+  for (const [toolkitSlug, liveStatus] of liveByToolkit.entries()) {
+    if (seen.has(toolkitSlug)) {
+      continue;
+    }
+    statuses.push({
+      ...liveStatus,
+      toolkit: toolkitSlug,
+      has_active_connection: true,
+      status_message: null,
+    });
+  }
+  return {
+    statuses,
+    repairedToolkits: uniqueStrings(repairedToolkits),
+  };
+}
+
+function humanizeToolName(toolName: string): string {
+  return toolName
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function deriveArgHintsFromSchema(inputSchema: UnknownRecord | undefined): Record<string, string> {
+  const properties = asRecord(inputSchema?.properties);
+  if (!properties) {
+    return {};
+  }
+
+  const hints: Record<string, string> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    const property = asRecord(value);
+    if (!property) {
+      continue;
+    }
+    const description = readString(property.description);
+    const type = readString(property.type);
+    const itemType = readString(asRecord(property.items)?.type);
+    const enumValues = Array.isArray(property.enum)
+      ? property.enum.filter((item): item is string | number | boolean =>
+        ["string", "number", "boolean"].includes(typeof item))
+      : [];
+    const defaultValue = Object.hasOwn(property, "default") ? property.default : undefined;
+    const typeHint = type === "array" && itemType
+      ? `Expected array of ${itemType}.`
+      : type
+        ? `Expected ${type}.`
+        : null;
+    const enumHint = enumValues.length > 0
+      ? `Allowed values: ${enumValues.map((item) => JSON.stringify(item)).join(", ")}.`
+      : null;
+    const defaultHint = defaultValue !== undefined
+      ? `Default: ${JSON.stringify(defaultValue)}.`
+      : null;
+    const combined = [description, typeHint, enumHint, defaultHint]
+      .filter((item): item is string => Boolean(item))
+      .join(" ");
+    if (combined) {
+      hints[key] = combined;
+    }
+  }
+  return hints;
+}
+
+function mergeToolSummaryFromSchema(params: {
+  toolName: string;
+  toolkitName: string;
+  schema: UnknownRecord;
+  localTool?: ResolverToolCandidate;
+}): ResolverToolCandidate {
+  const inputSchema = asRecord(params.schema.input_schema);
+  const localTool = params.localTool;
+  const requiredArgs = readStringArray(inputSchema?.required);
+  const argHints = deriveArgHintsFromSchema(inputSchema);
+  return {
+    name: params.toolName,
+    title: localTool?.title ?? humanizeToolName(params.toolName),
+    description_short: localTool?.description_short
+      ?? readString(params.schema.description)
+      ?? `Recommended ${params.toolkitName} tool for this request.`,
+    required_args: localTool?.required_args?.length ? localTool.required_args : requiredArgs,
+    arg_hints: Object.keys(localTool?.arg_hints ?? {}).length > 0
+      ? localTool?.arg_hints ?? {}
+      : argHints,
+    default_args: localTool?.default_args,
+    example_args: localTool?.example_args,
+    example_prompts: localTool?.example_prompts,
+    ...(inputSchema ? { input_schema: inputSchema } : {}),
+  };
+}
+
+function readToolSchemaMap(value: unknown): Record<string, UnknownRecord> {
+  const record = asRecord(value);
+  if (!record) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, schema]) => [key, asRecord(schema)] as const)
+      .filter((entry): entry is [string, UnknownRecord] => Boolean(entry[1])),
+  );
+}
+
+function detectPaginationInputHints(inputSchema: UnknownRecord | undefined): string[] {
+  const properties = asRecord(inputSchema?.properties);
+  if (!properties) {
+    return [];
+  }
+
+  const hints: string[] = [];
+  const paginationFields = [
+    "starting_after",
+    "ending_before",
+    "cursor",
+    "next_cursor",
+    "page",
+    "page_token",
+    "limit",
+    "offset",
+  ];
+  for (const field of paginationFields) {
+    if (properties[field]) {
+      hints.push(field);
+    }
+  }
+  return hints;
+}
+
+function extractToolsFromJsonRpcMessage(payload: unknown): {
+  tools: ResolverMcpTool[];
+  nextCursor: string | null;
+} {
+  const result = asRecord(asRecord(payload)?.result);
+  const tools = result?.tools;
+  const parsedTools = Array.isArray(tools)
+    ? tools
     .map((item) => asRecord(item))
     .filter((item): item is UnknownRecord => Boolean(item))
     .map((tool) => ({
@@ -469,10 +974,19 @@ function extractToolsFromJsonRpcMessage(payload: unknown): ResolverMcpTool[] {
       inputSchema: asRecord(tool.inputSchema) as ResolverMcpTool["inputSchema"],
       annotations: asRecord(tool.annotations) as ResolverMcpTool["annotations"],
     }))
-    .filter((tool) => tool.name.length > 0);
+    .filter((tool) => tool.name.length > 0)
+    : [];
+
+  return {
+    tools: parsedTools,
+    nextCursor: readString(result?.next_cursor ?? result?.nextCursor ?? result?.cursor) ?? null,
+  };
 }
 
-function parseSseJsonRpcTools(body: string): ResolverMcpTool[] {
+function parseSseJsonRpcTools(body: string): {
+  tools: ResolverMcpTool[];
+  nextCursor: string | null;
+} {
   let lastPayload: unknown = null;
   for (const line of body.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -489,10 +1003,43 @@ function parseSseJsonRpcTools(body: string): ResolverMcpTool[] {
       // Ignore non-JSON SSE frames.
     }
   }
-  return lastPayload === null ? [] : extractToolsFromJsonRpcMessage(lastPayload);
+  return lastPayload === null ? { tools: [], nextCursor: null } : extractToolsFromJsonRpcMessage(lastPayload);
 }
 
-async function fetchBroaderCatalogSlice(
+async function parseToolsListResponse(response: Response): Promise<{
+  tools: ResolverMcpTool[];
+  nextCursor: string | null;
+}> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  if (contentType.includes("text/event-stream")) {
+    const fromSse = parseSseJsonRpcTools(text);
+    if (fromSse.tools.length > 0 || fromSse.nextCursor) {
+      return fromSse;
+    }
+  }
+  try {
+    return extractToolsFromJsonRpcMessage(JSON.parse(text));
+  } catch {
+    return parseSseJsonRpcTools(text);
+  }
+}
+
+function loadCatalogCandidatesFromCache(
+  workspaceDir: string,
+  appSlug: string,
+): ResolverToolCandidate[] {
+  const catalog = readComposioToolCatalogFile(workspaceDir);
+  const app = catalog?.connected_apps.find((entry) =>
+    normalizeResolverApp(entry.toolkit_slug) === normalizeResolverApp(appSlug)
+  );
+  return app?.tools.map((tool) => ({
+    ...tool,
+    source: "catalog",
+  })) ?? [];
+}
+
+async function fetchCatalogCandidatesLive(
   api: OpenClawPluginApi,
   appSlug: string,
 ): Promise<ResolverToolCandidate[]> {
@@ -502,38 +1049,59 @@ async function fetchBroaderCatalogSlice(
     return [];
   }
 
-  const response = await fetch(`${gatewayUrl.replace(/\/$/, "")}/v1/composio/mcp`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/list",
-      params: {
-        connected_toolkits: [appSlug],
-      },
-    }),
-  });
-  if (!response.ok) {
-    return [];
-  }
-
-  const text = await response.text();
-  const tools = (() => {
-    try {
-      return extractToolsFromJsonRpcMessage(JSON.parse(text));
-    } catch {
-      return parseSseJsonRpcTools(text);
-    }
-  })();
   const prefix = toolkitSlugToToolPrefix(appSlug);
-  return tools
-    .filter((tool) => tool.name.startsWith(prefix))
-    .map(buildResolverCandidateFromCatalog);
+  const seen = new Set<string>();
+  const out: ResolverToolCandidate[] = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const response = await fetch(`${gatewayUrl.replace(/\/$/, "")}/v1/composio/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {
+          connected_toolkits: [appSlug],
+          ...(cursor ? { cursor } : {}),
+        },
+      }),
+    });
+    if (!response.ok) {
+      return out;
+    }
+
+    const parsed = await parseToolsListResponse(response);
+    for (const tool of parsed.tools) {
+      if (!tool.name.startsWith(prefix) || seen.has(tool.name)) {
+        continue;
+      }
+      seen.add(tool.name);
+      out.push(buildResolverCandidateFromCatalog(tool));
+    }
+
+    if (!parsed.nextCursor || parsed.nextCursor === cursor) {
+      return out;
+    }
+    cursor = parsed.nextCursor;
+  }
+}
+
+async function loadCatalogCandidates(
+  workspaceDir: string,
+  api: OpenClawPluginApi,
+  appSlug: string,
+): Promise<ResolverToolCandidate[]> {
+  const fromCache = loadCatalogCandidatesFromCache(workspaceDir, appSlug);
+  if (fromCache.length > 0) {
+    return fromCache;
+  }
+  return await fetchCatalogCandidatesLive(api, appSlug);
 }
 
 function describeStatusForResolver(workspaceDir: string): {
@@ -579,11 +1147,75 @@ function chooseApp(
   return best;
 }
 
+function chooseAccount(
+  app: ComposioToolIndexFile["connected_apps"][number],
+  requestedAccount: string | undefined,
+  queryText: string,
+): ComposioManagedAccount | null {
+  const accounts = app.accounts ?? [];
+  if (accounts.length === 0) {
+    return null;
+  }
+
+  const requested = requestedAccount?.trim();
+  if (requested) {
+    const normalized = requested.toLowerCase();
+    const direct = accounts.find((account) =>
+      [
+        account.account_identity,
+        account.display_label,
+        account.account_email,
+        account.account_name,
+        account.account_label,
+        account.connected_account_id,
+      ].some((value) => typeof value === "string" && value.toLowerCase() === normalized)
+    );
+    if (direct) {
+      return direct;
+    }
+    const ignoredTokens = new Set(tokenize(`${app.toolkit_slug} ${app.toolkit_name}`));
+    const queryTokens = tokenize([requestedAccount, queryText].filter(Boolean).join(" "))
+      .filter((token) => !ignoredTokens.has(token));
+    if (queryTokens.length > 0) {
+      let best: ComposioManagedAccount | null = null;
+      let bestScore = 0;
+      for (const account of accounts) {
+        const score = scoreMatch(
+          [
+            account.account_identity,
+            account.display_label,
+            account.account_email,
+            account.account_name,
+            account.account_label,
+            account.connected_account_id,
+          ].filter(Boolean).join(" "),
+          queryTokens,
+        );
+        if (score > bestScore) {
+          best = account;
+          bestScore = score;
+        }
+      }
+      if (bestScore > 0) {
+        return best;
+      }
+    }
+    return null;
+  }
+
+  if (accounts.length === 1) {
+    return accounts[0] ?? null;
+  }
+
+  return null;
+}
+
 function chooseTool(
   app: ComposioToolIndexFile["connected_apps"][number],
+  candidates: ResolverToolCandidate[],
   queryText: string,
 ) {
-  return chooseBestTool(buildIndexedToolCandidates(app), app.recipes, queryText);
+  return chooseBestTool(candidates, app.recipes, queryText);
 }
 
 function chooseFallbackTool(app: string, queryText: string) {
@@ -604,126 +1236,827 @@ function chooseFallbackTool(app: string, queryText: string) {
   return best;
 }
 
-function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
+type ComposioSearchPresentationResult = {
+  app: ComposioToolIndexFile["connected_apps"][number];
+  search: ComposioToolSearchResult;
+  account_candidates: Array<{
+    account: string;
+    alias: string | null;
+    connected_account_id: string | null;
+    account_identity: string | null;
+    display_label: string;
+    account_email: string | null;
+    account_name: string | null;
+    account_label: string | null;
+    is_default: boolean;
+  }>;
+  selected_account: {
+    account: string;
+    alias: string | null;
+    connected_account_id: string | null;
+    account_identity: string | null;
+    display_label: string;
+    account_email: string | null;
+    account_name: string | null;
+    account_label: string | null;
+    is_default: boolean;
+  } | null;
+  account_selection_required: boolean;
+  dispatcher_input: Record<string, unknown>;
+  execution_guidance?: string | null;
+  recommended_plan_steps: string[];
+  known_pitfalls: string[];
+  difficulty?: string | null;
+  pagination_input_hints: string[];
+  search_source: "gateway_tool_router" | "local_catalog_mcp";
+  search_session_id?: string;
+};
+
+type ComposioSearchRun = {
+  top_confidence: "high" | "medium" | "low";
+  results: ComposioSearchPresentationResult[];
+  search_source: "gateway_tool_router" | "local_catalog_fallback";
+  search_session_id?: string;
+  tool_schemas?: Record<string, UnknownRecord>;
+  toolkit_connection_statuses?: UnknownRecord[];
+  next_steps_guidance: string[];
+  time_info?: UnknownRecord;
+  error?: string | null;
+};
+
+function buildAccountCandidates(app: ComposioToolIndexFile["connected_apps"][number]) {
+  return (app.accounts ?? []).map((account) => ({
+    account: account.connected_account_id,
+    alias: account.account_label ?? null,
+    connected_account_id: account.connected_account_id,
+    account_identity: account.account_identity,
+    display_label: account.display_label,
+    account_email: account.account_email ?? null,
+    account_name: account.account_name ?? null,
+    account_label: account.account_label ?? null,
+    is_default: false,
+  }));
+}
+
+function chooseSearchAccountCandidate(
+  candidates: ComposioSearchPresentationResult["account_candidates"],
+  requestedAccount: string | undefined,
+): ComposioSearchPresentationResult["selected_account"] {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const requested = requestedAccount?.trim();
+  if (requested) {
+    const normalized = requested.toLowerCase();
+    const direct = candidates.find((candidate) =>
+      [
+        candidate.account,
+        candidate.alias,
+        candidate.connected_account_id,
+        candidate.account_identity,
+        candidate.display_label,
+        candidate.account_email,
+        candidate.account_name,
+        candidate.account_label,
+      ].some((value) => value?.toLowerCase() === normalized)
+    );
+    if (direct) {
+      return direct;
+    }
+    if (candidates.length === 1) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function loadLocalResolverCandidate(
+  workspaceDir: string,
+  index: ComposioToolIndexFile | null,
+  toolkitSlug: string,
+  toolName: string,
+): ResolverToolCandidate | undefined {
+  const normalizedToolkit = normalizeResolverApp(toolkitSlug);
+  const featuredApp = index?.connected_apps.find((app) =>
+    normalizeResolverApp(app.toolkit_slug) === normalizedToolkit
+  );
+  if (featuredApp) {
+    const featured = buildFeaturedToolCandidates(featuredApp).find((tool) => tool.name === toolName);
+    if (featured) {
+      return featured;
+    }
+  }
+
+  const catalogApp = readComposioToolCatalogFile(workspaceDir)?.connected_apps.find((app) =>
+    normalizeResolverApp(app.toolkit_slug) === normalizedToolkit
+  );
+  const catalogTool = catalogApp?.tools.find((tool) => tool.name === toolName);
+  return catalogTool
+    ? {
+      ...catalogTool,
+      source: "catalog",
+    }
+    : undefined;
+}
+
+function buildDispatcherInput(params: {
+  appSlug: string;
+  toolName: string;
+  secret: string;
+  mode: "gateway_tool_router" | "local_catalog_mcp";
+  sessionId?: string;
+  selectedAccount?: ComposioSearchPresentationResult["selected_account"];
+  includeLegacyAccountFields?: boolean;
+}) {
+  const token = signComposioSearchContext({
+    version: 1,
+    mode: params.mode,
+    app: params.appSlug,
+    tool_name: params.toolName,
+    ...(params.sessionId ? { session_id: params.sessionId } : {}),
+    issued_at: new Date().toISOString(),
+  }, params.secret);
+
+  const dispatcherInput = {
+    app: params.appSlug,
+    tool_name: params.toolName,
+    search_context_token: token,
+    ...(params.sessionId ? { search_session_id: params.sessionId } : {}),
+    ...(params.selectedAccount?.account ? { account: params.selectedAccount.account } : {}),
+    ...(params.includeLegacyAccountFields && params.selectedAccount?.connected_account_id
+      ? { connected_account_id: params.selectedAccount.connected_account_id }
+      : {}),
+    ...(params.includeLegacyAccountFields && params.selectedAccount?.account_identity
+      ? { account_identity: params.selectedAccount.account_identity }
+      : {}),
+  };
+  return dispatcherInput;
+}
+
+function findGatewayToolkitStatus(
+  statuses: UnknownRecord[],
+  toolkitSlug: string | undefined,
+): UnknownRecord | null {
+  const normalizedToolkit = normalizeResolverApp(toolkitSlug);
+  if (!normalizedToolkit) {
+    return null;
+  }
+
+  return statuses.find((status) =>
+    normalizeResolverApp(readString(status.toolkit)) === normalizedToolkit
+  ) ?? null;
+}
+
+function buildGatewayAccountCandidates(params: {
+  status: UnknownRecord | null;
+  localApp: ComposioToolIndexFile["connected_apps"][number] | undefined;
+}) {
+  const gatewayAccounts = asRecordArray(params.status?.accounts);
+  if (gatewayAccounts.length === 0) {
+    return [];
+  }
+
+  return gatewayAccounts.flatMap((account) => {
+    const id = readString(account.id)?.trim();
+    if (!id) {
+      return [];
+    }
+    const alias = readString(account.alias)?.trim() ?? null;
+    const userInfo = asRecord(account.user_info);
+    const email = readString(userInfo?.email ?? userInfo?.account_email) ?? null;
+    const name = readString(userInfo?.name ?? userInfo?.full_name) ?? null;
+    return [{
+      account: id,
+      alias,
+      connected_account_id: id,
+      account_identity: id,
+      display_label: alias ?? name ?? email ?? id,
+      account_email: email,
+      account_name: name,
+      account_label: alias,
+      is_default: account.is_default === true,
+    }];
+  });
+}
+
+function readGatewayToolkitLabel(status: UnknownRecord | null, toolkitSlug: string): string {
+  return readString(
+    status?.toolkit_name
+      ?? status?.toolkit_label
+      ?? status?.label,
+  ) ?? humanizeResolverApp(toolkitSlug);
+}
+
+function buildGatewayAppEntry(params: {
+  toolkitSlug: string;
+  toolkitName: string;
+  localApp: ComposioToolIndexFile["connected_apps"][number] | undefined;
+  accountCandidates: ComposioSearchPresentationResult["account_candidates"];
+}): ComposioToolIndexFile["connected_apps"][number] {
+  if (params.localApp) {
+    return params.localApp;
+  }
+
   return {
-    name: COMPOSIO_RESOLVE_TOOL_NAME,
-    label: "Composio Resolve Tool",
+    toolkit_slug: params.toolkitSlug,
+    toolkit_name: params.toolkitName,
+    account_count: params.accountCandidates.length,
+    tools: [],
+    recipes: {},
+  };
+}
+
+function buildGatewayWhyMatched(params: {
+  useCase: string;
+  toolName: string;
+  toolkitSlug: string;
+  primaryToolSlugs: string[];
+  localTool?: ResolverToolCandidate;
+}): string[] {
+  const reasons = [
+    `Matched the official ${DENCH_INTEGRATIONS_DISPLAY_NAME} search query "${params.useCase}".`,
+    params.primaryToolSlugs.includes(params.toolName)
+      ? "The integration search ranked this tool as a primary match."
+      : "The integration search ranked this tool as a related follow-up option.",
+    params.localTool?.description_short || null,
+    params.toolkitSlug ? `Toolkit: ${params.toolkitSlug}.` : null,
+  ].filter((value): value is string => Boolean(value));
+  return uniqueStrings(reasons);
+}
+
+function buildGatewayPresentationResults(params: {
+  workspaceDir: string;
+  index: ComposioToolIndexFile | null;
+  requestedApp?: string;
+  requestedAccount?: string;
+  topK: number;
+  searchSecret: string;
+  searchPayload: UnknownRecord;
+}): ComposioSearchPresentationResult[] {
+  const queryResult = asRecordArray(params.searchPayload.results)[0];
+  if (!queryResult) {
+    return [];
+  }
+
+  const toolSchemas = readToolSchemaMap(params.searchPayload.tool_schemas);
+  const statuses = asRecordArray(params.searchPayload.toolkit_connection_statuses);
+  const sessionId = readString(asRecord(params.searchPayload.session)?.id);
+  const primaryToolSlugs = readStringArray(queryResult.primary_tool_slugs);
+  const relatedToolSlugs = readStringArray(queryResult.related_tool_slugs);
+  const orderedToolSlugs = uniqueStrings([...primaryToolSlugs, ...relatedToolSlugs]).slice(0, params.topK);
+
+  return orderedToolSlugs.flatMap((toolName) => {
+    const schema = toolSchemas[toolName];
+    if (!schema) {
+      return [];
+    }
+
+    const toolkitSlug = normalizeResolverApp(readString(schema.toolkit));
+    if (!toolkitSlug) {
+      return [];
+    }
+    if (params.requestedApp && normalizeResolverApp(params.requestedApp) !== toolkitSlug) {
+      return [];
+    }
+
+    const status = findGatewayToolkitStatus(statuses, toolkitSlug);
+    if (readBoolean(status?.has_active_connection) === false) {
+      return [];
+    }
+    const toolkitName = readGatewayToolkitLabel(status, toolkitSlug);
+    const tool = mergeToolSummaryFromSchema({
+      toolName,
+      toolkitName,
+      schema,
+    });
+    const accountCandidates = buildGatewayAccountCandidates({
+      status,
+      localApp: undefined,
+    });
+    const selectedAccount = chooseSearchAccountCandidate(accountCandidates, params.requestedAccount);
+    const app = buildGatewayAppEntry({
+      toolkitSlug,
+      toolkitName,
+      localApp: undefined,
+      accountCandidates,
+    });
+    return [{
+      app,
+      search: {
+        toolkit_slug: toolkitSlug,
+        toolkit_name: toolkitName,
+        tool,
+        source: "catalog",
+        recipe_intents: [readString(queryResult.use_case) ?? tool.title],
+        score: orderedToolSlugs.length > 0 ? orderedToolSlugs.length - orderedToolSlugs.indexOf(toolName) : 1,
+        why_matched: buildGatewayWhyMatched({
+          useCase: readString(queryResult.use_case) ?? tool.title,
+          toolName,
+          toolkitSlug,
+          primaryToolSlugs,
+        }),
+      },
+      account_candidates: accountCandidates,
+      selected_account: selectedAccount,
+      account_selection_required: !selectedAccount
+        && (accountCandidates.length > 1 || Boolean(params.requestedAccount?.trim())),
+      dispatcher_input: buildDispatcherInput({
+        appSlug: toolkitSlug,
+        toolName,
+        secret: params.searchSecret,
+        mode: "gateway_tool_router",
+        sessionId: sessionId ?? undefined,
+        selectedAccount,
+      }),
+      execution_guidance: readString(queryResult.execution_guidance) ?? null,
+      recommended_plan_steps: readStringArray(queryResult.recommended_plan_steps),
+      known_pitfalls: readStringArray(queryResult.known_pitfalls),
+      difficulty: readString(queryResult.difficulty) ?? null,
+      pagination_input_hints: detectPaginationInputHints(tool.input_schema),
+      search_source: "gateway_tool_router",
+      ...(sessionId ? { search_session_id: sessionId } : {}),
+    }];
+  });
+}
+
+function deriveGatewayTopConfidence(payload: UnknownRecord, results: ComposioSearchPresentationResult[]) {
+  const queryResult = asRecordArray(payload.results)[0];
+  const primaryToolSlugs = readStringArray(queryResult?.primary_tool_slugs);
+  if (results.length === 0 || primaryToolSlugs.length === 0) {
+    return "low" as const;
+  }
+  const distinctToolkits = new Set(results.map((result) => result.app.toolkit_slug));
+  if (distinctToolkits.size === 1 && primaryToolSlugs.length === 1) {
+    return "high" as const;
+  }
+  if (distinctToolkits.size === 1) {
+    return "medium" as const;
+  }
+  return results.length === 1 ? "medium" as const : "low" as const;
+}
+
+async function runGatewayComposioToolSearch(params: {
+  api: OpenClawPluginApi;
+  workspaceDir: string;
+  index: ComposioToolIndexFile | null;
+  queryText: string;
+  requestedApp?: string;
+  requestedAccount?: string;
+  topK: number;
+  sessionId?: string;
+  searchSecret: string;
+}): Promise<ComposioSearchRun | null> {
+  const knownFields = [
+    params.requestedApp ? `toolkit:${normalizeResolverApp(params.requestedApp)}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  const payload = await postComposioGatewayJson({
+    api: params.api,
+    path: "/v1/composio/tool-router/search",
+    body: {
+      queries: [
+        {
+          use_case: params.queryText,
+          ...(knownFields.length > 0 ? { known_fields: knownFields.join(", ") } : {}),
+        },
+      ],
+      session: params.sessionId
+        ? { id: params.sessionId }
+        : { generate_id: true },
+      model: "gpt-5.4",
+    },
+  });
+  if (!payload) {
+    return null;
+  }
+
+  const gatewayError = readString(payload.error)
+    ?? readString(asRecord(payload.error)?.message);
+  const searchStatuses = asRecordArray(payload.toolkit_connection_statuses);
+  const shouldProbeLiveConnections = searchStatuses.some((status) =>
+    readBoolean(status.has_active_connection) === false
+  );
+  const liveStatuses = shouldProbeLiveConnections
+    ? await fetchGatewayLiveToolkitStatuses({ api: params.api })
+    : null;
+  const reconciledStatuses = reconcileGatewayToolkitStatuses({
+    searchStatuses,
+    liveStatuses,
+  });
+  const effectivePayload = reconciledStatuses.statuses !== searchStatuses
+    ? {
+        ...payload,
+        toolkit_connection_statuses: reconciledStatuses.statuses,
+      }
+    : payload;
+  const results = buildGatewayPresentationResults({
+    workspaceDir: params.workspaceDir,
+    index: params.index,
+    requestedApp: params.requestedApp,
+    requestedAccount: params.requestedAccount,
+    topK: params.topK,
+    searchSecret: params.searchSecret,
+    searchPayload: effectivePayload,
+  });
+
+  return {
+    top_confidence: deriveGatewayTopConfidence(effectivePayload, results),
+    results,
+    search_source: "gateway_tool_router",
+    search_session_id: readString(asRecord(effectivePayload.session)?.id) ?? params.sessionId,
+    tool_schemas: readToolSchemaMap(payload.tool_schemas),
+    toolkit_connection_statuses: reconciledStatuses.statuses,
+    next_steps_guidance: readStringArray(payload.next_steps_guidance),
+    time_info: asRecord(payload.time_info) ?? undefined,
+    error: gatewayError ?? null,
+  };
+}
+
+function buildSearchPresentationResults(params: {
+  index: ComposioToolIndexFile;
+  queryText: string;
+  requestedAccount?: string;
+  searchResults: ComposioToolSearchResult[];
+  searchSecret: string;
+}): ComposioSearchPresentationResult[] {
+  return params.searchResults.flatMap((result) => {
+    const app = params.index.connected_apps.find((entry) => entry.toolkit_slug === result.toolkit_slug);
+    if (!app) {
+      return [];
+    }
+    const accountCandidates = buildAccountCandidates(app);
+    const selectedAccount = chooseSearchAccountCandidate(accountCandidates, params.requestedAccount)
+      ?? (() => {
+        const localSelected = chooseAccount(app, params.requestedAccount, params.queryText);
+        if (!localSelected) {
+          return null;
+        }
+        return accountCandidates.find((candidate) =>
+          candidate.connected_account_id === localSelected.connected_account_id
+        ) ?? null;
+      })();
+    return [{
+      app,
+      search: result,
+      account_candidates: accountCandidates,
+      selected_account: selectedAccount,
+      account_selection_required: !selectedAccount
+        && (app.account_count > 1 || Boolean(params.requestedAccount?.trim())),
+      dispatcher_input: buildDispatcherInput({
+        appSlug: app.toolkit_slug,
+        toolName: result.tool.name,
+        secret: params.searchSecret,
+        mode: "local_catalog_mcp",
+        selectedAccount,
+        includeLegacyAccountFields: true,
+      }),
+      execution_guidance: null,
+      recommended_plan_steps: [],
+      known_pitfalls: [],
+      difficulty: null,
+      pagination_input_hints: detectPaginationInputHints(result.tool.input_schema),
+      search_source: "local_catalog_mcp",
+    }];
+  });
+}
+
+function runLocalComposioToolSearch(params: {
+  workspaceDir: string;
+  index: ComposioToolIndexFile;
+  queryText: string;
+  requestedApp?: string;
+  requestedAccount?: string;
+  topK?: number;
+  searchSecret: string;
+}): ComposioSearchRun {
+  const catalog = readComposioToolCatalogFile(params.workspaceDir);
+  const search = searchComposioTools({
+    index: params.index,
+    catalog,
+    query: params.queryText,
+    app: params.requestedApp,
+    topK: params.topK,
+  });
+  return {
+    top_confidence: search.top_confidence,
+    results: buildSearchPresentationResults({
+      index: params.index,
+      queryText: params.queryText,
+      requestedAccount: params.requestedAccount,
+      searchResults: search.results,
+      searchSecret: params.searchSecret,
+    }),
+    search_source: "local_catalog_fallback",
+    next_steps_guidance: [],
+  };
+}
+
+function buildSearchResultPayload(result: ComposioSearchPresentationResult) {
+  return {
+    app: result.app.toolkit_slug,
+    app_name: result.app.toolkit_name,
+    connected_accounts: result.app.account_count,
+    account_candidates: result.account_candidates,
+    ...(result.selected_account ? { selected_account: result.selected_account } : {}),
+    account_selection_required: result.account_selection_required,
+    server: "composio",
+    tool: result.search.tool.name,
+    source: result.search.source,
+    search_source: result.search_source,
+    recipe_intents: result.search.recipe_intents,
+    score: result.search.score,
+    why_matched: result.search.why_matched,
+    dispatcher_tool: COMPOSIO_CALL_TOOL_NAME,
+    dispatcher_input: result.dispatcher_input,
+    required_args: result.search.tool.required_args,
+    arg_hints: result.search.tool.arg_hints,
+    default_args: result.search.tool.default_args ?? {},
+    example_args: result.search.tool.example_args ?? result.search.tool.default_args ?? {},
+    example_prompts: result.search.tool.example_prompts ?? [],
+    ...(result.search.tool.input_schema ? { input_schema: result.search.tool.input_schema } : {}),
+    ...(result.execution_guidance ? { execution_guidance: result.execution_guidance } : {}),
+    ...(result.recommended_plan_steps.length > 0
+      ? { recommended_plan_steps: result.recommended_plan_steps }
+      : {}),
+    ...(result.known_pitfalls.length > 0 ? { known_pitfalls: result.known_pitfalls } : {}),
+    ...(result.difficulty ? { difficulty: result.difficulty } : {}),
+    ...(result.pagination_input_hints.length > 0
+      ? { pagination_input_hints: result.pagination_input_hints }
+      : {}),
+    ...(result.search_session_id ? { search_session_id: result.search_session_id } : {}),
+  };
+}
+
+function buildSearchInstruction(params: {
+  topConfidence: "high" | "medium" | "low";
+  results: ComposioSearchPresentationResult[];
+}): string {
+  const first = params.results[0];
+  if (!first) {
+    return "No matching integration tools were found.";
+  }
+  if (first.account_selection_required) {
+    return `Ask the user which connected ${first.app.toolkit_name} account to use before calling \`${COMPOSIO_CALL_TOOL_NAME}\`.`;
+  }
+  if (params.topConfidence === "low" && params.results.length > 1) {
+    return `The search is ambiguous. Ask a brief clarifying question or present the top candidates before calling \`${COMPOSIO_CALL_TOOL_NAME}\`.`;
+  }
+  if (first.pagination_input_hints.length > 0) {
+    return `Use the top search result with \`${COMPOSIO_CALL_TOOL_NAME}\` and the returned \`dispatcher_input\`. If the tool output shows more pages and the user asked for a complete result, keep paginating with cursor fields like ${first.pagination_input_hints.join(", ")} until complete.`;
+  }
+  return `Use the top search result with \`${COMPOSIO_CALL_TOOL_NAME}\` and the returned \`dispatcher_input\`, then send the final JSON \`arguments\` object for that tool.`;
+}
+
+function buildClarificationCandidates(results: ComposioSearchPresentationResult[]) {
+  return results.slice(0, 3).map((result) => ({
+    app: result.app.toolkit_slug,
+    app_name: result.app.toolkit_name,
+    tool: result.search.tool.name,
+    title: result.search.tool.title,
+    score: result.search.score,
+    why_matched: result.search.why_matched,
+  }));
+}
+
+function createComposioSearchTool(api: OpenClawPluginApi): AnyAgentTool {
+  return {
+    name: COMPOSIO_SEARCH_TOOLS_NAME,
+    label: `${DENCH_INTEGRATIONS_DISPLAY_NAME} Search`,
     description:
-      "Resolve the best Composio tool and argument hints for a connected app request without scanning the full Composio catalog.",
-    parameters: COMPOSIO_RESOLVE_TOOL_PARAMETERS,
-    async execute(args) {
+      `Search ${DENCH_INTEGRATIONS_DISPLAY_NAME} through the gateway, return full tool schemas plus plan guidance, and provide dispatcher inputs for ${COMPOSIO_CALL_TOOL_NAME}.`,
+    parameters: COMPOSIO_SEARCH_TOOL_PARAMETERS,
+    async execute(_toolCallId: string, input: Record<string, unknown>) {
       const workspaceDir = resolveWorkspaceDir(api);
       if (!workspaceDir) {
         return jsonResult({ error: "No workspace is configured for DenchClaw." });
       }
 
-      const payload = asRecord(args) ?? {};
+      const payload = asRecord(input) ?? {};
+      const query = readString(payload.query) ?? "";
       const requestedApp = readString(payload.app);
+      const requestedAccount = readString(payload.account);
+      const sessionId = readString(payload.session_id);
+      const rawTopK = typeof payload.top_k === "number" ? payload.top_k : Number(payload.top_k);
+      const topK = Number.isFinite(rawTopK) ? Math.max(1, Math.min(Math.trunc(rawTopK), 10)) : 5;
+      const normalizedRequestedApp = normalizeResolverApp(requestedApp);
+      const searchSecret = resolveComposioSearchSecret(api, workspaceDir);
+
+      const gatewaySearch = await runGatewayComposioToolSearch({
+        api,
+        workspaceDir,
+        index: null,
+        queryText: [requestedApp, query].filter(Boolean).join(" "),
+        requestedApp,
+        requestedAccount,
+        topK,
+        sessionId: sessionId ?? undefined,
+        searchSecret,
+      });
+      if (!gatewaySearch) {
+        return jsonResult({
+          error: `${DENCH_INTEGRATIONS_DISPLAY_NAME} search is unavailable.`,
+          guidance: `Check the Dench Cloud gateway/API key configuration, then retry ${COMPOSIO_SEARCH_TOOLS_NAME}.`,
+        });
+      }
+
+      const requestedStatus = normalizedRequestedApp
+        ? findGatewayToolkitStatus(gatewaySearch.toolkit_connection_statuses ?? [], normalizedRequestedApp)
+        : null;
+
+      if (gatewaySearch.results.length > 0) {
+        const results = gatewaySearch.results.map((result) => buildSearchResultPayload(result));
+        return jsonResult({
+          query,
+          app_filter: normalizedRequestedApp,
+          result_count: results.length,
+          top_confidence: gatewaySearch.top_confidence,
+          search_source: gatewaySearch.search_source,
+          ...(gatewaySearch.search_session_id ? { search_session_id: gatewaySearch.search_session_id } : {}),
+          recommended_result: results[0],
+          results,
+          ...(gatewaySearch.tool_schemas ? { tool_schemas: gatewaySearch.tool_schemas } : {}),
+          ...(gatewaySearch.toolkit_connection_statuses
+            ? { toolkit_connection_statuses: gatewaySearch.toolkit_connection_statuses }
+            : {}),
+          ...(gatewaySearch.next_steps_guidance.length > 0
+            ? { next_steps_guidance: gatewaySearch.next_steps_guidance }
+            : {}),
+          ...(gatewaySearch.time_info ? { time_info: gatewaySearch.time_info } : {}),
+          instruction: buildSearchInstruction({
+            topConfidence: gatewaySearch.top_confidence,
+            results: gatewaySearch.results,
+          }),
+        });
+      }
+
+      if (normalizedRequestedApp && requestedStatus && readBoolean(requestedStatus.has_active_connection) === false) {
+        const actionLink = buildComposioActionLink("connect", normalizedRequestedApp);
+        return jsonResult({
+          query,
+          app_filter: normalizedRequestedApp,
+          availability: "connect_required",
+          top_confidence: "low",
+          results: [],
+          instruction: actionLink
+            ? `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise and end the assistant reply with this exact markdown link: ${actionLink}`
+            : `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise.`,
+          ...(gatewaySearch.toolkit_connection_statuses
+            ? { toolkit_connection_statuses: gatewaySearch.toolkit_connection_statuses }
+            : {}),
+          ...(gatewaySearch.next_steps_guidance.length > 0
+            ? { next_steps_guidance: gatewaySearch.next_steps_guidance }
+            : {}),
+          ...(gatewaySearch.error ? { gateway_error: gatewaySearch.error } : {}),
+          ...buildResolverActionDetails("connect", normalizedRequestedApp),
+        });
+      }
+
+      return jsonResult({
+        query,
+        app_filter: normalizedRequestedApp,
+        result_count: 0,
+        top_confidence: gatewaySearch.top_confidence,
+        search_source: gatewaySearch.search_source,
+        ...(gatewaySearch.search_session_id ? { search_session_id: gatewaySearch.search_session_id } : {}),
+        results: [],
+        instruction: normalizedRequestedApp
+          ? `No executable ${humanizeResolverApp(normalizedRequestedApp)} integration tools matched this request. Refine the query or ask a brief clarifying question before searching again.`
+          : "No executable integration tools matched this request. Ask a clarifying question or refine the search query.",
+        ...(gatewaySearch.toolkit_connection_statuses
+          ? { toolkit_connection_statuses: gatewaySearch.toolkit_connection_statuses }
+          : {}),
+        ...(gatewaySearch.next_steps_guidance.length > 0
+          ? { next_steps_guidance: gatewaySearch.next_steps_guidance }
+          : {}),
+        ...(gatewaySearch.time_info ? { time_info: gatewaySearch.time_info } : {}),
+        ...(gatewaySearch.error ? { gateway_error: gatewaySearch.error } : {}),
+      });
+    },
+  };
+}
+
+function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
+  return {
+    name: COMPOSIO_RESOLVE_TOOL_NAME,
+    label: `${DENCH_INTEGRATIONS_DISPLAY_NAME} Resolve`,
+    description:
+      `Compatibility wrapper that resolves the single best ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tool for a request using the ranked ${COMPOSIO_SEARCH_TOOLS_NAME} backend.`,
+    parameters: COMPOSIO_RESOLVE_TOOL_PARAMETERS,
+    async execute(_toolCallId: string, input: Record<string, unknown>) {
+      const workspaceDir = resolveWorkspaceDir(api);
+      if (!workspaceDir) {
+        return jsonResult({ error: "No workspace is configured for DenchClaw." });
+      }
+
+      const payload = asRecord(input) ?? {};
+      const requestedApp = readString(payload.app);
+      const requestedAccount = readString(payload.account);
       const intent = readString(payload.intent) ?? "";
       const userRequest = readString(payload.userRequest);
-      const queryText = [requestedApp, intent, userRequest].filter(Boolean).join(" ");
+      const queryText = [requestedApp, requestedAccount, intent, userRequest].filter(Boolean).join(" ");
       const normalizedRequestedApp = normalizeResolverApp(requestedApp);
+      const searchSecret = resolveComposioSearchSecret(api, workspaceDir);
 
-      const index = readComposioToolIndexFile(workspaceDir);
-      if (!index || index.connected_apps.length === 0) {
-        if (!normalizedRequestedApp) {
-          return jsonResult({
-            error: "No verified Composio tool index is available in this workspace.",
-            guidance: "Open App Connections, repair Composio MCP if needed, rebuild the tool index, or provide the target app explicitly.",
-          });
-        }
-        const fallback = chooseFallbackTool(normalizedRequestedApp, queryText);
-        if (!fallback) {
-          return jsonResult({
-            error: `No bundled fallback recipe exists for ${normalizedRequestedApp}.`,
-            guidance: "Rebuild the Composio tool index from App Connections to get the exact tool list for this workspace.",
-          });
-        }
-        const status = describeStatusForResolver(workspaceDir);
-        const actionLink = buildComposioActionLink("connect", normalizedRequestedApp);
+      const gatewaySearch = await runGatewayComposioToolSearch({
+        api,
+        workspaceDir,
+        index: null,
+        queryText,
+        requestedApp,
+        requestedAccount,
+        topK: 5,
+        searchSecret,
+      });
+      if (!gatewaySearch) {
         return jsonResult({
-          app: normalizedRequestedApp,
-          app_name: humanizeResolverApp(normalizedRequestedApp),
-          connected_accounts: 0,
-          availability: "connect_required",
-          server: "composio",
-          tool: fallback.tool,
-          recommended_intent: fallback.intent,
-          required_args: fallback.required_args,
-          arg_hints: fallback.arg_hints,
-          default_args: fallback.default_args ?? {},
-          example_args: fallback.default_args ?? {},
-          example_prompts: fallback.example_prompts ?? [],
-          mcp_verified: status.verified,
-          status_message: status.message,
-          instruction: actionLink
-            ? `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise. Only call \`${fallback.tool}\` if it is already available in this session; otherwise explain the limitation briefly and end the assistant reply with this exact markdown link: ${actionLink}`
-            : `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise. Only call \`${fallback.tool}\` if it is already available in this session.`,
-          ...buildResolverActionDetails("connect", normalizedRequestedApp),
+          error: `${DENCH_INTEGRATIONS_DISPLAY_NAME} search is unavailable.`,
+          guidance: `Check the Dench Cloud gateway/API key configuration, then retry ${COMPOSIO_RESOLVE_TOOL_NAME}.`,
         });
       }
 
-      const app = chooseApp(index, requestedApp, queryText);
-      if (!app) {
-        const actionLink = buildComposioActionLink("connect", normalizedRequestedApp);
-        return jsonResult({
-          error: "Could not match the request to a connected Composio app.",
-          available_apps: index.connected_apps.map((entry) => entry.toolkit_slug),
-          availability: "connect_required",
-          instruction: actionLink
-            ? `Explain briefly that the requested app is not currently connected, then end the assistant reply with this exact markdown link: ${actionLink}`
-            : "Explain briefly that the requested app is not currently connected.",
-          ...buildResolverActionDetails("connect", normalizedRequestedApp),
-        });
-      }
-
-      let chosen = chooseTool(app, queryText);
-      if (!chosen.tool || chosen.score <= 0) {
-        const broaderCatalog = await fetchBroaderCatalogSlice(api, app.toolkit_slug).catch(() => []);
-        if (broaderCatalog.length > 0) {
-          const broaderChoice = chooseBestTool(broaderCatalog, app.recipes, queryText);
-          if (broaderChoice.tool && broaderChoice.score > chosen.score) {
-            chosen = broaderChoice;
+      if (gatewaySearch.results.length === 0) {
+        if (normalizedRequestedApp) {
+          const requestedStatus = findGatewayToolkitStatus(
+            gatewaySearch.toolkit_connection_statuses ?? [],
+            normalizedRequestedApp,
+          );
+          if (requestedStatus && readBoolean(requestedStatus.has_active_connection) === false) {
+            const actionLink = buildComposioActionLink("connect", normalizedRequestedApp);
+            return jsonResult({
+              app: normalizedRequestedApp,
+              app_name: humanizeResolverApp(normalizedRequestedApp),
+              connected_accounts: 0,
+              availability: "connect_required",
+              server: "composio",
+              instruction: actionLink
+                ? `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise and end the assistant reply with this exact markdown link: ${actionLink}`
+                : `Treat ${humanizeResolverApp(normalizedRequestedApp)} as unavailable until proven otherwise.`,
+              ...(gatewaySearch.toolkit_connection_statuses
+                ? { toolkit_connection_statuses: gatewaySearch.toolkit_connection_statuses }
+                : {}),
+              ...(gatewaySearch.error ? { gateway_error: gatewaySearch.error } : {}),
+              ...buildResolverActionDetails("connect", normalizedRequestedApp),
+            });
           }
         }
-      }
 
-      const { tool, recipe } = chosen;
-      if (!tool) {
-        const reconnectLink = buildComposioActionLink("reconnect", app.toolkit_slug);
+        const reconnectTarget = normalizedRequestedApp ?? undefined;
+        const reconnectLink = reconnectTarget ? buildComposioActionLink("reconnect", reconnectTarget) : null;
         return jsonResult({
-          error: `No indexed Composio tools are available for ${app.toolkit_name}.`,
-          app: app.toolkit_slug,
-          availability: "reconnect_recommended",
+          error: normalizedRequestedApp
+            ? `No ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools matched this ${normalizedRequestedApp} request.`
+            : `No ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools matched this request.`,
+          availability: reconnectTarget ? "reconnect_recommended" : "unknown",
           instruction: reconnectLink
-            ? `The connected ${app.toolkit_name} app looks unavailable or stale. Explain that briefly and end the assistant reply with this exact markdown link: ${reconnectLink}`
-            : `The connected ${app.toolkit_name} app looks unavailable or stale.`,
-          ...buildResolverActionDetails("reconnect", app.toolkit_slug),
+            ? `The live ${DENCH_INTEGRATIONS_DISPLAY_NAME} search did not return an executable ${humanizeResolverApp(reconnectTarget)} tool. Explain that briefly and end the assistant reply with this exact markdown link: ${reconnectLink}`
+            : `Ask a brief clarifying question or call \`${COMPOSIO_SEARCH_TOOLS_NAME}\` again with a narrower query.`,
+          ...(gatewaySearch.error ? { gateway_error: gatewaySearch.error } : {}),
+          ...(gatewaySearch.search_session_id ? { search_session_id: gatewaySearch.search_session_id } : {}),
+          ...(reconnectTarget ? buildResolverActionDetails("reconnect", reconnectTarget) : {}),
         });
       }
 
-      const status = describeStatusForResolver(workspaceDir);
-      const directlyCallable = app.tools.some((entry) => entry.name === tool.name)
-        || Object.values(app.recipes).includes(tool.name);
-      const instruction = directlyCallable
-        ? `Call the Composio tool \`${tool.name}\` directly. Do not use gog, shell CLIs, curl, or raw gateway HTTP.`
-        : `This recommendation came from the broader Composio catalog fallback. If \`${tool.name}\` is directly available in this session, call it. Otherwise rebuild the Composio tool index before retrying.`;
+      if (!requestedApp && gatewaySearch.top_confidence === "low" && gatewaySearch.results.length > 1) {
+        return jsonResult({
+          error: `Multiple ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools matched the request.`,
+          clarification_required: true,
+          top_confidence: gatewaySearch.top_confidence,
+          candidates: buildClarificationCandidates(gatewaySearch.results),
+          instruction: `Ask a brief clarifying question or call \`${COMPOSIO_SEARCH_TOOLS_NAME}\` to review the ranked candidates before executing anything.`,
+        });
+      }
+
+      const top = gatewaySearch.results[0];
+      if (!top) {
+        return jsonResult({
+          error: `No ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools matched the request.`,
+        });
+      }
+
+      if (top.account_selection_required) {
+        return jsonResult({
+          app: top.app.toolkit_slug,
+          app_name: top.app.toolkit_name,
+          connected_accounts: top.app.account_count,
+          account_selection_required: true,
+          account_candidates: top.account_candidates,
+          availability: "account_selection_required",
+          instruction: `Ask the user which connected ${top.app.toolkit_name} account to use before calling \`${COMPOSIO_CALL_TOOL_NAME}\`. Once they choose, call \`${COMPOSIO_RESOLVE_TOOL_NAME}\` again with the \`account\` field set to that label or identity.`,
+        });
+      }
+
+      const instruction = buildSearchInstruction({
+        topConfidence: gatewaySearch.top_confidence,
+        results: gatewaySearch.results,
+      });
       return jsonResult({
-        app: app.toolkit_slug,
-        app_name: app.toolkit_name,
-        connected_accounts: app.account_count,
-        server: "composio",
-        tool: tool.name,
-        source: tool.source,
-        directly_callable: directlyCallable,
-        recommended_intent: recipe,
-        required_args: tool.required_args,
-        arg_hints: tool.arg_hints,
-        default_args: tool.default_args ?? {},
-        example_args: tool.example_args ?? tool.default_args ?? {},
-        example_prompts: tool.example_prompts ?? [],
-        mcp_verified: status.verified,
-        status_message: status.message,
+        ...buildSearchResultPayload(top),
+        directly_callable: true,
+        recommended_intent: top.search.recipe_intents[0] ?? null,
+        top_confidence: gatewaySearch.top_confidence,
+        search_source: gatewaySearch.search_source,
         instruction,
       });
     },
@@ -732,24 +2065,27 @@ function createComposioResolveTool(api: OpenClawPluginApi): AnyAgentTool {
 
 function buildComposioDefaultGuidance(composioAppsSkillPath: string): string {
   return [
-    "## Connected App Tools (via Composio MCP)",
+    `## Connected App Tools (${DENCH_INTEGRATIONS_DISPLAY_NAME})`,
     "",
-    "Composio is the default integration layer for connected apps in this workspace.",
+    `${DENCH_INTEGRATIONS_DISPLAY_NAME} gateway-backed search plus execute is the default integration layer for connected apps in this workspace.`,
     "",
-    "- If the user mentions Composio, rube, map, MCP, or says an app is already connected, use the Composio tools first.",
-    `- **When the user asks about ANY third-party app or service** (e.g. Slack, HubSpot, Salesforce, Jira, Asana, Discord, Airtable, Notion, Linear, Gmail, GitHub, Google Calendar, Stripe, Zendesk, Trello, etc.), always call \`${COMPOSIO_RESOLVE_TOOL_NAME}\` first to verify whether it is connected before answering. This applies to ALL apps, not just the ones listed here.`,
-    `- If the exact Composio tool is not obvious, call \`${COMPOSIO_RESOLVE_TOOL_NAME}\` before guessing or scanning the full Composio catalog.`,
-    `- Load and follow \`${composioAppsSkillPath}\` for Gmail, Slack, GitHub, Notion, Google Calendar, and Linear recipes when the generated tool index is missing.`,
-    "- Never use `gog`, shell CLIs, curl, or raw `/v1/composio/*` HTTP for Gmail/Calendar/Drive/Slack/GitHub/Notion/Linear when Composio is connected or the user mentions Composio/rube/map/MCP.",
-    "- **When the resolver returns `action_link_markdown`, you MUST end the assistant reply with that exact markdown link.** Do not omit it. Do not rephrase it as plain text. The link renders as a clickable button in chat.",
+    `- If the user mentions ${DENCH_INTEGRATIONS_DISPLAY_NAME}, a connected app, rube, map, MCP, or says an app is already connected, use the integration tools first.`,
+    `- **When the user asks about ANY third-party app or service** (e.g. Slack, HubSpot, Salesforce, Jira, Asana, Discord, Airtable, Notion, Linear, Gmail, GitHub, Google Calendar, Stripe, Zendesk, Trello, etc.), call \`${COMPOSIO_SEARCH_TOOLS_NAME}\` first to verify whether it is connected, inspect the official ranked tools, and read the full returned schemas before answering. This applies to ALL apps, not just the ones listed here.`,
+    "- Trust the official integration search payload exposed through the gateway. Use the returned `input_schema`, `recommended_plan_steps`, `known_pitfalls`, `toolkit_connection_statuses`, and `search_session_id` as the source of truth.",
+    `- After searching, execute the chosen tool with \`${COMPOSIO_CALL_TOOL_NAME}\` using the returned \`dispatcher_input\` (especially \`search_context_token\` and any \`search_session_id\`). Do not assume connected-app tools are registered as direct top-level tools in the session.`,
+    `- If search returns \`account_selection_required\`, ask the user which connected account to use before calling \`${COMPOSIO_CALL_TOOL_NAME}\`.`,
+    `- Use \`${COMPOSIO_RESOLVE_TOOL_NAME}\` only when you specifically want a single best-match compatibility wrapper instead of the full ranked search results.`,
+    "- Review `recommended_plan_steps`, `known_pitfalls`, enums, defaults, required fields, and any pagination hints from `composio_search_tools` before executing the tool.",
+    `- Load and follow \`${composioAppsSkillPath}\` for high-level workflow hints, but let the live integration schema decide the actual argument names and types.`,
+    "- Do not rely on `composio-tool-index.json`, `composio-tool-catalog.json`, or `composio-mcp-status.json` as runtime inputs. They are not the source of truth.",
+    `- Never use \`gog\`, shell CLIs, curl, or raw gateway HTTP for Gmail/Calendar/Drive/Slack/GitHub/Notion/Linear when ${DENCH_INTEGRATIONS_DISPLAY_NAME} is connected or the user mentions the connected-app layer/rube/map/MCP.`,
+    "- **When the integration search or resolve response returns `action_link_markdown`, you MUST end the assistant reply with that exact markdown link.** Do not omit it. Do not rephrase it as plain text. The link renders as a clickable button in chat.",
     "- Missing first-time connection example: `[Connect Slack](dench://composio/connect?toolkit=slack&name=Slack)`.",
     "- Stale or unusable connection example: `[Reconnect Slack](dench://composio/reconnect?toolkit=slack&name=Slack)`.",
     "- If the resolver returns an error with `availability: \"connect_required\"`, briefly explain the app is not connected and end with the connect link. Do NOT suggest navigating to Integrations manually.",
-    "- Gmail fast path: `GMAIL_FETCH_EMAILS` with `label_ids: [\"INBOX\"]` and `max_results: 10`; for one message use `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID`.",
-    "- GitHub fast path: for 'recent PRs' or general PR discovery, prefer `GITHUB_FIND_PULL_REQUESTS` when available.",
-    "- Google Calendar fast path: for 'what's upcoming' or 'find an event', prefer `GOOGLE_CALENDAR_EVENTS_LIST` with an explicit time window when the schema supports it.",
-    "- If Composio MCP is unavailable in this session, stop and report repair guidance instead of bypassing it.",
-    "- If a Composio tool call fails because of argument shape, fix the arguments and retry once before considering any fallback.",
+    "- If the integration search succeeds, do not stop because of a separate health warning or stale workspace cache. The live gateway-backed search result is the authority.",
+    "- If an integration tool call fails because of argument shape, fix the arguments and retry once before considering any fallback.",
+    "- When the user implicitly asks for the full dataset, keep paginating until the tool response no longer advertises more pages.",
     "",
   ].join("\n");
 }
@@ -762,9 +2098,7 @@ export function buildIdentityPrompt(workspaceDir: string): string {
   const appsDir = path.join(workspaceDir, "apps");
   const dbPath = path.join(workspaceDir, "workspace.duckdb");
 
-  const composioCheatSheet = loadComposioToolCheatSheetMarkdown(workspaceDir);
-  const composioGuidance = composioCheatSheet
-    ?? buildComposioDefaultGuidance(composioAppsSkillPath);
+  const composioGuidance = buildComposioDefaultGuidance(composioAppsSkillPath);
 
   return `# DenchClaw System Prompt
 
@@ -802,7 +2136,7 @@ When in doubt, delegate. A well-delegated task finishes faster and produces bett
 |---|---|---|---|
 | **CRM Analyst** | \`${crmSkillPath}\` | DuckDB queries, object/field/entry CRUD, pipeline ops, data enrichment, PIVOT views, report generation, workspace docs | Default model; fast model for simple queries |
 | **App Builder** | \`${appBuilderSkillPath}\` | Build \`.dench.app\` web apps with DuckDB, Chart.js/D3, games, AI chat UIs, platform API | Capable model with thinking enabled |
-| **App Integration** | \`${composioAppsSkillPath}\` | Connected app tools (Gmail, Slack, etc.) via Composio MCP — recipes and argument defaults | Default model |
+| **App Integration** | \`${composioAppsSkillPath}\` | Connected app tools (Gmail, Slack, etc.) via ${DENCH_INTEGRATIONS_DISPLAY_NAME} — recipes and argument defaults | Default model |
 
 ### Ad-hoc specialists (check for custom skills first)
 
@@ -863,11 +2197,12 @@ For multi-session projects, write a session handoff summary to \`${workspaceDir}
 - For prospecting or lead-list generation, prefer \`apollo_enrich\` with \`action: "people_search"\` when the user wants people matching titles, locations, or company/domain filters.
 - Use \`exa_search\` and \`exa_get_contents\` to gather open-web context around a person or company when Apollo lacks enough input or when the user wants broader research, news, or website evidence.
 - Use Apollo for structured CRM enrichment and Exa for broader web research; combine them when helpful, but do not substitute Exa for Apollo on explicit enrichment requests unless Apollo is unavailable or insufficient.
-- For connected apps (Gmail, Slack, GitHub, etc.), use the **Composio** tools directly. Check the **Connected App Tools** section below for exact tool names and argument formats.
-- **When the user mentions ANY third-party app or service**, always call \`${COMPOSIO_RESOLVE_TOOL_NAME}\` before answering to verify availability — this applies to all apps (HubSpot, Salesforce, Slack, Gmail, etc.), not just a fixed list. If the resolver says the app is not connected, emit the connect link it provides.
-- If the exact Composio tool name is unclear, call \`${COMPOSIO_RESOLVE_TOOL_NAME}\` before exploring the curated Composio tools for this workspace.
-- **Never** use curl or raw HTTP to call Composio or gateway integration endpoints — always use the Composio tools.
-- **Never** use \`gog\` for Gmail/Calendar/Drive when Composio is connected or the user mentions Composio/rube/map/MCP. \`gog\` is a fallback only when the user explicitly asks for it or Composio is unavailable.
+- For connected apps (Gmail, Slack, GitHub, etc.), use the **${DENCH_INTEGRATIONS_DISPLAY_NAME}** tools directly. Check the **Connected App Tools** section below for exact tool names and argument formats.
+- **When the user mentions ANY third-party app or service**, always call \`${COMPOSIO_SEARCH_TOOLS_NAME}\` before answering to verify availability, inspect the ranked tool matches, and read the returned full schemas — this applies to all apps (HubSpot, Salesforce, Slack, Gmail, etc.), not just a fixed list. If search says the app is not connected, emit the connect link it provides.
+- If the exact integration tool name is unclear, call \`${COMPOSIO_SEARCH_TOOLS_NAME}\` before guessing or browsing the curated integration tools for this workspace, then use the returned \`dispatcher_input\` unchanged except for the final \`arguments\`.
+- Use \`${COMPOSIO_RESOLVE_TOOL_NAME}\` only when a single best-match compatibility result is explicitly more convenient than the ranked search output.
+- **Never** use curl or raw HTTP to call gateway integration endpoints — always use the integration wrapper tools.
+- **Never** use \`gog\` for Gmail/Calendar/Drive when ${DENCH_INTEGRATIONS_DISPLAY_NAME} is connected or the user mentions the connected-app layer/rube/map/MCP. \`gog\` is a fallback only when the user explicitly asks for it or the integration layer is unavailable.
 
 ${composioGuidance ? `\n${composioGuidance}\n` : ""}
 ## Links
@@ -883,11 +2218,7 @@ export function resolveWorkspaceDir(api: any): string | undefined {
 }
 
 function shouldRegisterComposioResolver(workspaceDir: string): boolean {
-  if (readComposioToolIndexFile(workspaceDir)) {
-    return true;
-  }
-  const skillPath = path.join(workspaceDir, "skills", "composio-apps", "SKILL.md");
-  return existsSync(skillPath) && readFileSync(skillPath, "utf-8").includes("Composio");
+  return workspaceDir.trim().length > 0;
 }
 
 export default function register(api: any) {
@@ -898,6 +2229,7 @@ export default function register(api: any) {
 
   const workspaceDir = resolveWorkspaceDir(api);
   if (workspaceDir && typeof api.registerTool === "function" && shouldRegisterComposioResolver(workspaceDir)) {
+    api.registerTool(createComposioSearchTool(api));
     api.registerTool(createComposioResolveTool(api));
   }
 

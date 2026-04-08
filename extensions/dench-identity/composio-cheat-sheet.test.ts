@@ -16,6 +16,18 @@ describe("formatComposioToolCheatSheetFromIndex", () => {
           toolkit_slug: "gmail",
           toolkit_name: "Gmail",
           account_count: 2,
+          accounts: [
+            {
+              connected_account_id: "conn_gmail_1",
+              account_identity: "gmail:work",
+              account_identity_source: "gateway_stable_id",
+              identity_confidence: "high",
+              display_label: "Work Gmail",
+              account_email: "work@example.com",
+              related_connection_ids: [],
+              is_same_account_reconnect: false,
+            },
+          ],
           tools: [
             {
               name: "GMAIL_FETCH_EMAILS",
@@ -38,7 +50,11 @@ describe("formatComposioToolCheatSheetFromIndex", () => {
     expect(md).toContain("GMAIL_FETCH_EMAILS");
     expect(md).toContain("Read recent emails");
     expect(md).toContain("label_ids");
-    expect(md).toContain("Composio MCP");
+    expect(md).toContain("Dench Integrations");
+    expect(md).not.toContain("Composio MCP");
+    expect(md).toContain("composio_search_tools");
+    expect(md).toContain("composio_call_tool");
+    expect(md).toContain("Work Gmail");
   });
 });
 
@@ -85,7 +101,9 @@ describe("loadComposioToolCheatSheetMarkdown", () => {
     const md = loadComposioToolCheatSheetMarkdown(tmp);
     expect(md).toContain("Slack (1 account connected)");
     expect(md).toContain("SLACK_SEND_MESSAGE");
+    expect(md).toContain("composio_search_tools");
     expect(md).toContain("composio_resolve_tool");
+    expect(md).toContain("composio_call_tool");
   });
 
   it("only claims verified MCP availability when the status file says so", () => {
@@ -124,7 +142,7 @@ describe("loadComposioToolCheatSheetMarkdown", () => {
       JSON.stringify({
         summary: {
           verified: false,
-          message: "Composio MCP is configured and the gateway is reachable, but live agent visibility has not been verified yet.",
+          message: "Dench Integrations is configured and the gateway is reachable, but live agent visibility has not been verified yet.",
         },
       }),
       "utf-8",

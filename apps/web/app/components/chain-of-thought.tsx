@@ -1782,21 +1782,8 @@ function StepIcon({ kind }: { kind: StepKind }) {
 	switch (kind) {
 		case "composio":
 			return (
-				<svg
-					width={size}
-					height={size}
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke={color}
-					strokeWidth="2"
-					strokeLinecap="round"
-					strokeLinejoin="round"
-				>
-					<path d="M9 12a3 3 0 0 1 3-3h3" />
-					<path d="M15 12a3 3 0 0 1-3 3H9" />
-					<path d="M7 9l-2 2 2 2" />
-					<path d="M17 15l2-2-2-2" />
-				</svg>
+				/* eslint-disable-next-line @next/next/no-img-element */
+				<img src="/dench-integrations-icon.png" alt="" width={size} height={size} className="rounded-sm" />
 			);
 		case "search":
 			return (

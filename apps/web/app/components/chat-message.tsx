@@ -161,13 +161,19 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				status: toolStatus(tp.state, tp.preliminary === true),
 			});
 		} else {
+			const output = asRecord(tp.output);
+			const status = toolStatus(tp.state, tp.preliminary === true);
 			chain.push({
 				kind: "tool",
 				toolName: tp.toolName,
 				toolCallId: tp.toolCallId,
-				status: toolStatus(tp.state, tp.preliminary === true),
+				status,
 				args: asRecord(tp.input),
-				output: asRecord(tp.output),
+				output,
+				errorText:
+					status === "error" && typeof output?.error === "string"
+						? output.error
+						: undefined,
 			});
 		}
 	} else if (part.type.startsWith("tool-")) {
@@ -218,6 +224,7 @@ function groupParts(parts: UIMessage["parts"]): MessageSegment[] {
 				status: toolStatus(resolvedState, tp.preliminary === true),
 				args: asRecord(tp.input) ?? asRecord(tp.args),
 				output: asRecord(tp.output) ?? asRecord(tp.result),
+				errorText: tp.errorText,
 			});
 		}
 	}
@@ -764,18 +771,24 @@ function ComposioActionButton({
 	return (
 		<button
 			type="button"
-			className="not-prose my-1 inline-flex items-center gap-1.5 rounded-lg px-1 py-0.5 pr-2.5 text-xs font-semibold whitespace-nowrap transition-colors"
-		style={{
-			background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
-			color: "var(--color-accent)",
-			border: "none",
-		}}
-		onMouseEnter={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--color-accent) 15%, transparent)"; }}
-		onMouseLeave={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--color-accent) 10%, transparent)"; }}
+			className="not-prose my-1 inline-flex items-center gap-2 rounded-full px-1 py-1 pr-3 text-sm font-semibold whitespace-nowrap transition-all duration-150 hover:-translate-y-px active:translate-y-0"
+			style={isConnectAction
+				? {
+					background: "var(--color-accent)",
+					color: "#fff",
+					border: "1px solid color-mix(in srgb, var(--color-accent) 78%, black 22%)",
+					boxShadow: "var(--shadow-sm)",
+				}
+				: {
+					background: "var(--color-surface)",
+					color: "var(--color-text)",
+					border: "1px solid var(--color-border)",
+					boxShadow: "var(--shadow-sm)",
+				}}
 			onClick={() => onPress?.(action)}
 		>
 			<span
-				className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded"
+				className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full"
 				aria-hidden="true"
 				style={isConnectAction
 					? {

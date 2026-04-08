@@ -460,7 +460,7 @@ function AttachmentStrip({
 								<img
 									src={af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
 									alt={af.name}
-									className="block rounded-xl object-cover cursor-pointer transition-opacity duration-200 hover:opacity-85"
+									className="block rounded-xl object-cover cursor-pointer"
 									style={{
 										height: 80,
 										width: "auto",
@@ -530,7 +530,7 @@ function AttachmentStrip({
 			</div>
 
 			<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
-				<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl duration-200" showCloseButton>
+				<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl" showCloseButton>
 					{previewSrc && (
 						<img
 							src={previewSrc}

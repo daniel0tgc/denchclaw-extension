@@ -419,7 +419,7 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 				return (
 					<div
 						key={i}
-						className="relative rounded-xl overflow-hidden shrink-0 cursor-pointer transition-opacity duration-200 hover:opacity-85"
+						className="relative rounded-xl overflow-hidden shrink-0 cursor-pointer"
 						onClick={() => setPreviewSrc(src)}
 					>
 						<img
@@ -447,7 +447,7 @@ function AttachedFilesCard({ paths }: { paths: string[] }) {
 			})}
 		</div>
 		<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
-			<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl duration-200" showCloseButton>
+			<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl" showCloseButton>
 				{previewSrc && (
 					<img
 						src={previewSrc}
@@ -620,12 +620,12 @@ function PreviewableImage({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLIm
 				src={src}
 				alt={alt ?? ""}
 				loading="lazy"
-				className="cursor-pointer transition-opacity duration-200 hover:opacity-85"
+				className="cursor-pointer"
 				onClick={() => setOpen(true)}
 				{...props}
 			/>
 			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl duration-200" showCloseButton>
+				<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl" showCloseButton>
 					{src && (
 						<img
 							src={src}

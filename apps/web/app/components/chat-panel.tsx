@@ -22,6 +22,7 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { UnicodeSpinner } from "./unicode-spinner";
+import { Dialog, DialogContent } from "./ui/dialog";
 import type { ChatPanelRuntimeState } from "@/lib/chat-session-registry";
 import {
 	getStreamActivityLabel,
@@ -397,6 +398,8 @@ function AttachmentStrip({
 	onRemove: (id: string) => void;
 	onClearAll: () => void;
 }) {
+	const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+
 	if (files.length === 0) {return null;}
 
 	return (
@@ -454,11 +457,10 @@ function AttachmentStrip({
 							</button>
 
 							{category === "image" ? (
-								/* Image thumbnail — no filename */
 								<img
 									src={af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
 									alt={af.name}
-									className="block rounded-xl object-cover"
+									className="block rounded-xl object-cover cursor-pointer"
 									style={{
 										height: 80,
 										width: "auto",
@@ -466,6 +468,10 @@ function AttachmentStrip({
 										maxWidth: 140,
 										opacity: af.uploading ? 0.6 : 1,
 										background: "var(--color-bg-secondary)",
+									}}
+									onClick={() => {
+										const src = af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`;
+										setPreviewSrc(src);
 									}}
 									onError={(e) => {
 										(e.currentTarget as HTMLImageElement).style.display = "none";
@@ -522,6 +528,19 @@ function AttachmentStrip({
 					);
 				})}
 			</div>
+
+			<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
+				<DialogContent className="!max-w-[90vw] !w-auto !p-2 !rounded-2xl" showCloseButton>
+					{previewSrc && (
+						<img
+							src={previewSrc}
+							alt="Preview"
+							className="block rounded-xl"
+							style={{ maxHeight: "80vh", maxWidth: "85vw", objectFit: "contain" }}
+						/>
+					)}
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

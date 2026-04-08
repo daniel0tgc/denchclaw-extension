@@ -284,7 +284,12 @@ function buildComposioCallCardData(
 	args?: Record<string, unknown>,
 	output?: Record<string, unknown>,
 ) {
-	const toolName = readStringValue(args?.tool_name);
+	const execution = asRecordValue(output?.execution);
+	const recovery = asRecordValue(output?.recovery);
+	const toolName =
+		readStringValue(args?.tool_name) ??
+		readStringValue(output?.tool_slug) ??
+		readStringValue(execution?.tool_name);
 	if (!toolName) {return null;}
 	const toolArgs = asRecordValue(args?.arguments);
 	const keyArgs = toolArgs
@@ -315,16 +320,34 @@ function buildComposioCallCardData(
 			? `starting_after: ${readStringValue(output?.starting_after)}`
 			: null,
 	].filter((value): value is string => Boolean(value));
+	const recoveryBits = [
+		readStringValue(recovery?.recovered_via),
+		readStringValue(recovery?.retried_with_account)
+			? `account: ${readStringValue(recovery?.retried_with_account)}`
+			: null,
+		readStringValue(recovery?.refreshed_execution_ref)
+			? "refreshed execution_ref returned"
+			: null,
+	].filter((value): value is string => Boolean(value));
 	return {
-		app: readStringValue(args?.app),
+		app:
+			readStringValue(args?.app) ??
+			readStringValue(output?.toolkit) ??
+			readStringValue(execution?.toolkit),
 		toolName,
 		account:
 			readStringValue(args?.account) ??
+			readStringValue(output?.account) ??
+			readStringValue(execution?.account) ??
 			readStringValue(args?.connected_account_id) ??
 			readStringValue(args?.account_identity),
 		keyArgs,
 		pagination: paginationBits.length > 0 ? paginationBits.join(" | ") : null,
 		resultSummary,
+		sessionId:
+			readStringValue(output?.tool_router_session_id) ??
+			readStringValue(execution?.tool_router_session_id),
+		recoverySummary: recoveryBits.length > 0 ? recoveryBits.join(" | ") : null,
 	};
 }
 
@@ -1366,6 +1389,9 @@ function ToolStep({
 			: kind === "fetch"
 				? getFetchDomains(args, output)
 				: [];
+	const fallbackErrorText =
+		typeof output?.error === "string" ? output.error : undefined;
+	const resolvedErrorText = errorText ?? fallbackErrorText;
 	const outputText =
 		typeof output?.text === "string" ? output.text : undefined;
 
@@ -1584,7 +1610,7 @@ function ToolStep({
 						</div>
 					)}
 
-				{status === "error" && errorText && (
+				{status === "error" && resolvedErrorText && (
 					<div
 						className="mt-1.5 text-[12px] font-mono rounded-lg px-2.5 py-1.5"
 						style={{
@@ -1593,11 +1619,11 @@ function ToolStep({
 								"color-mix(in srgb, var(--color-error) 6%, var(--color-surface))",
 						}}
 					>
-						{errorText}
+						{resolvedErrorText}
 					</div>
 				)}
 
-				{composioSearchCard && status !== "error" && (
+				{composioSearchCard && (
 					<div
 						className="mt-1.5 rounded-lg px-2.5 py-2"
 						style={{
@@ -1663,7 +1689,7 @@ function ToolStep({
 					</div>
 				)}
 
-				{composioCallCard && status !== "error" && (
+				{composioCallCard && (
 					<div
 						className="mt-1.5 rounded-lg px-2.5 py-2"
 						style={{
@@ -1673,12 +1699,28 @@ function ToolStep({
 					>
 						<SummaryRow
 							label="Tool"
-							value={`${composioCallCard.app ?? "app"} / ${composioCallCard.toolName}`}
+							value={
+								composioCallCard.app
+									? `${composioCallCard.app} / ${composioCallCard.toolName}`
+									: composioCallCard.toolName
+							}
 						/>
 						{composioCallCard.account && (
 							<SummaryRow
 								label="Account"
 								value={composioCallCard.account}
+							/>
+						)}
+						{composioCallCard.sessionId && (
+							<SummaryRow
+								label="Session"
+								value={composioCallCard.sessionId}
+							/>
+						)}
+						{composioCallCard.recoverySummary && (
+							<SummaryRow
+								label="Recovery"
+								value={composioCallCard.recoverySummary}
 							/>
 						)}
 						{composioCallCard.keyArgs.length > 0 && (
@@ -1706,7 +1748,7 @@ function ToolStep({
 				{!outputText &&
 					!diffText &&
 					!isSingleMedia &&
-					status === "done" &&
+					status !== "running" &&
 					args &&
 					Object.keys(args).length > 0 && (
 						<pre
@@ -1782,8 +1824,21 @@ function StepIcon({ kind }: { kind: StepKind }) {
 	switch (kind) {
 		case "composio":
 			return (
-				/* eslint-disable-next-line @next/next/no-img-element */
-				<img src="/dench-integrations-icon.png" alt="" width={size} height={size} className="rounded-sm" />
+				<svg
+					width={size}
+					height={size}
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={color}
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M9 12a3 3 0 0 1 3-3h3" />
+					<path d="M15 12a3 3 0 0 1-3 3H9" />
+					<path d="M7 9l-2 2 2 2" />
+					<path d="M17 15l2-2-2-2" />
+				</svg>
 			);
 		case "search":
 			return (

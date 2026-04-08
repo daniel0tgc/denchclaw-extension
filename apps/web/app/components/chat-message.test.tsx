@@ -191,4 +191,82 @@ describe("ChatMessage", () => {
 
     expect(button.querySelector('img[src="/integrations/stripe-logomark.svg"]')).toBeNull();
   });
+
+  it("renders persisted Dench Integration failures with their error details", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-persisted-error",
+          role: "assistant",
+          parts: [{
+            type: "tool-invocation",
+            toolCallId: "tool-call-error",
+            toolName: "composio_call_tool",
+            args: {
+              execution_ref: "exec_posthog_1",
+              arguments: {
+                project_id: "proj_123",
+              },
+            },
+            result: {
+              tool_slug: "POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS",
+              toolkit: "posthog",
+              tool_router_session_id: "trs_posthog_123",
+            },
+            errorText:
+              "Validation failed for tool \"composio_call_tool\": execution_ref is required.",
+          }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /thought/i }));
+
+    expect(
+      screen.getByText(/Validation failed for tool "composio_call_tool"/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/posthog \/ POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"project_id": "proj_123"/)).toBeInTheDocument();
+  });
+
+  it("renders live Dench Integration failures with streamed output errors", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-streaming-error",
+          role: "assistant",
+          parts: [{
+            type: "dynamic-tool",
+            toolCallId: "tool-call-live-error",
+            toolName: "composio_call_tool",
+            state: "error",
+            input: {
+              execution_ref: "exec_posthog_1",
+            },
+            output: {
+              tool_slug: "POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS",
+              toolkit: "posthog",
+              tool_router_session_id: "trs_posthog_123",
+              error: "Gateway rejected the bridge invocation.",
+            },
+          }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /thought/i }));
+
+    expect(
+      screen.getByText(/Gateway rejected the bridge invocation./),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/posthog \/ POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS/),
+    ).toBeInTheDocument();
+  });
 });

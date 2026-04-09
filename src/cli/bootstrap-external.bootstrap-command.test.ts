@@ -2280,21 +2280,21 @@ describe("buildBootstrapDiagnostics", () => {
     });
   }
 
-  it("reports Composio as configured when Dench Cloud is enabled", () => {
+  it("reports Dench Integrations as configured when Dench Cloud is enabled", () => {
     const diagnostics = buildDiagnostics();
     const check = diagnostics.checks.find((entry) => entry.id === "composio");
     expect(check).toMatchObject({
       id: "composio",
       status: "pass",
-      detail: "Composio MCP configured via Dench Cloud gateway.",
+      detail: "Dench Integrations configured via Dench Cloud gateway.",
     });
   });
 
-  it("warns when Dench Cloud is enabled but Composio is not configured", () => {
+  it("warns when Dench Cloud is enabled but Dench Integrations is not configured", () => {
     const diagnostics = buildDiagnostics({ composioConfigured: false });
     const check = diagnostics.checks.find((entry) => entry.id === "composio");
     expect(check?.status).toBe("warn");
-    expect(check?.detail).toContain("Composio MCP not configured");
+    expect(check?.detail).toContain("Dench Integrations not configured");
     expect(check?.remediation).toContain("Settings > Integrations");
   });
 

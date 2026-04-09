@@ -74,22 +74,10 @@ const mocks = vi.hoisted(() => {
           },
         },
       },
-      mcp: {
-        servers: {
-          composio: {
-            url: `${params.gatewayUrl}/v1/composio/mcp`,
-            transport: "streamable-http",
-            headers: {
-              Authorization: `Bearer ${params.apiKey}`,
-            },
-          },
-        },
-      },
       tools: {
         alsoAllow: [
-          "composio_search_tools",
-          "composio_resolve_tool",
-          "composio_call_tool",
+          "dench_search_integrations",
+          "dench_execute_integrations",
         ],
       },
     })),
@@ -182,13 +170,10 @@ describe("dench cloud settings", () => {
 
     const written = JSON.parse(mocks.state.configText);
     expect(written.models.providers["dench-cloud"].apiKey).toBe("dc-key");
-    expect(written.mcp.servers.composio.url).toBe(
-      "https://gateway.merseoriginals.com/v1/composio/mcp",
-    );
+    expect(written.mcp).toBeUndefined();
     expect(written.tools.alsoAllow).toEqual([
-      "composio_call_tool",
-      "composio_resolve_tool",
-      "composio_search_tools",
+      "dench_execute_integrations",
+      "dench_search_integrations",
     ]);
   });
 
@@ -209,11 +194,10 @@ describe("dench cloud settings", () => {
 
     const written = JSON.parse(mocks.state.configText);
     expect(written.agents.defaults.model.primary).toBe("dench-cloud/claude-sonnet-4.6");
-    expect(written.mcp.servers.composio.headers.Authorization).toBe("Bearer dc-key");
+    expect(written.mcp).toBeUndefined();
     expect(written.tools.alsoAllow).toEqual([
-      "composio_call_tool",
-      "composio_resolve_tool",
-      "composio_search_tools",
+      "dench_execute_integrations",
+      "dench_search_integrations",
     ]);
   });
 

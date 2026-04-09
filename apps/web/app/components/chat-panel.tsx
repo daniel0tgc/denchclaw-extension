@@ -957,11 +957,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							extra.userHtml = pendingHtmlRef.current;
 							pendingHtmlRef.current = null;
 						}
-						return extra;
-					},
-				}),
-			[],
-		);
+					return extra;
+				},
+				prepareSendMessagesRequest: ({ messages: allMessages, body }) => {
+					// Only send the last user message to avoid 413 from nginx
+					// when the full conversation history (with tool-call parts)
+					// exceeds the body size limit. The server manages conversation
+					// state via sessionId/sessionKey and only needs the latest turn.
+					const lastUserMsg = allMessages.filter(m => m.role === "user").pop();
+					return {
+						body: {
+							...body,
+							messages: lastUserMsg ? [lastUserMsg] : [],
+							hasAssistantHistory: allMessages.some(m => m.role === "assistant"),
+						},
+					};
+				},
+			}),
+		[],
+	);
 
 		const { messages, sendMessage, status, stop, error, setMessages } =
 			useChat({ transport });

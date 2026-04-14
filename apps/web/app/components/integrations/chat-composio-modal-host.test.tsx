@@ -15,13 +15,13 @@ describe("ChatComposioModalHost", () => {
       if (url === "/api/composio/connections?include_toolkits=1&fresh=1") {
         return new Response(JSON.stringify({ connections: [], toolkits: [] }));
       }
-      if (url === "/api/composio/toolkits?search=Slack&limit=24") {
+      if (url.startsWith("/api/composio/toolkits?")) {
         return new Response(JSON.stringify({
           items: [{
             slug: "slack",
             name: "Slack",
             description: "Messages and channels",
-            logo: null,
+            logo: "https://gateway.example/slack.svg",
             categories: ["Communication"],
             auth_schemes: ["oauth2"],
             tools_count: 4,
@@ -65,6 +65,19 @@ describe("ChatComposioModalHost", () => {
             name: "Slack",
             description: "Messages and channels",
             logo: null,
+            categories: ["Communication"],
+            auth_schemes: ["oauth2"],
+            tools_count: 4,
+          }],
+        }));
+      }
+      if (url.startsWith("/api/composio/toolkits?")) {
+        return new Response(JSON.stringify({
+          items: [{
+            slug: "slack",
+            name: "Slack",
+            description: "Messages and channels",
+            logo: "https://gateway.example/slack.svg",
             categories: ["Communication"],
             auth_schemes: ["oauth2"],
             tools_count: 4,

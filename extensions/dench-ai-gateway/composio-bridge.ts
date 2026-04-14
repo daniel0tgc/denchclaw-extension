@@ -1,41 +1,31 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { buildComposioMcpServerConfig } from "./config-patch.js";
+import { readDenchAuthProfileKey } from "../shared/dench-auth.js";
 
 type UnknownRecord = Record<string, unknown>;
 
-type ComposioToolIndexFile = {
-  generated_at: string;
-  connected_apps: Array<{
-    toolkit_slug: string;
-    toolkit_name: string;
-    account_count: number;
-    tools: Array<{
-      name: string;
-      title: string;
-      description_short: string;
-      required_args: string[];
-      arg_hints: Record<string, string>;
-      default_args?: Record<string, unknown>;
-      example_args?: Record<string, unknown>;
-      example_prompts?: string[];
-      input_schema?: Record<string, unknown>;
-    }>;
-    recipes: Record<string, string>;
-  }>;
-};
+const DENCH_EXECUTE_INTEGRATIONS_NAME = "dench_execute_integrations";
+const DENCH_INTEGRATIONS_DISPLAY_NAME = "Dench Integrations";
 
-type ComposioToolCallResult = {
-  content?: unknown[];
-  structuredContent?: unknown;
-  isError?: boolean;
-};
-
-const GENERIC_TOOL_PARAMETERS = {
+const DENCH_EXECUTE_INTEGRATIONS_PARAMETERS = {
   type: "object",
-  additionalProperties: true,
-  properties: {},
+  additionalProperties: false,
+  properties: {
+    tool_slug: {
+      type: "string",
+      description: "Exact tool slug returned by dench_search_integrations, for example GMAIL_FETCH_EMAILS or YOUTUBE_LIST_USER_SUBSCRIPTIONS.",
+    },
+    arguments: {
+      type: "object",
+      additionalProperties: true,
+      description: "JSON arguments object matching the tool's input_schema from the search results.",
+      properties: {},
+    },
+    connected_account_id: {
+      type: "string",
+      description: "Optional connected account id. Required only when multiple accounts are connected for the same toolkit. The gateway auto-selects when only one account exists.",
+    },
+  },
+  required: ["tool_slug"],
 } as const;
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -55,420 +45,156 @@ function jsonResult(payload: unknown, details?: Record<string, unknown>) {
   };
 }
 
-function isComposioToolIndexFile(value: unknown): value is ComposioToolIndexFile {
-  const rec = asRecord(value);
-  return typeof rec?.generated_at === "string" && Array.isArray(rec.connected_apps);
+function resolveGatewayBaseUrl(api: any, fallbackGatewayUrl: string): string {
+  const plugins = asRecord(asRecord(api?.config)?.plugins)?.entries;
+  const denchGateway = asRecord(asRecord(plugins)?.["dench-ai-gateway"]);
+  const gwConfig = asRecord(denchGateway?.config);
+  const configuredUrl = readString(gwConfig?.gatewayUrl);
+  return (configuredUrl ?? fallbackGatewayUrl).replace(/\/$/, "");
 }
 
-function readComposioToolIndex(workspaceDir: string): ComposioToolIndexFile | null {
-  const filePath = path.join(workspaceDir, "composio-tool-index.json");
-  if (!existsSync(filePath)) {
-    return null;
-  }
-  try {
-    const raw = JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
-    return isComposioToolIndexFile(raw) ? raw : null;
-  } catch {
-    return null;
-  }
+function resolveApiKey(): string | undefined {
+  return readDenchAuthProfileKey() ?? undefined;
 }
 
-function resolveWorkspaceDir(api: any): string | undefined {
-  const ws = api?.config?.agents?.defaults?.workspace;
-  return typeof ws === "string" ? ws.trim() || undefined : undefined;
+function createDenchExecuteIntegrationsTool(params: {
+  gatewayBaseUrl: string;
+  authorization?: string;
+}): AnyAgentTool {
+  return {
+    name: DENCH_EXECUTE_INTEGRATIONS_NAME,
+    label: `${DENCH_INTEGRATIONS_DISPLAY_NAME} Execute`,
+    description:
+      `Execute a ${DENCH_INTEGRATIONS_DISPLAY_NAME.toLowerCase()} tool by its slug. Pass the tool_slug from dench_search_integrations and the arguments matching its input_schema. The gateway handles authentication and account selection.`,
+    parameters: DENCH_EXECUTE_INTEGRATIONS_PARAMETERS,
+    async execute(_toolCallId: string, input: Record<string, unknown>) {
+      const payload = asRecord(input) ?? {};
+      const toolSlug = readString(payload.tool_slug)?.trim();
+      const connectedAccountId = readString(payload.connected_account_id)?.trim();
+      const toolArgs = asRecord(payload.arguments) ?? {};
+
+      if (!toolSlug) {
+        return jsonResult({
+          error: "The `tool_slug` field is required. Use dench_search_integrations to find available tools first.",
+        });
+      }
+
+      try {
+        const res = await fetch(`${params.gatewayBaseUrl}/v1/composio/tools/execute`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+            ...(params.authorization ? { authorization: params.authorization } : {}),
+          },
+          body: JSON.stringify({
+            tool_slug: toolSlug,
+            arguments: toolArgs,
+            ...(connectedAccountId ? { connected_account_id: connectedAccountId } : {}),
+          }),
+        });
+
+        const text = await res.text();
+        let parsed: UnknownRecord | undefined;
+        try {
+          parsed = JSON.parse(text) as UnknownRecord;
+        } catch {
+          parsed = undefined;
+        }
+
+        if (!res.ok) {
+          const errorCode = readString(asRecord(parsed?.error)?.code) ?? readString(parsed?.code);
+          const errorMessage = readString(asRecord(parsed?.error)?.message)
+            ?? readString(parsed?.error)
+            ?? text;
+
+          if (errorCode === "composio_account_selection_required") {
+            return jsonResult(
+              {
+                error: errorMessage,
+                account_selection_required: true,
+                instruction: "Ask the user which connected account to use and pass its connected_account_id.",
+              },
+              { status: "error", errorCode, tool_slug: toolSlug },
+            );
+          }
+
+          if (errorCode === "composio_not_connected") {
+            return jsonResult(
+              { error: errorMessage, not_connected: true },
+              { status: "error", errorCode, tool_slug: toolSlug },
+            );
+          }
+
+          return jsonResult(
+            {
+              error: `${DENCH_INTEGRATIONS_DISPLAY_NAME} tool ${toolSlug} failed (HTTP ${res.status}).`,
+              detail: parsed ?? (text || undefined),
+            },
+            { status: "error", tool_slug: toolSlug },
+          );
+        }
+
+        const data = parsed?.data;
+        const error = readString(parsed?.error);
+        const contentPayload = error ? { error, data } : (data ?? parsed ?? {});
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(contentPayload, null, 2),
+          }],
+          details: {
+            denchIntegrations: true,
+            tool_slug: toolSlug,
+            ...(parsed?.log_id ? { logId: parsed.log_id } : {}),
+            ...(data !== undefined ? { structuredContent: data } : {}),
+            ...(error ? { status: "error", error } : {}),
+            ...(connectedAccountId ? { connectedAccountId } : {}),
+          },
+        };
+      } catch (error) {
+        return jsonResult(
+          {
+            error: `${DENCH_INTEGRATIONS_DISPLAY_NAME} tool ${toolSlug} failed.`,
+            detail: error instanceof Error ? error.message : String(error),
+          },
+          { status: "error", tool_slug: toolSlug },
+        );
+      }
+    },
+  } as AnyAgentTool;
 }
 
-function resolveAuthorizationHeader(headers: unknown): string | undefined {
-  const rec = asRecord(headers);
-  return readString(rec?.Authorization) ?? readString(rec?.authorization);
-}
-
-function stripRuntimeComposioServer(api: any): { url?: string; authorization?: string } | null {
+function stripRuntimeComposioServer(api: any): void {
   const rootConfig = asRecord(api?.config);
   const mcp = asRecord(rootConfig?.mcp);
   const servers = asRecord(mcp?.servers);
-  if (!rootConfig || !mcp || !servers) {
-    return null;
-  }
-  const composio = asRecord(servers?.composio);
-  if (!composio) {
-    return null;
-  }
+  if (!rootConfig || !mcp || !servers) return;
 
-  const captured = {
-    url: readString(composio.url),
-    authorization: resolveAuthorizationHeader(composio.headers),
-  };
-
-  delete servers.composio;
-  if (Object.keys(servers).length === 0) {
-    delete mcp.servers;
+  if (servers.composio) {
+    delete servers.composio;
+    if (Object.keys(servers).length === 0) delete mcp.servers;
+    if (Object.keys(mcp).length === 0) delete rootConfig.mcp;
   }
-  if (mcp && Object.keys(mcp).length === 0) {
-    delete rootConfig.mcp;
-  }
-
-  return captured;
 }
 
-function resolveConfiguredApiKey(api: any): string | undefined {
-  const provider = asRecord(api?.config?.models?.providers?.["dench-cloud"]);
-  const providerKey = readString(provider?.apiKey)?.trim();
-  if (providerKey) {
-    return providerKey;
-  }
+export function registerDenchIntegrationsBridge(api: any, fallbackGatewayUrl: string) {
+  stripRuntimeComposioServer(api);
 
-  const envVars = ["DENCH_CLOUD_API_KEY", "DENCH_API_KEY"] as const;
-  for (const envVar of envVars) {
-    const value = process.env[envVar]?.trim();
-    if (value) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-function resolveComposioServerConfig(api: any, fallbackGatewayUrl: string) {
-  const stripped = stripRuntimeComposioServer(api);
-  const apiKey = resolveConfiguredApiKey(api);
-  if (stripped?.url) {
-    return {
-      url: stripped.url,
-      authorization: stripped.authorization ?? (apiKey ? `Bearer ${apiKey}` : undefined),
-    };
-  }
-
+  const gatewayBaseUrl = resolveGatewayBaseUrl(api, fallbackGatewayUrl);
+  const apiKey = resolveApiKey();
   if (!apiKey) {
-    return null;
-  }
-
-  const config = buildComposioMcpServerConfig(fallbackGatewayUrl, apiKey);
-  return {
-    url: config.url,
-    authorization: config.headers.Authorization,
-  };
-}
-
-function buildFallbackParameters(tool: ComposioToolIndexFile["connected_apps"][number]["tools"][number]) {
-  const fieldNames = [...new Set([...tool.required_args, ...Object.keys(tool.arg_hints)])];
-  if (fieldNames.length === 0) {
-    return GENERIC_TOOL_PARAMETERS;
-  }
-
-  return {
-    type: "object",
-    additionalProperties: true,
-    properties: Object.fromEntries(
-      fieldNames.map((field) => [
-        field,
-        tool.arg_hints[field] ? { description: tool.arg_hints[field] } : {},
-      ]),
-    ),
-    required: tool.required_args,
-  };
-}
-
-function normalizeToolParameters(tool: ComposioToolIndexFile["connected_apps"][number]["tools"][number]) {
-  const schema = asRecord(tool.input_schema);
-  if (!schema) {
-    return buildFallbackParameters(tool);
-  }
-
-  return {
-    ...schema,
-    type: "object",
-    additionalProperties:
-      typeof schema.additionalProperties === "boolean" || asRecord(schema.additionalProperties)
-        ? schema.additionalProperties
-        : true,
-  };
-}
-
-function extractToolCallResultFromJsonRpcMessage(payload: unknown): ComposioToolCallResult | null {
-  const rec = asRecord(payload);
-  const result = asRecord(rec?.result);
-  if (!result) {
-    return null;
-  }
-
-  const content = Array.isArray(result.content) ? result.content : undefined;
-  const structuredContent = result.structuredContent;
-  const hasStructuredContent = Object.hasOwn(result, "structuredContent");
-  const isError = result.isError === true;
-
-  if (!content && !hasStructuredContent && !Object.hasOwn(result, "isError")) {
-    return null;
-  }
-
-  return {
-    ...(content ? { content } : {}),
-    ...(hasStructuredContent ? { structuredContent } : {}),
-    ...(Object.hasOwn(result, "isError") ? { isError } : {}),
-  };
-}
-
-function parseSseJsonRpcToolCall(body: string): ComposioToolCallResult | null {
-  const lines = body.split(/\r?\n/);
-  let lastPayload: unknown = null;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) {
-      continue;
-    }
-    const raw = trimmed.slice(5).trim();
-    if (!raw || raw === "[DONE]") {
-      continue;
-    }
-    try {
-      lastPayload = JSON.parse(raw);
-    } catch {
-      // Ignore non-JSON SSE frames.
-    }
-  }
-
-  return lastPayload === null ? null : extractToolCallResultFromJsonRpcMessage(lastPayload);
-}
-
-async function parseToolCallResponse(res: Response): Promise<ComposioToolCallResult | null> {
-  const contentType = res.headers.get("content-type") ?? "";
-  const text = await res.text();
-  if (contentType.includes("text/event-stream")) {
-    const fromSse = parseSseJsonRpcToolCall(text);
-    if (fromSse) {
-      return fromSse;
-    }
-  }
-
-  try {
-    return extractToolCallResultFromJsonRpcMessage(JSON.parse(text) as unknown);
-  } catch {
-    return parseSseJsonRpcToolCall(text);
-  }
-}
-
-function toAgentToolResult(toolName: string, result: ComposioToolCallResult) {
-  const content =
-    Array.isArray(result.content) && result.content.length > 0
-      ? result.content
-      : result.structuredContent !== undefined
-        ? [{ type: "text" as const, text: JSON.stringify(result.structuredContent, null, 2) }]
-        : [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  status: result.isError === true ? "error" : "ok",
-                  server: "composio",
-                  tool: toolName,
-                },
-                null,
-                2,
-              ),
-            },
-          ];
-
-  const details: Record<string, unknown> = {
-    composioBridge: true,
-    mcpServer: "composio",
-    mcpTool: toolName,
-  };
-  if (result.structuredContent !== undefined) {
-    details.structuredContent = result.structuredContent;
-  }
-  if (result.isError === true) {
-    details.status = "error";
-  }
-
-  return {
-    content: content as Array<{ type: string; text?: string }>,
-    details,
-  };
-}
-
-async function executeComposioTool(params: {
-  url: string;
-  authorization?: string;
-  toolName: string;
-  input: Record<string, unknown>;
-}) {
-  try {
-    const res = await fetch(params.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...(params.authorization ? { authorization: params.authorization } : {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: params.toolName,
-          arguments: params.input,
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      return jsonResult(
-        {
-          error: `Composio tool ${params.toolName} failed (HTTP ${res.status}).`,
-          detail: detail || undefined,
-        },
-        {
-          composioBridge: true,
-          mcpServer: "composio",
-          mcpTool: params.toolName,
-          status: "error",
-        },
-      );
-    }
-
-    const parsed = await parseToolCallResponse(res);
-    if (!parsed) {
-      return jsonResult(
-        {
-          error: `Composio tool ${params.toolName} returned an unreadable response.`,
-        },
-        {
-          composioBridge: true,
-          mcpServer: "composio",
-          mcpTool: params.toolName,
-          status: "error",
-        },
-      );
-    }
-
-    return toAgentToolResult(params.toolName, parsed);
-  } catch (error) {
-    return jsonResult(
-      {
-        error: `Composio tool ${params.toolName} failed.`,
-        detail: error instanceof Error ? error.message : String(error),
-      },
-      {
-        composioBridge: true,
-        mcpServer: "composio",
-        mcpTool: params.toolName,
-        status: "error",
-      },
-    );
-  }
-}
-
-function buildToolDescription(
-  app: ComposioToolIndexFile["connected_apps"][number],
-  tool: ComposioToolIndexFile["connected_apps"][number]["tools"][number],
-) {
-  const summary =
-    tool.description_short?.trim() ||
-    tool.title?.trim() ||
-    `Use the connected ${app.toolkit_name} integration via Composio.`;
-  const promptExamples = tool.example_prompts?.filter(Boolean).slice(0, 2) ?? [];
-  const suffix = promptExamples.length
-    ? ` Typical requests: ${promptExamples.map((sample) => `"${sample}"`).join("; ")}.`
-    : "";
-  return `${summary} Uses the connected ${app.toolkit_name} account through Dench Cloud's Composio bridge.${suffix}`;
-}
-
-function humanizeToolName(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function createRegisteredComposioTools(params: {
-  index: ComposioToolIndexFile;
-  serverConfig: {
-    url: string;
-    authorization?: string;
-  };
-}): AnyAgentTool[] {
-  const seen = new Set<string>();
-  const out: AnyAgentTool[] = [];
-
-  for (const app of params.index.connected_apps) {
-    for (const tool of app.tools) {
-      const name = tool.name.trim();
-      if (!name || seen.has(name)) {
-        continue;
-      }
-      seen.add(name);
-
-      out.push({
-        name,
-        label: tool.title?.trim() || name,
-        description: buildToolDescription(app, tool),
-        parameters: normalizeToolParameters(tool),
-        execute: async (_toolCallId: string, input: Record<string, unknown>) =>
-          await executeComposioTool({
-            url: params.serverConfig.url,
-            authorization: params.serverConfig.authorization,
-            toolName: name,
-            input: asRecord(input) ?? {},
-          }),
-      } as AnyAgentTool);
-    }
-
-    for (const [intent, recipeToolName] of Object.entries(app.recipes)) {
-      const name = recipeToolName.trim();
-      if (!name || seen.has(name)) {
-        continue;
-      }
-      seen.add(name);
-
-      const syntheticTool = {
-        name,
-        title: intent,
-        description_short: `Recommended tool for "${intent}" on the connected ${app.toolkit_name} app.`,
-        required_args: [],
-        arg_hints: {},
-      };
-
-      out.push({
-        name,
-        label: intent || humanizeToolName(name),
-        description: buildToolDescription(app, syntheticTool),
-        parameters: normalizeToolParameters(syntheticTool),
-        execute: async (_toolCallId: string, input: Record<string, unknown>) =>
-          await executeComposioTool({
-            url: params.serverConfig.url,
-            authorization: params.serverConfig.authorization,
-            toolName: name,
-            input: asRecord(input) ?? {},
-          }),
-      } as AnyAgentTool);
-    }
-  }
-
-  return out;
-}
-
-export function registerCuratedComposioBridge(api: any, fallbackGatewayUrl: string) {
-  const workspaceDir = resolveWorkspaceDir(api);
-  const serverConfig = resolveComposioServerConfig(api, fallbackGatewayUrl);
-  if (!workspaceDir || !serverConfig?.url) {
     return;
   }
 
-  const index = readComposioToolIndex(workspaceDir);
-  if (!index || index.connected_apps.length === 0) {
-    api.logger?.info?.(
-      "[dench-ai-gateway] Composio bridge active but no local composio-tool-index.json is available yet.",
-    );
-    return;
-  }
+  const tool = createDenchExecuteIntegrationsTool({
+    gatewayBaseUrl,
+    authorization: `Bearer ${apiKey}`,
+  });
 
-  const tools = createRegisteredComposioTools({ index, serverConfig });
-  for (const tool of tools) {
-    api.registerTool(tool);
-  }
-
+  api.registerTool(tool);
   api.logger?.info?.(
-    `[dench-ai-gateway] registered ${tools.length} curated Composio bridge tools from composio-tool-index.json`,
+    `[dench-ai-gateway] registered ${DENCH_EXECUTE_INTEGRATIONS_NAME} bridge tool`,
   );
 }

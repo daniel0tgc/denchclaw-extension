@@ -12,7 +12,6 @@ import {
   extractComposioToolkits,
   normalizeComposioConnections,
 } from "@/lib/composio-client";
-import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 import {
   normalizeComposioToolkitName,
   normalizeComposioToolkitSlug,
@@ -24,7 +23,6 @@ export const runtime = "nodejs";
 const CONNECTIONS_CACHE_TTL_MS = 60_000;
 const TOOLKIT_LOOKUP_CACHE_TTL_MS = 5 * 60_000;
 const CONNECTED_TOOLKIT_BULK_LIMIT = 100;
-const BACKGROUND_TOOL_INDEX_REFRESH_TTL_MS = 60_000;
 const RESOLVED_TOOLKITS_CACHE_TTL_MS = 60_000;
 
 type CacheEntry<T> =
@@ -40,7 +38,6 @@ type CacheEntry<T> =
 const connectionsCache = new Map<string, CacheEntry<ComposioConnectionsResponse>>();
 const toolkitBulkCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
 const resolvedToolkitsCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
-let lastBackgroundToolIndexRefreshAt = 0;
 
 function buildCacheKey(gatewayUrl: string, apiKey: string, suffix = ""): string {
   return `${gatewayUrl}::${apiKey}${suffix ? `::${suffix}` : ""}`;
@@ -140,7 +137,7 @@ async function resolveConnectedToolkits(
   const resolvedCacheKey = buildCacheKey(
     gatewayUrl,
     apiKey,
-    `resolved-toolkits:${[...activeSlugs].sort().join(",")}`,
+    `resolved-toolkits:${[...activeSlugs].toSorted().join(",")}`,
   );
 
   return await readThroughCache(
@@ -170,23 +167,9 @@ async function resolveConnectedToolkits(
       });
 
       return [...toolkits]
-        .sort((left, right) => left.name.localeCompare(right.name));
+        .toSorted((left, right) => left.name.localeCompare(right.name));
     },
   );
-}
-
-function maybeRefreshToolIndexInBackground(includeToolkits: boolean): void {
-  if (!includeToolkits) {
-    return;
-  }
-  const now = Date.now();
-  if (now - lastBackgroundToolIndexRefreshAt < BACKGROUND_TOOL_INDEX_REFRESH_TTL_MS) {
-    return;
-  }
-  lastBackgroundToolIndexRefreshAt = now;
-  void rebuildComposioToolIndexIfReady().catch(() => {
-    // Best-effort background warmup only.
-  });
 }
 
 export async function GET(request: Request) {
@@ -224,7 +207,6 @@ export async function GET(request: Request) {
         connectionsPromise,
         fetchBulkToolkitsCached(gatewayUrl, apiKey).catch(() => []),
       ]);
-      maybeRefreshToolIndexInBackground(includeToolkits);
       return Response.json({
         ...data,
         toolkits: await resolveConnectedToolkits(gatewayUrl, apiKey, data, bulkToolkits),

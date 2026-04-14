@@ -595,17 +595,23 @@ export async function fetchComposioMcpToolsList(
   options?: {
     connectedToolkits?: string[];
     preferredToolNames?: string[];
+    connectedAccountId?: string;
   },
 ): Promise<ComposioMcpTool[]> {
   const url = `${gatewayUrl.replace(/\/$/, "")}/v1/composio/mcp`;
   const connectedToolkits = options?.connectedToolkits?.filter((slug) => slug.trim().length > 0) ?? [];
   const preferredToolNames = options?.preferredToolNames?.filter((name) => name.trim().length > 0) ?? [];
+  const connectedAccountId = options?.connectedAccountId?.trim() || undefined;
   const seen = new Set<string>();
   const out: ComposioMcpTool[] = [];
   let cursor: string | null = null;
 
   while (true) {
-    const res = await fetch(url, {
+    const requestUrl = new URL(url);
+    if (connectedAccountId) {
+      requestUrl.searchParams.set("connected_account_id", connectedAccountId);
+    }
+    const res = await fetch(requestUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",

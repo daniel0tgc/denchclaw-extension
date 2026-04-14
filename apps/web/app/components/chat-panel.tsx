@@ -19,10 +19,14 @@ import { ChatModelSelector, type ChatModelSelectorOption } from "./chat-model-se
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 import { ChatVoiceInputButton } from "./chat-voice-input-button";
 import { UnicodeSpinner } from "./unicode-spinner";
+import { Dialog, DialogContent } from "./ui/dialog";
 import type { ChatPanelRuntimeState } from "@/lib/chat-session-registry";
 import {
 	getStreamActivityLabel,
+	getIncompleteAssistantReplyReason,
+	hasAssistantPostToolText,
 	hasAssistantText,
+	hasAssistantToolActivity,
 } from "./chat-stream-status";
 import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
@@ -396,6 +400,8 @@ function AttachmentStrip({
 	onRemove: (id: string) => void;
 	onClearAll: () => void;
 }) {
+	const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+
 	if (files.length === 0) {return null;}
 
 	return (
@@ -453,11 +459,10 @@ function AttachmentStrip({
 							</button>
 
 							{category === "image" ? (
-								/* Image thumbnail — no filename */
 								<img
 									src={af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`}
 									alt={af.name}
-									className="block rounded-xl object-cover"
+									className="block rounded-xl object-cover cursor-pointer transition-all duration-200 hover:opacity-95"
 									style={{
 										height: 80,
 										width: "auto",
@@ -465,6 +470,10 @@ function AttachmentStrip({
 										maxWidth: 140,
 										opacity: af.uploading ? 0.6 : 1,
 										background: "var(--color-bg-secondary)",
+									}}
+									onClick={() => {
+										const src = af.localUrl || `/api/workspace/raw-file?path=${encodeURIComponent(af.path)}`;
+										setPreviewSrc(src);
 									}}
 									onError={(e) => {
 										(e.currentTarget as HTMLImageElement).style.display = "none";
@@ -521,6 +530,27 @@ function AttachmentStrip({
 					);
 				})}
 			</div>
+
+			<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
+				<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-[0_0_120px_rgba(0,0,0,0.4)]" showCloseButton={false}>
+					<button
+						type="button"
+						onClick={() => setPreviewSrc(null)}
+						className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer outline-none transition-all hover:opacity-85"
+						style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+					</button>
+					{previewSrc && (
+						<img
+							src={previewSrc}
+							alt="Preview"
+							className="block rounded-xl"
+							style={{ maxHeight: "80vh", maxWidth: "85vw", objectFit: "contain" }}
+						/>
+					)}
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }
@@ -606,6 +636,20 @@ export function createStreamParser() {
 				currentTextIdx = -1;
 				break;
 			case "tool-input-start":
+				for (let i = parts.length - 1; i >= 0; i--) {
+					const p = parts[i];
+					if (
+						p.type === "dynamic-tool" &&
+						p.toolCallId === event.toolCallId
+					) {
+						p.toolName = event.toolName as string;
+						p.state = "input-available";
+						if (!p.input) {
+							p.input = {};
+						}
+						return;
+					}
+				}
 				parts.push({
 					type: "dynamic-tool",
 					toolCallId: event.toolCallId as string,
@@ -932,11 +976,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							extra.userHtml = pendingHtmlRef.current;
 							pendingHtmlRef.current = null;
 						}
-						return extra;
-					},
-				}),
-			[],
-		);
+					return extra;
+				},
+				prepareSendMessagesRequest: ({ messages: allMessages, body }) => {
+					// Only send the last user message to avoid 413 from nginx
+					// when the full conversation history (with tool-call parts)
+					// exceeds the body size limit. The server manages conversation
+					// state via sessionId/sessionKey and only needs the latest turn.
+					const lastUserMsg = allMessages.filter(m => m.role === "user").pop();
+					return {
+						body: {
+							...body,
+							messages: lastUserMsg ? [lastUserMsg] : [],
+							hasAssistantHistory: allMessages.some(m => m.role === "assistant"),
+						},
+					};
+				},
+			}),
+		[],
+	);
 
 		const { messages, sendMessage, status, stop, error, setMessages } =
 			useChat({ transport });
@@ -1038,6 +1096,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const scrollContainerRef = useRef<HTMLDivElement>(null);
 		const userScrolledAwayRef = useRef(false);
 		const scrollRafRef = useRef(0);
+		const [showScrollButton, setShowScrollButton] = useState(false);
 
 		// Detect when the user scrolls away from the bottom.
 		useEffect(() => {
@@ -1047,12 +1106,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			const onScroll = () => {
 				const distanceFromBottom =
 					el.scrollHeight - el.scrollTop - el.clientHeight;
-				// Threshold: if within 80px of the bottom, consider "at bottom"
-				userScrolledAwayRef.current = distanceFromBottom > 80;
+				const away = distanceFromBottom > 80;
+				userScrolledAwayRef.current = away;
+				setShowScrollButton(away);
 			};
 
 			el.addEventListener("scroll", onScroll, { passive: true });
 			return () => el.removeEventListener("scroll", onScroll);
+		}, []);
+
+		const scrollToBottom = useCallback(() => {
+			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 		}, []);
 
 		// Auto-scroll effect — skips when user has scrolled away.
@@ -1605,17 +1669,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				emptyStreamTimerRef.current = setTimeout(() => {
 					emptyStreamTimerRef.current = null;
 					const lastMsg = messages[messages.length - 1];
-					const hasAssistantContent =
-						lastMsg?.role === "assistant" &&
-						lastMsg.parts.some(
-							(p) =>
-								(p.type === "text" && (p as { text: string }).text.trim().length > 0) ||
-								p.type === "tool-invocation" ||
-								p.type === "reasoning" ||
-								(p.type as string) === "dynamic-tool",
-						);
-					if (!hasAssistantContent && !error) {
+					const hasToolOnlyActivity = hasAssistantToolActivity(lastMsg ?? null);
+					const hasVisibleReply = hasToolOnlyActivity
+						? hasAssistantPostToolText(lastMsg ?? null)
+						: hasAssistantText(lastMsg ?? null);
+					const incompleteReplyReason = getIncompleteAssistantReplyReason(lastMsg ?? null);
+					if (!hasVisibleReply && !hasToolOnlyActivity && !error) {
 						setStreamError("No response received from agent.");
+					} else if (!hasVisibleReply && hasToolOnlyActivity && !error) {
+						setStreamError(
+							incompleteReplyReason ?? "Agent finished tool activity but did not send a final text reply.",
+						);
 					} else {
 						setStreamError(null);
 					}
@@ -2531,6 +2595,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								sessionId={currentSessionId}
 								voicePlaybackEnabled={voicePlaybackEnabled}
 								userHtmlMap={userHtmlMapRef.current}
+								copyable
 							/>
 						))}
 						{showStreamActivity && (
@@ -2598,6 +2663,28 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 				)}
 				</div>
+
+				{/* Scroll to bottom button */}
+				{showScrollButton && !showHeroState && (
+					<div className="flex justify-center pointer-events-none" style={{ marginTop: -80, marginBottom: 4, position: "relative", zIndex: 20 }}>
+						<button
+							type="button"
+							onClick={scrollToBottom}
+							className="pointer-events-auto w-8 h-8 rounded-full flex items-center justify-center shadow-md border backdrop-blur-xl transition-colors"
+							style={{
+								background: "color-mix(in srgb, var(--color-surface) 70%, transparent)",
+								borderColor: "var(--color-border)",
+								color: "var(--color-text-muted)",
+							}}
+							title="Scroll to bottom"
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M12 5v14" />
+								<path d="m19 12-7 7-7-7" />
+							</svg>
+						</button>
+					</div>
+				)}
 
 				{/* Input bar at bottom (hidden when hero state is active) */}
 				{!showHeroState && (

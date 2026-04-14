@@ -1,8 +1,8 @@
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { readDenchAuthProfileKey, resolveDenchGatewayUrl } from "../shared/dench-auth.js";
 
 export const id = "apollo-enrichment";
 
-const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
 const ENRICHMENT_BASE_PATH = "/v1/enrichment";
 const APOLLO_ACTIONS = ["people", "company", "people_search"] as const;
 
@@ -24,29 +24,6 @@ function readStringList(value: unknown): string[] | undefined {
     .map((item) => readTrimmedString(item))
     .filter((item): item is string => Boolean(item));
   return items.length > 0 ? items : undefined;
-}
-
-function resolveGatewayUrl(config: unknown): string {
-  const root = asRecord(config);
-  const pluginEntries = asRecord(asRecord(root?.plugins)?.entries);
-  const gatewayConfig = asRecord(asRecord(pluginEntries?.["dench-ai-gateway"])?.config);
-  return (
-    readTrimmedString(gatewayConfig?.gatewayUrl) ||
-    process.env.DENCH_GATEWAY_URL?.trim() ||
-    DEFAULT_GATEWAY_URL
-  );
-}
-
-function resolveApiKey(config: unknown): string | undefined {
-  const root = asRecord(config);
-  const providers = asRecord(asRecord(asRecord(root?.models)?.providers));
-  const provider = asRecord(providers?.["dench-cloud"]);
-  return (
-    readTrimmedString(provider?.apiKey) ||
-    process.env.DENCH_CLOUD_API_KEY?.trim() ||
-    process.env.DENCH_API_KEY?.trim() ||
-    undefined
-  );
 }
 
 function jsonResult(payload: unknown) {
@@ -244,8 +221,9 @@ export default function register(api: OpenClawPluginApi) {
     return;
   }
 
-  const gatewayUrl = resolveGatewayUrl(api.config);
-  const apiKey = resolveApiKey(api.config);
+  const gwPluginConfig = asRecord(asRecord(pluginEntries?.["dench-ai-gateway"])?.config);
+  const gatewayUrl = resolveDenchGatewayUrl(gwPluginConfig as Record<string, unknown> | undefined);
+  const apiKey = readDenchAuthProfileKey();
 
   if (!apiKey) {
     api.logger?.info?.(

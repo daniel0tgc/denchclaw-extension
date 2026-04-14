@@ -127,6 +127,10 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
 }
 
 export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-opus-4.6";
+export const DENCH_COMPOSIO_WRAPPER_TOOLS = [
+  "dench_search_integrations",
+  "dench_execute_integrations",
+] as const;
 
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
   {
@@ -429,10 +433,8 @@ export function buildDenchCloudConfigPatch(params: {
         },
       },
     },
-    mcp: {
-      servers: {
-        composio: buildComposioMcpServerConfig(params.gatewayUrl, params.apiKey),
-      },
+    tools: {
+      alsoAllow: [...DENCH_COMPOSIO_WRAPPER_TOOLS],
     },
   };
 }
@@ -487,8 +489,7 @@ export function readConfiguredDenchCloudSettings(
 
   const baseUrl = readString(provider ?? {}, "baseUrl", "base_url");
   const tts = asRecord(asRecord(rawConfig?.messages)?.tts);
-  const ttsProviders = asRecord(tts?.providers);
-  const ttsElevenlabs = asRecord(ttsProviders?.elevenlabs);
+  const ttsElevenlabs = asRecord(tts?.elevenlabs) ?? asRecord(asRecord(tts?.providers)?.elevenlabs);
   return {
     gatewayUrl: baseUrl ? normalizeDenchGatewayUrl(baseUrl) : undefined,
     apiKey: readString(provider ?? {}, "apiKey", "api_key"),

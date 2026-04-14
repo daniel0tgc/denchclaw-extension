@@ -7,8 +7,6 @@ import {
   extractComposioConnections,
   normalizeComposioConnections,
 } from "@/lib/composio-client";
-import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
-import { getComposioMcpHealth } from "@/lib/composio-mcp-health";
 import { refreshIntegrationsRuntime } from "@/lib/integrations";
 
 export const dynamic = "force-dynamic";
@@ -76,9 +74,7 @@ export async function GET(request: Request) {
     resolvedConnection = await resolveConnectedToolkitSummary(connectedAccountId);
     void (async () => {
       try {
-        const rebuild = await rebuildComposioToolIndexIfReady();
-        if (rebuild.ok) await refreshIntegrationsRuntime();
-        await getComposioMcpHealth();
+        await refreshIntegrationsRuntime();
       } catch {}
     })();
   }

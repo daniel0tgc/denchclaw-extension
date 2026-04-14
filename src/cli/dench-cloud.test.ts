@@ -94,7 +94,7 @@ describe("dench-cloud helpers", () => {
     ).rejects.toThrow("Check your key at dench.com/settings");
   });
 
-  it("builds the Dench Cloud config patch with provider models and agent aliases", () => {
+  it("builds the Dench Cloud config patch with provider models, agent aliases, and Dench Integrations tools", () => {
     const patch = buildDenchCloudConfigPatch({
       gatewayUrl: "https://gateway.merseoriginals.com",
       apiKey: "dench_live_key",
@@ -149,13 +149,11 @@ describe("dench-cloud helpers", () => {
       apiKey: "dench_live_key",
     });
     expect((patch.messages.tts as Record<string, unknown>).elevenlabs).toBeUndefined();
-    expect(patch.mcp.servers.composio).toEqual({
-      url: "https://gateway.merseoriginals.com/v1/composio/mcp",
-      transport: "streamable-http",
-      headers: {
-        Authorization: "Bearer dench_live_key",
-      },
-    });
+    expect((patch as Record<string, unknown>).mcp).toBeUndefined();
+    expect(patch.tools.alsoAllow).toEqual([
+      "dench_search_integrations",
+      "dench_execute_integrations",
+    ]);
   });
 
   it("keeps the runtime plugin patch in parity with the CLI/web helper", () => {
@@ -244,6 +242,37 @@ describe("dench-cloud helpers", () => {
               baseUrl: "https://gateway.merseoriginals.com",
               apiKey: "dench_cfg_key",
             },
+          },
+        },
+      },
+    });
+
+    expect(result.ttsElevenLabsBaseUrl).toBe("https://gateway.merseoriginals.com");
+  });
+
+  it("reads legacy flat TTS ElevenLabs config from openclaw.json", () => {
+    const result = readConfiguredDenchCloudSettings({
+      models: {
+        providers: {
+          "dench-cloud": {
+            baseUrl: "https://gateway.merseoriginals.com/v1",
+            apiKey: "dench_cfg_key",
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/gpt-5.4",
+          },
+        },
+      },
+      messages: {
+        tts: {
+          provider: "elevenlabs",
+          elevenlabs: {
+            baseUrl: "https://gateway.merseoriginals.com",
+            apiKey: "dench_cfg_key",
           },
         },
       },

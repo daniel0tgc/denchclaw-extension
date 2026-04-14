@@ -125,6 +125,9 @@ const SUBSCRIBE_LIFECYCLE_END_GRACE_MS = 750;
 const WAITING_FINALIZE_RECONCILE_MS = 5_000;
 const MAX_WAITING_DURATION_MS = 10 * 60_000;
 const SUBAGENT_REGISTRY_STALENESS_MS = 15 * 60_000;
+const MAX_FILTER_DROP_LOGS = 8;
+const EMPTY_RESPONSE_EVENT_SAMPLE_LIMIT = 5;
+const TRANSCRIPT_TURN_CLOCK_SKEW_MS = 5_000;
 
 const SILENT_REPLY_TOKEN = "NO_REPLY";
 
@@ -771,10 +774,19 @@ type TranscriptToolPart = {
 	result?: Record<string, unknown>;
 };
 
-function readLatestTranscriptToolParts(
+type TranscriptAssistantTurn = {
+	sessionId: string;
+	responseId?: string;
+	stopReason?: string;
+	messageTimestamp: number | null;
+	textParts: string[];
+	tools: TranscriptToolPart[];
+};
+
+function readTranscriptEntriesForSession(
 	sessionKey: string,
 	pinnedAgentId?: string,
-): { sessionId: string; tools: TranscriptToolPart[] } | null {
+): { sessionId: string; entries: Array<Record<string, unknown>> } | null {
 	const stateDir = resolveOpenClawStateDir();
 	const agentId = pinnedAgentId ?? resolveActiveAgentId();
 	const sessionsJsonPath = join(stateDir, "agents", agentId, "sessions", "sessions.json");
@@ -791,53 +803,112 @@ function readLatestTranscriptToolParts(
 		.map((l) => { try { return JSON.parse(l); } catch { return null; } })
 		.filter(Boolean) as Array<Record<string, unknown>>;
 
-	const toolResults = new Map<string, Record<string, unknown>>();
-	let latestToolCalls: TranscriptToolPart[] = [];
+	return { sessionId, entries };
+}
 
-	for (const entry of entries) {
-		if (entry.type !== "message") { continue; }
-		const msg = entry.message as Record<string, unknown> | undefined;
-		if (!msg) { continue; }
-		const role = typeof msg.role === "string" ? msg.role : "";
-		const content = msg.content;
-
-		if (role === "toolResult" && typeof msg.toolCallId === "string") {
-			const text = Array.isArray(content)
-				? (content as Array<Record<string, unknown>>)
-					.filter((c) => c.type === "text" && typeof c.text === "string")
-					.map((c) => c.text as string).join("\n")
-				: typeof content === "string" ? content : "";
-			toolResults.set(msg.toolCallId, { text: text.slice(0, 500) });
-			continue;
-		}
-
-		if (role !== "assistant" || !Array.isArray(content)) { continue; }
-		const calls: TranscriptToolPart[] = [];
-		for (const part of content as Array<Record<string, unknown>>) {
-			if (part.type === "toolCall" && typeof part.id === "string" && typeof part.name === "string") {
-				calls.push({
-					type: "tool-invocation",
-					toolCallId: part.id,
-					toolName: part.name,
-					args: (part.arguments as Record<string, unknown>) ?? {},
-				});
-			}
-		}
-		if (calls.length > 0) {
-			latestToolCalls = calls;
-		}
-	}
-
-	if (latestToolCalls.length === 0) {
+function readLatestTranscriptAssistantTurn(
+	sessionKey: string,
+	pinnedAgentId?: string,
+): TranscriptAssistantTurn | null {
+	const transcript = readTranscriptEntriesForSession(sessionKey, pinnedAgentId);
+	if (!transcript) {
 		return null;
 	}
 
-	const withResults = latestToolCalls.map((tool) => {
-		const result = toolResults.get(tool.toolCallId);
-		return result ? { ...tool, result } : tool;
-	});
+	let latestAssistantTurn: TranscriptAssistantTurn | null = null;
 
-	return { sessionId, tools: withResults };
+	for (const entry of transcript.entries) {
+		if (entry.type !== "message") { continue; }
+		const msg = asRecord(entry.message);
+		if (!msg) { continue; }
+		const role = typeof msg.role === "string" ? msg.role : "";
+		const content = Array.isArray(msg.content) ? msg.content : [];
+
+		if (role === "assistant") {
+			const textParts: string[] = [];
+			const tools: TranscriptToolPart[] = [];
+			for (const rawPart of content) {
+				const part = asRecord(rawPart);
+				if (!part) {
+					continue;
+				}
+				if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+					textParts.push(part.text);
+					continue;
+				}
+				if (part.type === "toolCall" && typeof part.id === "string" && typeof part.name === "string") {
+					tools.push({
+						type: "tool-invocation",
+						toolCallId: part.id,
+						toolName: part.name,
+						args: asRecord(part.arguments) ?? {},
+					});
+				}
+			}
+			const messageTimestamp =
+				typeof msg.timestamp === "number"
+					? msg.timestamp
+					: typeof entry.timestamp === "string"
+						? Date.parse(entry.timestamp)
+						: Number.NaN;
+			latestAssistantTurn = {
+				sessionId: transcript.sessionId,
+				responseId: typeof msg.responseId === "string" ? msg.responseId : undefined,
+				stopReason: typeof msg.stopReason === "string" ? msg.stopReason : undefined,
+				messageTimestamp: Number.isFinite(messageTimestamp) ? messageTimestamp : null,
+				textParts,
+				tools,
+			};
+			continue;
+		}
+
+		if (!latestAssistantTurn || role !== "toolResult" || typeof msg.toolCallId !== "string") {
+			continue;
+		}
+
+		const text = content
+			.filter((block): block is Record<string, unknown> => !!block && typeof block === "object")
+			.filter((block) => block.type === "text" && typeof block.text === "string")
+			.map((block) => block.text as string)
+			.join("\n");
+		const details = asRecord(msg.details);
+		const result: Record<string, unknown> = {
+			...(text ? { text: text.slice(0, 500) } : {}),
+			...(details ?? {}),
+		};
+		if (Object.keys(result).length === 0) {
+			continue;
+		}
+		const tool = latestAssistantTurn.tools.find((item) => item.toolCallId === msg.toolCallId);
+		if (tool) {
+			tool.result = result;
+		}
+	}
+
+	return latestAssistantTurn;
+}
+
+function readLatestTranscriptToolParts(
+	sessionKey: string,
+	pinnedAgentId?: string,
+): { sessionId: string; tools: TranscriptToolPart[] } | null {
+	const latestAssistantTurn = readLatestTranscriptAssistantTurn(sessionKey, pinnedAgentId);
+	if (!latestAssistantTurn || latestAssistantTurn.tools.length === 0) {
+		return null;
+	}
+
+	return { sessionId: latestAssistantTurn.sessionId, tools: latestAssistantTurn.tools };
+}
+
+function summarizeAgentEventForLog(ev: AgentEvent): string {
+	const parts = [`event=${ev.event}`];
+	if (ev.stream) {parts.push(`stream=${ev.stream}`);}
+	const phase = typeof ev.data?.phase === "string" ? ev.data.phase : null;
+	if (phase) {parts.push(`phase=${phase}`);}
+	if (ev.sessionKey) {parts.push(`sessionKey=${ev.sessionKey}`);}
+	if (ev.runId) {parts.push(`runId=${ev.runId}`);}
+	if (typeof ev.globalSeq === "number") {parts.push(`globalSeq=${ev.globalSeq}`);}
+	return parts.join(" ");
 }
 
 /**
@@ -1522,6 +1593,9 @@ function wireChildProcess(run: ActiveRun): void {
 	let agentErrorReported = false;
 	let parentAssistantChunksCurrentTurn = 0;
 	const stderrChunks: string[] = [];
+	let rawStdoutLineCount = 0;
+	let droppedSessionEventCount = 0;
+	const rawStdoutEventSamples: string[] = [];
 
 	// ── Ordered accumulation tracking (preserves interleaving for persistence) ──
 	let accTextIdx = -1;
@@ -1631,6 +1705,112 @@ function wireChildProcess(run: ActiveRun): void {
 		emit({ type: "text-delta", id: currentTextId, delta: text });
 		accAppendText(text);
 		closeText();
+	};
+
+	const rememberRawStdoutEvent = (ev: AgentEvent) => {
+		rawStdoutLineCount += 1;
+		rawStdoutEventSamples.push(summarizeAgentEventForLog(ev));
+		if (rawStdoutEventSamples.length > EMPTY_RESPONSE_EVENT_SAMPLE_LIMIT) {
+			rawStdoutEventSamples.shift();
+		}
+	};
+
+	const logDroppedSessionEvent = (ev: AgentEvent) => {
+		droppedSessionEventCount += 1;
+		if (droppedSessionEventCount > MAX_FILTER_DROP_LOGS) {
+			return;
+		}
+		console.warn("[active-runs] Dropped child event due to session mismatch", {
+			expectedSessionKey: parentSessionKey,
+			actualSessionKey: ev.sessionKey,
+			runId: ev.runId,
+			stream: ev.stream,
+			globalSeq: ev.globalSeq,
+			event: ev.event,
+		});
+	};
+
+	const backfillTranscriptToolEvents = (tools: TranscriptToolPart[]) => {
+		for (const tool of tools) {
+			const existingIdx = accToolMap.get(tool.toolCallId);
+			if (existingIdx === undefined) {
+				everSentResponseActivity = true;
+				closeReasoning();
+				closeText();
+				emit({
+					type: "tool-input-start",
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+				});
+				emit({
+					type: "tool-input-available",
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+					input: tool.args ?? {},
+				});
+				run.accumulated.parts.push({
+					type: "tool-invocation",
+					toolCallId: tool.toolCallId,
+					toolName: tool.toolName,
+					args: tool.args ?? {},
+				});
+				accToolMap.set(tool.toolCallId, run.accumulated.parts.length - 1);
+			}
+			if (!tool.result) {
+				continue;
+			}
+			const idx = accToolMap.get(tool.toolCallId);
+			if (idx === undefined) {
+				continue;
+			}
+			const part = run.accumulated.parts[idx];
+			if (part.type !== "tool-invocation" || part.result) {
+				continue;
+			}
+			everSentResponseActivity = true;
+			part.result = tool.result;
+			emit({
+				type: "tool-output-available",
+				toolCallId: tool.toolCallId,
+				output: tool.result,
+			});
+		}
+	};
+
+	const maybeBackfillMissingResponseFromTranscript = () => {
+		const latestAssistantTurn = readLatestTranscriptAssistantTurn(
+			parentSessionKey,
+			run.pinnedAgentId,
+		);
+		if (!latestAssistantTurn) {
+			return null;
+		}
+		const isCurrentTurn =
+			latestAssistantTurn.messageTimestamp === null ||
+			latestAssistantTurn.messageTimestamp >= run.startedAt - TRANSCRIPT_TURN_CLOCK_SKEW_MS;
+		if (!isCurrentTurn) {
+			return { latestAssistantTurn, recovered: false, isCurrentTurn };
+		}
+		let recovered = false;
+		if (latestAssistantTurn.tools.length > 0) {
+			backfillTranscriptToolEvents(latestAssistantTurn.tools);
+			recovered = true;
+		}
+		if (latestAssistantTurn.textParts.length > 0) {
+			emitAssistantFinalText(latestAssistantTurn.textParts.join("\n\n"));
+			recovered = true;
+		}
+		if (recovered) {
+			console.warn("[active-runs] Recovered missing live response from transcript", {
+				sessionId: run.sessionId,
+				transcriptSessionId: latestAssistantTurn.sessionId,
+				responseId: latestAssistantTurn.responseId,
+				stopReason: latestAssistantTurn.stopReason,
+				toolCount: latestAssistantTurn.tools.length,
+				textPartCount: latestAssistantTurn.textParts.length,
+			});
+		}
+		return { latestAssistantTurn, recovered, isCurrentTurn };
 	};
 
 	// ── Parse stdout JSON lines ──
@@ -2011,10 +2191,12 @@ function wireChildProcess(run: ActiveRun): void {
 		} catch {
 			return;
 		}
+		rememberRawStdoutEvent(ev);
 
 		// Skip events from other sessions (e.g. subagent broadcasts that
 		// the gateway delivers on the same WS connection).
 		if (ev.sessionKey && ev.sessionKey !== parentSessionKey) {
+			logDroppedSessionEvent(ev);
 			return;
 		}
 
@@ -2050,6 +2232,11 @@ function wireChildProcess(run: ActiveRun): void {
 		closeReasoning();
 
 		const exitedClean = code === 0 || code === null;
+		const transcriptBackfill =
+			!everSentResponseActivity && exitedClean
+				? maybeBackfillMissingResponseFromTranscript()
+				: null;
+		const latestTranscriptTurn = transcriptBackfill?.latestAssistantTurn ?? null;
 
 		if (!everSentResponseActivity) {
 			const elapsed = Date.now() - run.startedAt;
@@ -2057,8 +2244,14 @@ function wireChildProcess(run: ActiveRun): void {
 			console.warn(
 				`[active-runs] Empty response for session ${run.sessionId}: ` +
 				`exitCode=${code}, clean=${exitedClean}, elapsed=${elapsed}ms, ` +
-				`hasStderr=${hasStderr}, agentErrorReported=${agentErrorReported}`,
+				`hasStderr=${hasStderr}, agentErrorReported=${agentErrorReported}, ` +
+				`rawStdoutLines=${rawStdoutLineCount}, droppedSessionEvents=${droppedSessionEventCount}, ` +
+				`transcriptStopReason=${latestTranscriptTurn?.stopReason ?? "n/a"}, ` +
+				`transcriptResponseId=${latestTranscriptTurn?.responseId ?? "n/a"}`,
 			);
+			if (rawStdoutEventSamples.length > 0) {
+				console.warn("[active-runs] Last child stdout events before empty response", rawStdoutEventSamples);
+			}
 		}
 
 		if (!everSentResponseActivity && !exitedClean) {
@@ -2069,7 +2262,17 @@ function wireChildProcess(run: ActiveRun): void {
 			emit({ type: "text-end", id: tid });
 			accAppendText(errMsg);
 		} else if (!everSentResponseActivity && exitedClean) {
-			emitError("No response from agent.");
+			const transcriptWasCurrentTurn =
+				transcriptBackfill?.isCurrentTurn === true && latestTranscriptTurn !== null;
+			const transcriptWasEmpty =
+				transcriptWasCurrentTurn &&
+				latestTranscriptTurn.textParts.length === 0 &&
+				latestTranscriptTurn.tools.length === 0;
+			emitError(
+				transcriptWasEmpty
+					? "Agent finished with an empty upstream response."
+					: "No response from agent.",
+			);
 		} else {
 			closeText();
 		}

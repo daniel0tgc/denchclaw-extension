@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatMessage } from "./chat-message";
 import { buildComposioChatActionHref } from "@/lib/composio-chat-actions";
 
@@ -24,6 +24,47 @@ vi.mock("posthog-js/react/surveys", () => ({
   })),
 }));
 
+beforeEach(() => {
+  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.startsWith("/api/composio/toolkits?")) {
+      const search = new URL(url, "http://localhost").searchParams.get("search")?.toLowerCase();
+      if (search === "slack") {
+        return new Response(JSON.stringify({
+          items: [{
+            slug: "slack",
+            name: "Slack",
+            description: "Messages and channels",
+            logo: "https://gateway.example/slack.svg",
+            categories: ["Communication"],
+            auth_schemes: ["oauth2"],
+            tools_count: 4,
+          }],
+        }));
+      }
+      if (search === "stripe") {
+        return new Response(JSON.stringify({
+          items: [{
+            slug: "stripe",
+            name: "Stripe",
+            description: "Payments infrastructure",
+            logo: "https://gateway.example/stripe.svg",
+            categories: ["Payments"],
+            auth_schemes: ["oauth2"],
+            tools_count: 12,
+          }],
+        }));
+      }
+      return new Response(JSON.stringify({ items: [] }));
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  }) as typeof fetch;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("ChatMessage", () => {
   it("shows the speaker action for completed assistant text when voice playback is enabled", () => {
     render(
@@ -38,6 +79,51 @@ describe("ChatMessage", () => {
     );
 
     expect(screen.getByRole("button", { name: "Play voice" })).toBeInTheDocument();
+  });
+
+  it("copies assistant turns from the inline copy action", async () => {
+    const user = userEvent.setup();
+    const writeTextSpy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-copy",
+          role: "assistant",
+          parts: [{ type: "text", text: "Hello from Dench." }],
+        }}
+        copyable
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy message" }));
+
+    expect(writeTextSpy).toHaveBeenCalledWith("Hello from Dench.");
+  });
+
+  it("copies user turns with attachment metadata", async () => {
+    const user = userEvent.setup();
+    const writeTextSpy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "user-copy",
+          role: "user",
+          parts: [{
+            type: "text",
+            text: "[Attached files: /tmp/alpha.ts, /tmp/beta.ts] Please compare these files.",
+          }],
+        }}
+        copyable
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy message" }));
+
+    expect(writeTextSpy).toHaveBeenCalledWith(
+      "Please compare these files.\n\nAttached files:\n/tmp/alpha.ts\n/tmp/beta.ts",
+    );
   });
 
   it("hides the speaker action while the assistant message is still streaming", () => {
@@ -81,6 +167,107 @@ describe("ChatMessage", () => {
       toolkitSlug: "slack",
       toolkitName: "Slack",
     });
+  });
+
+  it("renders the branded Stripe connect action from gateway toolkit data", async () => {
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-4",
+          role: "assistant",
+          parts: [{
+            type: "text",
+            text: `Stripe needs attention. [Connect Stripe](${buildComposioChatActionHref("connect", { toolkitSlug: "stripe", toolkitName: "Stripe" })})`,
+          }],
+        }}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Connect Stripe" });
+    await waitFor(() => {
+      const logo = button.querySelector('img[src="https://gateway.example/stripe.svg"]');
+      expect(logo).toBeTruthy();
+    });
+
+    expect(button.querySelector('img[src="/integrations/stripe-logomark.svg"]')).toBeNull();
+  });
+
+  it("renders persisted Dench Integration failures with their error details", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-persisted-error",
+          role: "assistant",
+          parts: [{
+            type: "tool-invocation",
+            toolCallId: "tool-call-error",
+            toolName: "composio_call_tool",
+            args: {
+              execution_ref: "exec_posthog_1",
+              arguments: {
+                project_id: "proj_123",
+              },
+            },
+            result: {
+              tool_slug: "POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS",
+              toolkit: "posthog",
+              tool_router_session_id: "trs_posthog_123",
+            },
+            errorText:
+              "Validation failed for tool \"composio_call_tool\": execution_ref is required.",
+          }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /thought/i }));
+
+    expect(
+      screen.getByText(/Validation failed for tool "composio_call_tool"/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/posthog \/ POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"project_id": "proj_123"/)).toBeInTheDocument();
+  });
+
+  it("renders live Dench Integration failures with streamed output errors", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "assistant-streaming-error",
+          role: "assistant",
+          parts: [{
+            type: "dynamic-tool",
+            toolCallId: "tool-call-live-error",
+            toolName: "composio_call_tool",
+            state: "error",
+            input: {
+              execution_ref: "exec_posthog_1",
+            },
+            output: {
+              tool_slug: "POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS",
+              toolkit: "posthog",
+              tool_router_session_id: "trs_posthog_123",
+              error: "Gateway rejected the bridge invocation.",
+            },
+          }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /thought/i }));
+
+    expect(
+      screen.getByText(/Gateway rejected the bridge invocation./),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/posthog \/ POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS/),
+    ).toBeInTheDocument();
   });
 
   it("opens and closes a preview for sent image attachments", async () => {

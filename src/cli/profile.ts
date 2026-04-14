@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
@@ -113,7 +114,23 @@ export function applyCliProfileEnv(params: {
 
   const stateDir = resolveProfileStateDir(env, homedir);
   env.OPENCLAW_STATE_DIR = stateDir;
-  env.OPENCLAW_CONFIG_PATH = path.join(stateDir, "openclaw.json");
+  const configPath = path.join(stateDir, "openclaw.json");
+  env.OPENCLAW_CONFIG_PATH = configPath;
+
+  if (!env.DENCH_CLOUD_API_KEY) {
+    try {
+      const authPath = path.join(stateDir, "agents", "main", "agent", "auth-profiles.json");
+      if (existsSync(authPath)) {
+        const raw = JSON.parse(readFileSync(authPath, "utf-8"));
+        const key = raw?.profiles?.["dench-cloud:default"]?.key;
+        if (typeof key === "string" && key.trim()) {
+          env.DENCH_CLOUD_API_KEY = key.trim();
+        }
+      }
+    } catch {
+      // Best-effort; plugins fall back to auth-profiles.json resolution.
+    }
+  }
 
   const warning =
     requestedProfile && requestedProfile !== profile

@@ -445,6 +445,37 @@ function normalizeVersionOutput(raw: string | undefined): string | undefined {
   return first && first.length > 0 ? first : undefined;
 }
 
+function parseOpenClawCalendarVersion(raw: string | undefined): [number, number, number] | undefined {
+  const match = raw?.match(/\b(\d{4})\.(\d+)\.(\d+)\b/u);
+  if (!match) {
+    return undefined;
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareOpenClawCalendarVersions(
+  left: [number, number, number],
+  right: [number, number, number],
+): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const diff = left[index] - right[index];
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+function preferredTtsConfigShapeForOpenClaw(
+  openClawVersion: string | undefined,
+): ElevenLabsTtsConfigShape {
+  const parsed = parseOpenClawCalendarVersion(openClawVersion);
+  if (!parsed) {
+    return "providers";
+  }
+  return compareOpenClawCalendarVersions(parsed, [2026, 3, 28]) >= 0 ? "providers" : "flat";
+}
+
 function firstNonEmptyLine(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     const first = value
@@ -480,6 +511,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function mergeAllowedTools(existingTools: unknown, patchTools: unknown): string[] {
+  const existing = asRecord(existingTools);
+  const patch = asRecord(patchTools);
+  const merged = new Set([
+    ...toStringArray(existing?.alsoAllow),
+    ...toStringArray(existing?.allow),
+    ...toStringArray(patch?.alsoAllow),
+  ]);
+  return [...merged].sort((left, right) => left.localeCompare(right));
 }
 
 function toFiniteNumber(value: unknown): number | undefined {
@@ -574,9 +616,76 @@ function readDenchIntegrationsMetadata(stateDir: string): Record<string, unknown
   }
 }
 
-function disableDenchElevenLabsOverride(tts: Record<string, unknown>, gatewayUrl?: string, apiKey?: string): void {
+type ElevenLabsTtsConfigShape = "providers" | "flat";
+
+function readTtsElevenLabsConfig(tts: Record<string, unknown>): Record<string, unknown> | undefined {
+  return asRecord(tts.elevenlabs) ?? asRecord(asRecord(tts.providers)?.elevenlabs);
+}
+
+function resolveTtsElevenLabsConfigShape(tts: Record<string, unknown>): ElevenLabsTtsConfigShape {
+  if (asRecord(asRecord(tts.providers)?.elevenlabs)) {
+    return "providers";
+  }
+  return "flat";
+}
+
+function ensureTtsElevenLabsConfig(
+  tts: Record<string, unknown>,
+  shape: ElevenLabsTtsConfigShape,
+): Record<string, unknown> {
+  const direct = asRecord(tts.elevenlabs);
   const providers = asRecord(tts.providers);
-  const elevenlabs = asRecord(providers?.elevenlabs);
+  const legacy = asRecord(providers?.elevenlabs);
+  const next = {
+    ...(legacy ?? {}),
+    ...(direct ?? {}),
+  };
+  if (shape === "providers") {
+    const nextProviders = providers ?? {};
+    nextProviders.elevenlabs = next;
+    tts.providers = nextProviders;
+    delete tts.elevenlabs;
+    return next;
+  }
+
+  tts.elevenlabs = next;
+  if (providers) {
+    delete providers.elevenlabs;
+    if (Object.keys(providers).length === 0) {
+      delete tts.providers;
+    } else {
+      tts.providers = providers;
+    }
+  }
+  return next;
+}
+
+function removeTtsElevenLabsConfig(
+  tts: Record<string, unknown>,
+  shape: ElevenLabsTtsConfigShape,
+): void {
+  if (shape === "providers") {
+    const providers = asRecord(tts.providers);
+    if (providers) {
+      delete providers.elevenlabs;
+      if (Object.keys(providers).length === 0) {
+        delete tts.providers;
+      }
+    }
+    return;
+  }
+  delete tts.elevenlabs;
+}
+
+function disableDenchElevenLabsOverride(
+  tts: Record<string, unknown>,
+  shape: ElevenLabsTtsConfigShape,
+  gatewayUrl?: string,
+  apiKey?: string,
+): void {
+  const elevenlabs = readTtsElevenLabsConfig(tts)
+    ? ensureTtsElevenLabsConfig(tts, shape)
+    : undefined;
   if (elevenlabs) {
     if (
       typeof elevenlabs.baseUrl === "string" &&
@@ -590,15 +699,12 @@ function disableDenchElevenLabsOverride(tts: Record<string, unknown>, gatewayUrl
     ) {
       delete elevenlabs.apiKey;
     }
-    if (Object.keys(elevenlabs).length === 0 && providers) {
-      delete providers.elevenlabs;
+    if (Object.keys(elevenlabs).length === 0) {
+      removeTtsElevenLabsConfig(tts, shape);
     }
   }
   if (tts.provider === "elevenlabs") {
     delete tts.provider;
-  }
-  if (providers && Object.keys(providers).length === 0) {
-    delete tts.providers;
   }
 }
 
@@ -607,6 +713,7 @@ function applyDenchManagedIntegrationDefaults(params: {
   denchEnabled: boolean;
   gatewayUrl?: string;
   apiKey?: string;
+  ttsConfigShape: ElevenLabsTtsConfigShape;
 }): void {
   const rawConfig = readBootstrapConfig(params.stateDir) ?? {};
   const nextConfig = { ...rawConfig };
@@ -640,17 +747,13 @@ function applyDenchManagedIntegrationDefaults(params: {
 
   const messages = { ...(asRecord(nextConfig.messages) ?? {}) };
   const tts = { ...(asRecord(messages.tts) ?? {}) };
-  const providers = { ...(asRecord(tts.providers) ?? {}) };
-  const elevenlabs = { ...(asRecord(providers.elevenlabs) ?? {}) };
   if (params.denchEnabled && params.gatewayUrl && params.apiKey) {
+    const elevenlabs = ensureTtsElevenLabsConfig(tts, params.ttsConfigShape);
     tts.provider = "elevenlabs";
     elevenlabs.baseUrl = params.gatewayUrl;
     elevenlabs.apiKey = params.apiKey;
-    providers.elevenlabs = elevenlabs;
-    tts.providers = providers;
   } else {
-    tts.providers = providers;
-    disableDenchElevenLabsOverride(tts, params.gatewayUrl, params.apiKey);
+    disableDenchElevenLabsOverride(tts, params.ttsConfigShape, params.gatewayUrl, params.apiKey);
   }
   messages.tts = tts;
   nextConfig.messages = messages;
@@ -751,6 +854,13 @@ async function syncBundledPlugins(params: {
           ...plugin.config,
         };
       }
+      if (plugin.pluginId === "apollo-enrichment" || plugin.pluginId === "exa-search") {
+        const cfg = asRecord(existingEntry.config);
+        if (cfg && "apiKey" in cfg) {
+          delete cfg.apiKey;
+          existingEntry.config = cfg;
+        }
+      }
       if (Object.keys(existingEntry).length > 0) {
         entries[plugin.pluginId] = existingEntry;
       }
@@ -766,6 +876,12 @@ async function syncBundledPlugins(params: {
         installRecord.version = version;
       }
       installs[plugin.pluginId] = installRecord;
+    }
+
+    const sharedSrc = path.join(packageRoot, "extensions", "shared");
+    if (existsSync(sharedSrc)) {
+      const sharedDest = path.join(params.stateDir, "extensions", "shared");
+      cpSync(sharedSrc, sharedDest, { recursive: true, force: true });
     }
 
     pluginsConfig.allow = uniqueStrings(nextAllow);
@@ -1946,12 +2062,8 @@ function readBootstrapConfig(stateDir: string): Record<string, unknown> | undefi
   return undefined;
 }
 
-function hasConfiguredComposioServer(stateDir: string): boolean {
-  const raw = readBootstrapConfig(stateDir);
-  const mcp = asRecord(raw?.mcp);
-  const servers = asRecord(mcp?.servers);
-  const composio = asRecord(servers?.composio);
-  return typeof composio?.url === "string" && composio.url.trim().length > 0;
+function hasConfiguredComposioServer(_stateDir: string): boolean {
+  return true;
 }
 
 function resolveBootstrapWorkspaceDir(stateDir: string): string {
@@ -1971,6 +2083,43 @@ function resolveModelProvider(stateDir: string): string | undefined {
     return modelName.split("/")[0];
   }
   return undefined;
+}
+
+function authProfilesPath(stateDir: string): string {
+  return path.join(stateDir, "agents", "main", "agent", "auth-profiles.json");
+}
+
+function readAuthProfileKey(stateDir: string): string | undefined {
+  const authPath = authProfilesPath(stateDir);
+  try {
+    if (!existsSync(authPath)) return undefined;
+    const raw = json5.parse(readFileSync(authPath, "utf-8"));
+    const key = raw?.profiles?.["dench-cloud:default"]?.key;
+    return typeof key === "string" && key.trim() ? key.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAuthProfileKey(stateDir: string, apiKey: string): void {
+  const authPath = authProfilesPath(stateDir);
+  let raw: Record<string, unknown> = { version: 1, profiles: {} };
+  try {
+    if (existsSync(authPath)) {
+      raw = json5.parse(readFileSync(authPath, "utf-8"));
+    }
+  } catch { /* fresh file */ }
+
+  const profiles = ((raw.profiles ?? {}) as Record<string, unknown>);
+  profiles["dench-cloud:default"] = {
+    type: "api_key",
+    provider: "dench-cloud",
+    key: apiKey,
+  };
+  raw.profiles = profiles;
+
+  mkdirSync(path.dirname(authPath), { recursive: true });
+  writeFileSync(authPath, `${JSON.stringify(raw, null, 2)}\n`);
 }
 
 /**
@@ -2112,11 +2261,11 @@ export function buildBootstrapDiagnostics(params: {
         "composio",
         params.composioConfigured ? "pass" : "warn",
         params.composioConfigured
-          ? "Composio MCP configured via Dench Cloud gateway."
-          : "Composio MCP not configured. Check mcp.servers.composio in openclaw.json.",
+          ? "Dench Integrations configured via Dench Cloud gateway."
+          : "Dench Integrations not configured. Check Dench Cloud gateway connectivity.",
         params.composioConfigured
           ? undefined
-          : `Open Settings > Integrations and repair the Composio MCP setup, or run \`openclaw --profile ${DEFAULT_DENCHCLAW_PROFILE} gateway restart\` after restoring the Dench Cloud config.`,
+          : `Open Settings > Integrations or run \`openclaw --profile ${DEFAULT_DENCHCLAW_PROFILE} gateway restart\` to repair the Dench Cloud config.`,
       ),
     );
   }
@@ -2258,12 +2407,14 @@ function isExplicitDenchCloudRequest(opts: BootstrapOptions): boolean {
 
 function resolveDenchCloudApiKeyCandidate(params: {
   opts: BootstrapOptions;
+  stateDir: string;
   existingApiKey?: string;
 }): string | undefined {
   return (
     params.opts.denchCloudApiKey?.trim() ||
     process.env.DENCH_CLOUD_API_KEY?.trim() ||
     process.env.DENCH_API_KEY?.trim() ||
+    readAuthProfileKey(params.stateDir) ||
     params.existingApiKey?.trim()
   );
 }
@@ -2385,6 +2536,159 @@ function renderDenchCloudRecommendationBanner(): string {
   ].join("\n");
 }
 
+function preStageDenchCloudConfig(params: {
+  stateDir: string;
+  gatewayUrl: string;
+  apiKey: string;
+  catalog?: DenchCloudCatalogLoadResult;
+  selectedModel?: string;
+}): void {
+  try {
+    const rawConfig = readBootstrapConfig(params.stateDir) ?? {};
+    const nextConfig = { ...rawConfig };
+
+    const models = { ...asRecord(nextConfig.models) };
+    models.mode = models.mode ?? "merge";
+    const providers = { ...asRecord(models.providers) };
+
+    const configPatch = buildDenchCloudConfigPatch({
+      gatewayUrl: params.gatewayUrl,
+      apiKey: params.apiKey,
+      models: params.catalog?.models ?? [],
+    });
+    providers["dench-cloud"] = configPatch.models.providers["dench-cloud"];
+    models.providers = providers;
+    nextConfig.models = models;
+
+    const tools = { ...asRecord(nextConfig.tools) };
+    tools.alsoAllow = mergeAllowedTools(nextConfig.tools, (configPatch as Record<string, unknown>).tools);
+    delete tools.allow;
+    nextConfig.tools = tools;
+
+    if (params.selectedModel) {
+      const agents = { ...asRecord(nextConfig.agents) };
+      const defaults = { ...asRecord(agents.defaults) };
+      defaults.model = { ...asRecord(defaults.model), primary: `dench-cloud/${params.selectedModel}` };
+      agents.defaults = defaults;
+      nextConfig.agents = agents;
+    }
+
+    writeFileSync(
+      path.join(params.stateDir, "openclaw.json"),
+      `${JSON.stringify(nextConfig, null, 2)}\n`,
+    );
+    writeAuthProfileKey(params.stateDir, params.apiKey);
+  } catch {
+    // Best-effort; applyDenchCloudBootstrapConfig will write the canonical version post-onboard.
+  }
+}
+
+function buildDenchCloudElevenLabsTtsConfig(params: {
+  gatewayUrl: string;
+  apiKey: string;
+  shape: ElevenLabsTtsConfigShape;
+}): Record<string, unknown> {
+  if (params.shape === "providers") {
+    return {
+      provider: "elevenlabs",
+      providers: {
+        elevenlabs: {
+          baseUrl: params.gatewayUrl,
+          apiKey: params.apiKey,
+        },
+      },
+    };
+  }
+  return {
+    provider: "elevenlabs",
+    elevenlabs: {
+      baseUrl: params.gatewayUrl,
+      apiKey: params.apiKey,
+    },
+  };
+}
+
+function rewriteDenchCloudTtsConfigFile(params: {
+  stateDir: string;
+  gatewayUrl: string;
+  apiKey: string;
+  shape: ElevenLabsTtsConfigShape;
+}): void {
+  const rawConfig = readBootstrapConfig(params.stateDir) ?? {};
+  const nextConfig = { ...rawConfig };
+  const messages = { ...(asRecord(nextConfig.messages) ?? {}) };
+  const tts = { ...(asRecord(messages.tts) ?? {}) };
+  const elevenlabs = ensureTtsElevenLabsConfig(tts, params.shape);
+  tts.provider = "elevenlabs";
+  elevenlabs.baseUrl = params.gatewayUrl;
+  elevenlabs.apiKey = params.apiKey;
+  messages.tts = tts;
+  nextConfig.messages = messages;
+  writeFileSync(path.join(params.stateDir, "openclaw.json"), `${JSON.stringify(nextConfig, null, 2)}\n`);
+}
+
+function isExpectedTtsShapeValidationError(
+  error: unknown,
+  attemptedShape: ElevenLabsTtsConfigShape,
+): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (attemptedShape === "flat") {
+    return /messages\.tts.*legacy; use messages\.tts\.providers/i.test(message);
+  }
+  return /messages\.tts.*unrecognized key:\s*"providers"/iu.test(message);
+}
+
+async function applyDenchCloudTtsConfig(params: {
+  openclawCommand: string;
+  profile: string;
+  stateDir: string;
+  gatewayUrl: string;
+  apiKey: string;
+  preferredShape: ElevenLabsTtsConfigShape;
+}): Promise<ElevenLabsTtsConfigShape> {
+  const attempt = async (shape: ElevenLabsTtsConfigShape): Promise<void> => {
+    const ttsConfig = buildDenchCloudElevenLabsTtsConfig({
+      gatewayUrl: params.gatewayUrl,
+      apiKey: params.apiKey,
+      shape,
+    });
+    rewriteDenchCloudTtsConfigFile({
+      stateDir: params.stateDir,
+      gatewayUrl: params.gatewayUrl,
+      apiKey: params.apiKey,
+      shape,
+    });
+    await setOpenClawConfigJson({
+      openclawCommand: params.openclawCommand,
+      profile: params.profile,
+      key: "messages.tts.provider",
+      value: ttsConfig.provider,
+      errorMessage: "Failed to set ElevenLabs as TTS provider.",
+    });
+    await setOpenClawConfigJson({
+      openclawCommand: params.openclawCommand,
+      profile: params.profile,
+      key: shape === "providers" ? "messages.tts.providers.elevenlabs" : "messages.tts.elevenlabs",
+      value: shape === "providers"
+        ? asRecord(asRecord(ttsConfig.providers)?.elevenlabs)
+        : asRecord(ttsConfig.elevenlabs),
+      errorMessage: "Failed to configure ElevenLabs TTS via Dench Cloud gateway.",
+    });
+  };
+
+  try {
+    await attempt(params.preferredShape);
+    return params.preferredShape;
+  } catch (error) {
+    if (!isExpectedTtsShapeValidationError(error, params.preferredShape)) {
+      throw error;
+    }
+    const fallbackShape = params.preferredShape === "providers" ? "flat" : "providers";
+    await attempt(fallbackShape);
+    return fallbackShape;
+  }
+}
+
 async function applyDenchCloudBootstrapConfig(params: {
   openclawCommand: string;
   profile: string;
@@ -2393,7 +2697,8 @@ async function applyDenchCloudBootstrapConfig(params: {
   apiKey: string;
   catalog: DenchCloudCatalogLoadResult;
   selectedModel: string;
-}): Promise<void> {
+  openClawVersion?: string;
+}): Promise<ElevenLabsTtsConfigShape> {
   const raw = readBootstrapConfig(params.stateDir) as {
     agents?: {
       defaults?: {
@@ -2414,6 +2719,7 @@ async function applyDenchCloudBootstrapConfig(params: {
     ...existingAgentModels,
     ...((configPatch.agents?.defaults?.models as Record<string, unknown> | undefined) ?? {}),
   };
+  const preferredTtsShape = preferredTtsConfigShapeForOpenClaw(params.openClawVersion);
 
   await runOpenClawOrThrow({
     openclawCommand: params.openclawCommand,
@@ -2452,57 +2758,31 @@ async function applyDenchCloudBootstrapConfig(params: {
     errorMessage: "Failed to update agents.defaults.models for Dench Cloud.",
   });
 
-  await setOpenClawConfigJson({
+  const appliedTtsShape = await applyDenchCloudTtsConfig({
     openclawCommand: params.openclawCommand,
     profile: params.profile,
-    key: "messages.tts.provider",
-    value: configPatch.messages.tts.provider,
-    errorMessage: "Failed to set ElevenLabs as TTS provider.",
+    stateDir: params.stateDir,
+    gatewayUrl: params.gatewayUrl,
+    apiKey: params.apiKey,
+    preferredShape: preferredTtsShape,
   });
 
-  await setOpenClawConfigJson({
-    openclawCommand: params.openclawCommand,
-    profile: params.profile,
-    key: "messages.tts.providers.elevenlabs",
-    value: configPatch.messages.tts.providers.elevenlabs,
-    errorMessage: "Failed to configure ElevenLabs TTS via Dench Cloud gateway.",
-  });
-
-  if ((configPatch as Record<string, unknown>).mcp) {
-    const mcpPatch = (configPatch as Record<string, unknown>).mcp as Record<string, unknown>;
-    const servers = mcpPatch.servers as Record<string, unknown> | undefined;
-    if (servers?.composio) {
-      try {
-        await setOpenClawConfigJson({
-          openclawCommand: params.openclawCommand,
-          profile: params.profile,
-          key: "mcp.servers.composio",
-          value: servers.composio,
-          errorMessage: "Failed to configure Composio MCP server via Dench Cloud gateway.",
-        });
-      } catch {
-        console.warn(
-          theme.warn(
-            "Could not configure the Composio MCP server during bootstrap. You can repair it later in Settings > Integrations.",
-          ),
-        );
-      }
-    }
+  const nextAlsoAllow = mergeAllowedTools(
+    (raw as Record<string, unknown> | undefined)?.tools,
+    (configPatch as Record<string, unknown>).tools,
+  );
+  if (nextAlsoAllow.length > 0) {
+    await setOpenClawConfigJson({
+      openclawCommand: params.openclawCommand,
+      profile: params.profile,
+      key: "tools.alsoAllow",
+      value: nextAlsoAllow,
+      errorMessage: "Failed to enable Dench Integrations wrapper tools.",
+    });
   }
 
-  await runOpenClawOrThrow({
-    openclawCommand: params.openclawCommand,
-    args: [
-      "--profile",
-      params.profile,
-      "config",
-      "set",
-      "agents.defaults.reasoningDefault",
-      "on",
-    ],
-    timeoutMs: 30_000,
-    errorMessage: "Failed to enable reasoning visibility for Dench Cloud.",
-  });
+  writeAuthProfileKey(params.stateDir, params.apiKey);
+  return appliedTtsShape;
 }
 
 async function resolveDenchCloudBootstrapSelection(params: {
@@ -2530,6 +2810,7 @@ async function resolveDenchCloudBootstrapSelection(params: {
 
     const apiKey = resolveDenchCloudApiKeyCandidate({
       opts: params.opts,
+      stateDir: params.stateDir,
       existingApiKey: existing.apiKey,
     });
     if (!apiKey) {
@@ -2578,6 +2859,7 @@ async function resolveDenchCloudBootstrapSelection(params: {
 
   let apiKey = resolveDenchCloudApiKeyCandidate({
     opts: params.opts,
+    stateDir: params.stateDir,
     existingApiKey: existing.apiKey,
   });
   const showSpinners = !params.opts.json;
@@ -2877,11 +3159,17 @@ export async function bootstrapCommand(
       pluginId: "apollo-enrichment",
       sourceDirName: "apollo-enrichment",
       enabled: denchCloudSelection.enabled,
+      ...(denchCloudSelection.enabled
+        ? { config: { enabled: true } }
+        : {}),
     },
     {
       pluginId: "exa-search",
       sourceDirName: "exa-search",
       enabled: denchCloudSelection.enabled,
+      ...(denchCloudSelection.enabled
+        ? { config: { enabled: true } }
+        : {}),
     },
   ];
 
@@ -2897,6 +3185,16 @@ export async function bootstrapCommand(
     plugins: managedBundledPlugins,
   });
   const posthogPluginInstalled = preOnboardPlugins.installedPluginIds.includes("posthog-analytics");
+
+  if (denchCloudSelection.enabled && denchCloudSelection.apiKey) {
+    preStageDenchCloudConfig({
+      stateDir,
+      gatewayUrl: denchCloudSelection.gatewayUrl ?? DEFAULT_DENCH_CLOUD_GATEWAY_URL,
+      apiKey: denchCloudSelection.apiKey,
+      catalog: denchCloudSelection.catalog,
+      selectedModel: denchCloudSelection.selectedModel,
+    });
+  }
 
   // All pre-onboard config (workspace, gateway mode/port, plugin trust) is now
   // staged via raw JSON writes above — no CLI calls needed before the profile
@@ -2969,6 +3267,7 @@ export async function bootstrapCommand(
   await ensureGatewayPort(openclawCommand, profile, gatewayPort);
   postOnboardSpinner?.message("Setting tools profile…");
   await ensureToolsProfile(openclawCommand, profile);
+  let appliedTtsConfigShape = preferredTtsConfigShapeForOpenClaw(installResult.version);
 
   if (
     denchCloudSelection.enabled &&
@@ -2978,7 +3277,7 @@ export async function bootstrapCommand(
     denchCloudSelection.catalog
   ) {
     postOnboardSpinner?.message("Applying Dench Cloud model config…");
-    await applyDenchCloudBootstrapConfig({
+    appliedTtsConfigShape = await applyDenchCloudBootstrapConfig({
       openclawCommand,
       profile,
       stateDir,
@@ -2986,6 +3285,7 @@ export async function bootstrapCommand(
       apiKey: denchCloudSelection.apiKey,
       catalog: denchCloudSelection.catalog,
       selectedModel: denchCloudSelection.selectedModel,
+      openClawVersion: installResult.version,
     });
   }
 
@@ -3006,6 +3306,7 @@ export async function bootstrapCommand(
     denchEnabled: denchCloudSelection.enabled,
     gatewayUrl: denchCloudSelection.gatewayUrl,
     apiKey: denchCloudSelection.apiKey,
+    ttsConfigShape: appliedTtsConfigShape,
   });
 
   // ── Gateway daemon restart + readiness verification ──

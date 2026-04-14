@@ -1,4 +1,5 @@
 import { getComposioMcpHealth } from "@/lib/composio-mcp-health";
+import { formatDenchIntegrationsStatusError } from "@/lib/dench-integrations-brand";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,7 +14,10 @@ export async function GET() {
     return Response.json(status);
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Failed to load Composio MCP status." },
+      {
+        error:
+          error instanceof Error ? error.message : formatDenchIntegrationsStatusError("load"),
+      },
       { status: 500 },
     );
   }
@@ -46,7 +50,10 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     return Response.json(
-      { error: error instanceof Error ? error.message : "Failed to update Composio MCP status." },
+      {
+        error:
+          error instanceof Error ? error.message : formatDenchIntegrationsStatusError("update"),
+      },
       { status: 500 },
     );
   }

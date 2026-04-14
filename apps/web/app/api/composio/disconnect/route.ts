@@ -4,8 +4,6 @@ import {
   resolveComposioEligibility,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
-import { getComposioMcpHealth } from "@/lib/composio-mcp-health";
-import { rebuildComposioToolIndexIfReady } from "@/lib/composio-tool-index";
 import { refreshIntegrationsRuntime } from "@/lib/integrations";
 
 export const dynamic = "force-dynamic";
@@ -54,18 +52,9 @@ export async function POST(request: Request) {
 
   try {
     const data = await disconnectComposioApp(gatewayUrl, apiKey, body.connection_id.trim());
-    const rebuild = await rebuildComposioToolIndexIfReady();
-    const refresh = rebuild.ok ? await refreshIntegrationsRuntime() : undefined;
-    await getComposioMcpHealth();
+    const refresh = await refreshIntegrationsRuntime();
     return Response.json({
       ...data,
-      tool_index_rebuild: rebuild.ok
-        ? {
-            ok: true as const,
-            generated_at: rebuild.generated_at,
-            connected_apps: rebuild.connected_apps,
-          }
-        : { ok: false as const, error: rebuild.reason },
       runtime_refresh: refresh,
     });
   } catch (err) {

@@ -37,9 +37,23 @@ describe("ComposioConnectModal", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
-    global.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ redirect_url: "http://localhost:3100/connect" }))
-    ) as typeof fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("/api/composio/toolkits?")) {
+        return new Response(JSON.stringify({
+          items: [{
+            slug: "gmail",
+            name: "Gmail",
+            description: "Read your inbox",
+            logo: "https://gateway.example/gmail.svg",
+            categories: ["Email"],
+            auth_schemes: ["oauth2"],
+            tools_count: 3,
+          }],
+        }));
+      }
+      return new Response(JSON.stringify({ redirect_url: "http://localhost:3100/connect" }));
+    }) as typeof fetch;
   });
 
   it("renders existing accounts and connect-another-account actions", () => {

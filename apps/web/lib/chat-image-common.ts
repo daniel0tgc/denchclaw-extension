@@ -1,6 +1,6 @@
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
 
-export const ATTACHED_FILES_PATTERN = /\[Attached files: (.+?)\]/;
+export const ATTACHED_FILES_PATTERN = /\[Attached files: ([^\]]+)\]/;
 
 export const CHAT_IMAGE_EXTENSION_TO_MIME = {
 	".jpg": "image/jpeg",

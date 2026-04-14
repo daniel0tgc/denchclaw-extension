@@ -37,21 +37,6 @@ import {
 	parseErrorBody,
 	parseErrorFromStderr,
 } from "./agent-runner";
-import {
-	onTurnStart,
-	onToolCallStart,
-	onToolCallResult,
-	onAgentError,
-	onLifecycleEvent,
-	onModelFallback,
-	onGatewayError,
-	onRawGatewayEvent,
-	onAssistantTextDelta,
-	flushAssistantText,
-	onTurnEnd,
-	cleanupSession,
-} from "./customer-debug-logger";
-import { getAgentSession } from "@/app/api/sessions/shared";
 
 // ── Types ──
 
@@ -127,8 +112,6 @@ export type ActiveRun = {
 	pinnedAgentId?: string;
 	/** Full gateway session key captured at run creation time. */
 	pinnedSessionKey?: string;
-	/** Model override requested for this run (for debug logging). */
-	modelOverride?: string;
 };
 
 // ── Constants ──
@@ -690,21 +673,9 @@ export function startRun(params: {
 		_waitingFinalizeTimer: null,
 		pinnedAgentId: agentId,
 		pinnedSessionKey: sessionKey,
-		modelOverride,
 	};
 
 	activeRuns.set(sessionId, run);
-	const sessionInfo = agentSessionId ? getAgentSession(agentSessionId) : undefined;
-	const resolvedModel = modelOverride
-		?? (sessionInfo?.modelProvider && sessionInfo?.model
-			? `${sessionInfo.modelProvider}/${sessionInfo.model}`
-			: sessionInfo?.model)
-		?? undefined;
-	onTurnStart(sessionId, {
-		model: resolvedModel,
-		modelProvider: sessionInfo?.modelProvider,
-		runId: agentSessionId,
-	});
 
 	// Wire abort signal → child process kill.
 	const onAbort = () => child.kill("SIGTERM");
@@ -1690,7 +1661,6 @@ function wireChildProcess(run: ActiveRun): void {
 			ev.data?.phase === "start"
 		) {
 			parentAssistantChunksCurrentTurn = 0;
-			onLifecycleEvent(run.sessionId, "start", ev.data as Record<string, unknown> | undefined);
 			openStatusReasoning("Preparing response...");
 		}
 
@@ -1730,19 +1700,18 @@ function wireChildProcess(run: ActiveRun): void {
 					? ev.data.text
 					: undefined;
 			const chunk = delta ?? textFallback;
-		if (chunk) {
-			parentAssistantChunksCurrentTurn += 1;
-			closeReasoning();
-			if (!textStarted) {
-				currentTextId = nextId("text");
-				emit({ type: "text-start", id: currentTextId });
-				textStarted = true;
+			if (chunk) {
+				parentAssistantChunksCurrentTurn += 1;
+				closeReasoning();
+				if (!textStarted) {
+					currentTextId = nextId("text");
+					emit({ type: "text-start", id: currentTextId });
+					textStarted = true;
+				}
+				everSentResponseActivity = true;
+				emit({ type: "text-delta", id: currentTextId, delta: chunk });
+				accAppendText(chunk);
 			}
-			everSentResponseActivity = true;
-			onAssistantTextDelta(run.sessionId, chunk);
-			emit({ type: "text-delta", id: currentTextId, delta: chunk });
-			accAppendText(chunk);
-		}
 			// Media URLs
 			const mediaUrls = ev.data?.mediaUrls;
 			if (Array.isArray(mediaUrls)) {
@@ -1768,19 +1737,18 @@ function wireChildProcess(run: ActiveRun): void {
 					}
 				}
 			}
-	// Agent error inline (stopReason=error)
-	if (
-		typeof ev.data?.stopReason === "string" &&
-		ev.data.stopReason === "error" &&
-		!agentErrorReported
-	) {
-		agentErrorReported = true;
-		const errMsg = typeof ev.data?.errorMessage === "string"
-			? parseErrorBody(ev.data.errorMessage)
-			: (parseAgentErrorMessage(ev.data) ?? "Agent stopped with an error");
-		onAgentError(run.sessionId, errMsg, ev.data as Record<string, unknown> | undefined);
-		emitError(errMsg);
-	}
+		// Agent error inline (stopReason=error)
+		if (
+			typeof ev.data?.stopReason === "string" &&
+			ev.data.stopReason === "error" &&
+			!agentErrorReported
+		) {
+			agentErrorReported = true;
+			const errMsg = typeof ev.data?.errorMessage === "string"
+				? parseErrorBody(ev.data.errorMessage)
+				: (parseAgentErrorMessage(ev.data) ?? "Agent stopped with an error");
+			emitError(errMsg);
+		}
 	}
 
 	// Tool events
@@ -1796,33 +1764,28 @@ function wireChildProcess(run: ActiveRun): void {
 			const toolName =
 				typeof ev.data?.name === "string" ? ev.data.name : "";
 
-		if (phase === "start") {
-			everSentResponseActivity = true;
-			closeReasoning();
-			closeText();
-			flushAssistantText(run.sessionId);
-			const args =
-				ev.data?.args && typeof ev.data.args === "object"
-					? (ev.data.args as Record<string, unknown>)
-					: {};
-			onToolCallStart(run.sessionId, {
-				toolName, toolCallId, args,
-				seq: ev.seq, globalSeq: ev.globalSeq,
-			});
-			emit({ type: "tool-input-start", toolCallId, toolName });
-			emit({
-				type: "tool-input-available",
-				toolCallId,
-				toolName,
-				input: args,
-			});
-			run.accumulated.parts.push({
-				type: "tool-invocation",
-				toolCallId,
-				toolName,
-				args,
-			});
-			accToolMap.set(toolCallId, run.accumulated.parts.length - 1);
+			if (phase === "start") {
+				everSentResponseActivity = true;
+				closeReasoning();
+				closeText();
+				const args =
+					ev.data?.args && typeof ev.data.args === "object"
+						? (ev.data.args as Record<string, unknown>)
+						: {};
+				emit({ type: "tool-input-start", toolCallId, toolName });
+				emit({
+					type: "tool-input-available",
+					toolCallId,
+					toolName,
+					input: args,
+				});
+				run.accumulated.parts.push({
+					type: "tool-invocation",
+					toolCallId,
+					toolName,
+					args,
+				});
+				accToolMap.set(toolCallId, run.accumulated.parts.length - 1);
 			} else if (phase === "update") {
 				const partialResult = extractToolResult(ev.data?.partialResult);
 				if (partialResult) {
@@ -1830,32 +1793,20 @@ function wireChildProcess(run: ActiveRun): void {
 					const output = buildToolOutput(partialResult);
 					emit({ type: "tool-output-partial", toolCallId, output });
 				}
-		} else if (phase === "result") {
-			everSentResponseActivity = true;
-			const isError = ev.data?.isError === true;
-			const result = extractToolResult(ev.data?.result);
-			onToolCallResult(run.sessionId, {
-				toolName,
-				toolCallId,
-				result: result ? buildToolOutput(result) : undefined,
-				isError,
-				errorText: isError
-					? (result?.text || (result?.details?.error as string | undefined) || "Tool execution failed")
-					: undefined,
-				seq: ev.seq,
-				globalSeq: ev.globalSeq,
-				rawEventData: ev.data as Record<string, unknown> | undefined,
-			});
-			if (isError) {
-				const errorText =
-					result?.text ||
-					(result?.details?.error as string | undefined) ||
-					"Tool execution failed";
-				emit({
-					type: "tool-output-error",
-					toolCallId,
-					errorText,
-				});
+			} else if (phase === "result") {
+				everSentResponseActivity = true;
+				const isError = ev.data?.isError === true;
+				const result = extractToolResult(ev.data?.result);
+				if (isError) {
+					const errorText =
+						result?.text ||
+						(result?.details?.error as string | undefined) ||
+						"Tool execution failed";
+					emit({
+						type: "tool-output-error",
+						toolCallId,
+						errorText,
+					});
 					const idx = accToolMap.get(toolCallId);
 					if (idx !== undefined) {
 						const part = run.accumulated.parts[idx];
@@ -1908,12 +1859,6 @@ function wireChildProcess(run: ActiveRun): void {
 				?? resolveModelLabel(data?.fromProvider, data?.fromModel);
 			const active = resolveModelLabel(data?.activeProvider, data?.activeModel)
 				?? resolveModelLabel(data?.toProvider, data?.toModel);
-			onModelFallback(run.sessionId, {
-				from: selected ?? undefined,
-				to: active ?? undefined,
-				reason: typeof data?.reason === "string" ? data.reason : undefined,
-				rawData: data as Record<string, unknown> | undefined,
-			});
 			if (selected && active) {
 				const isClear = data?.phase === "fallback_cleared";
 				const reason = typeof data?.reasonSummary === "string" ? data.reasonSummary
@@ -1979,57 +1924,18 @@ function wireChildProcess(run: ActiveRun): void {
 		!agentErrorReported
 	) {
 		agentErrorReported = true;
-		const errMsg = parseAgentErrorMessage(ev.data) ?? "Agent encountered an error";
-		onAgentError(run.sessionId, errMsg, ev.data as Record<string, unknown> | undefined);
-		onLifecycleEvent(run.sessionId, "error", ev.data as Record<string, unknown> | undefined);
-		emitError(errMsg);
-	}
-
-	// Lifecycle end — log turn completion
-	if (
-		ev.event === "agent" &&
-		ev.stream === "lifecycle" &&
-		ev.data?.phase === "end"
-	) {
-		onLifecycleEvent(run.sessionId, "end", ev.data as Record<string, unknown> | undefined);
+		emitError(parseAgentErrorMessage(ev.data) ?? "Agent encountered an error");
 	}
 
 	// Top-level error event
 	if (ev.event === "error" && !agentErrorReported) {
 		agentErrorReported = true;
-		const errMsg = parseAgentErrorMessage(
-			ev.data ??
-				(ev as unknown as Record<string, unknown>),
-		) ?? "An unknown error occurred";
-		onGatewayError(run.sessionId, errMsg, ev.data as Record<string, unknown> | undefined);
-		emitError(errMsg);
-	}
-
-	// Log raw events that aren't handled by specific handlers above
-	// (thinking, compaction, chat, unknown streams) for full replay
-	if (
-		ev.event === "agent" &&
-		ev.stream !== "lifecycle" &&
-		ev.stream !== "tool" &&
-		ev.stream !== "assistant" &&
-		ev.stream !== "thinking"
-	) {
-		onRawGatewayEvent(run.sessionId, {
-			event: ev.event,
-			stream: ev.stream,
-			data: ev.data as Record<string, unknown> | undefined,
-			seq: ev.seq,
-			globalSeq: ev.globalSeq,
-		});
-	}
-	if (ev.event !== "agent" && ev.event !== "error" && ev.event !== "chat") {
-		onRawGatewayEvent(run.sessionId, {
-			event: ev.event,
-			stream: ev.stream,
-			data: ev.data as Record<string, unknown> | undefined,
-			seq: ev.seq,
-			globalSeq: ev.globalSeq,
-		});
+		emitError(
+			parseAgentErrorMessage(
+				ev.data ??
+					(ev as unknown as Record<string, unknown>),
+			) ?? "An unknown error occurred",
+		);
 	}
 };
 
@@ -2196,7 +2102,6 @@ function wireChildProcess(run: ActiveRun): void {
 
 		// Normal completion path.
 		run.status = exitedClean ? "completed" : "error";
-		onTurnEnd(run.sessionId, { exitCode: run.exitCode, status: run.status });
 
 		// Final persistence flush (removes _streaming flag).
 		flushPersistence(run).catch(() => {});
@@ -2229,7 +2134,6 @@ function wireChildProcess(run: ActiveRun): void {
 		const message = err instanceof Error ? err.message : String(err);
 		emitError(`Failed to start agent: ${message}`);
 		run.status = "error";
-		onTurnEnd(run.sessionId, { exitCode: null, status: "error" });
 		flushPersistence(run).catch(() => {});
 		for (const sub of run.subscribers) {
 			try {
@@ -2488,6 +2392,5 @@ function cleanupRun(sessionId: string) {
 	if (run._persistTimer) {clearTimeout(run._persistTimer);}
 	clearWaitingFinalizeTimer(run);
 	stopSubscribeProcess(run);
-	cleanupSession(sessionId);
 	activeRuns.delete(sessionId);
 }

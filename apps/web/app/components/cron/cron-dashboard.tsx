@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import type {
   CronJob,
   CronRunLogEntry,
@@ -11,6 +11,8 @@ import type {
 } from "../../types/cron";
 import type { CronDashboardView } from "@/lib/workspace-links";
 import type { CalendarMode } from "@/lib/object-filters";
+
+type HeartbeatUnit = "m" | "h" | "d";
 
 /* ─── Helpers ─── */
 
@@ -218,6 +220,7 @@ export function CronDashboard({
           cronWakeCountdown={cronWakeCountdown}
           onSelectJob={onSelectJob}
           onSendCommand={onSendCommand}
+          onRefresh={() => void fetchData()}
         />
       )}
       {activeView === "calendar" && (
@@ -249,6 +252,7 @@ function OverviewTab({
   cronWakeCountdown,
   onSelectJob,
   onSendCommand,
+  onRefresh,
 }: {
   jobs: CronJob[];
   enabledJobs: CronJob[];
@@ -258,15 +262,15 @@ function OverviewTab({
   cronWakeCountdown: string | null;
   onSelectJob: (jobId: string) => void;
   onSendCommand?: (message: string) => void;
+  onRefresh: () => void;
 }) {
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <StatusCard
-          title="Heartbeat"
-          icon={<HeartbeatIcon />}
-          value={heartbeatCountdown ? `in ${heartbeatCountdown}` : "unknown"}
-          subtitle={`Interval: ${formatCountdown(heartbeat.intervalMs)}`}
+        <HeartbeatSettingCard
+          heartbeat={heartbeat}
+          heartbeatCountdown={heartbeatCountdown}
+          onSaved={onRefresh}
         />
         <StatusCard
           title="Cron Scheduler"
@@ -1025,6 +1029,141 @@ function MetricCard({ label, value, accent }: { label: string; value: string; ac
     <div className="rounded-xl p-3" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
       <div className="text-[11px] font-medium uppercase tracking-wider mb-1" style={{ color: "var(--color-text-muted)" }}>{label}</div>
       <div className="text-xl font-semibold" style={{ color: accent ?? "var(--color-text)" }}>{value}</div>
+    </div>
+  );
+}
+
+const UNIT_LABELS: { value: HeartbeatUnit; label: string }[] = [
+  { value: "m", label: "min" },
+  { value: "h", label: "hr" },
+  { value: "d", label: "day" },
+];
+
+function parseEveryString(every: string | undefined): { value: number; unit: HeartbeatUnit } | null {
+  if (!every) return null;
+  const match = every.match(/^(\d+)(m|h|d)$/);
+  if (!match) return null;
+  return { value: Number(match[1]), unit: match[2] as HeartbeatUnit };
+}
+
+function HeartbeatSettingCard({
+  heartbeat,
+  heartbeatCountdown,
+  onSaved,
+}: {
+  heartbeat: HeartbeatInfo;
+  heartbeatCountdown: string | null;
+  onSaved: () => void;
+}) {
+  const parsed = parseEveryString(heartbeat.every);
+  const [editValue, setEditValue] = useState<number>(parsed?.value ?? Math.round(heartbeat.intervalMs / 60_000));
+  const [editUnit, setEditUnit] = useState<HeartbeatUnit>(parsed?.unit ?? "m");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const lastSyncedRef = useRef(heartbeat.every);
+
+  useEffect(() => {
+    if (heartbeat.every && heartbeat.every !== lastSyncedRef.current) {
+      lastSyncedRef.current = heartbeat.every;
+      const next = parseEveryString(heartbeat.every);
+      if (next) {
+        setEditValue(next.value);
+        setEditUnit(next.unit);
+      }
+    }
+  }, [heartbeat.every]);
+
+  const currentRaw = parsed ? `${parsed.value}${parsed.unit}` : null;
+  const draftRaw = `${editValue}${editUnit}`;
+  const isDirty = currentRaw !== draftRaw;
+
+  const handleSave = useCallback(async () => {
+    if (!isDirty || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: editValue, unit: editUnit }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to save.");
+        return;
+      }
+      lastSyncedRef.current = data.raw;
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setSaving(false);
+    }
+  }, [editValue, editUnit, isDirty, saving, onSaved]);
+
+  return (
+    <div className="rounded-2xl p-4" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ color: "var(--color-accent)" }}><HeartbeatIcon /></span>
+        <span className="text-xs font-medium uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>Heartbeat</span>
+      </div>
+      <div className="text-lg font-semibold mb-1" style={{ color: "var(--color-text)" }}>
+        {heartbeatCountdown ? `in ${heartbeatCountdown}` : "unknown"}
+      </div>
+
+      {/* Inline interval editor */}
+      <div className="flex items-center gap-1.5 mt-2">
+        <span className="text-[11px] shrink-0" style={{ color: "var(--color-text-muted)" }}>Every</span>
+        <input
+          type="number"
+          min={1}
+          value={editValue}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            if (Number.isFinite(n) && n > 0) setEditValue(n);
+          }}
+          className="w-14 rounded-md px-1.5 py-0.5 text-xs text-center tabular-nums"
+          style={{
+            background: "var(--color-surface-hover)",
+            color: "var(--color-text)",
+            border: "1px solid var(--color-border)",
+          }}
+          aria-label="Heartbeat interval value"
+        />
+        <div className="flex rounded-md overflow-hidden" style={{ border: "1px solid var(--color-border)" }}>
+          {UNIT_LABELS.map((u) => (
+            <button
+              key={u.value}
+              type="button"
+              onClick={() => setEditUnit(u.value)}
+              className="px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer"
+              style={{
+                background: editUnit === u.value ? "var(--color-accent)" : "var(--color-surface-hover)",
+                color: editUnit === u.value ? "white" : "var(--color-text-muted)",
+              }}
+              aria-label={`Unit: ${u.label}`}
+              aria-pressed={editUnit === u.value}
+            >
+              {u.label}
+            </button>
+          ))}
+        </div>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving}
+            className="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer disabled:opacity-50"
+            style={{
+              background: "var(--color-accent)",
+              color: "white",
+            }}
+          >
+            {saving ? "..." : "Save"}
+          </button>
+        )}
+      </div>
+      {error && <div className="text-[10px] mt-1" style={{ color: "var(--color-error, #ef4444)" }}>{error}</div>}
     </div>
   );
 }

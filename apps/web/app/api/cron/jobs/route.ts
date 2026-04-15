@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
+import { readHeartbeatSetting } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 
@@ -40,14 +41,14 @@ function computeNextWakeAtMs(jobs: Array<Record<string, unknown>>): number | nul
   return min;
 }
 
-/** Read heartbeat config from ~/.openclaw/config.yaml (best-effort). */
-function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null } {
-  const defaults = { intervalMs: 30 * 60_000, nextDueEstimateMs: null as number | null };
+/** Read heartbeat config from openclaw.json + estimate next due from agent sessions. */
+function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null; every: string } {
+  const setting = readHeartbeatSetting();
+  const result = { intervalMs: setting.intervalMs, nextDueEstimateMs: null as number | null, every: setting.raw };
 
-  // Try to read agent session stores to estimate next heartbeat from lastRunMs
   try {
     const agentsDir = join(resolveOpenClawStateDir(), "agents");
-    if (!existsSync(agentsDir)) {return defaults;}
+    if (!existsSync(agentsDir)) {return result;}
 
     const agentDirs = readdirSync(agentsDir, { withFileTypes: true });
     let latestHeartbeat: number | null = null;
@@ -59,7 +60,6 @@ function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | 
       try {
         const raw = readFileSync(storePath, "utf-8");
         const store = JSON.parse(raw) as Record<string, { updatedAt?: number }>;
-        // Look for the main agent session (shortest key, most recently updated)
         for (const [key, entry] of Object.entries(store)) {
           if (key.startsWith("agent:") && !key.includes(":cron:") && entry.updatedAt) {
             if (latestHeartbeat === null || entry.updatedAt > latestHeartbeat) {
@@ -73,13 +73,13 @@ function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | 
     }
 
     if (latestHeartbeat) {
-      defaults.nextDueEstimateMs = latestHeartbeat + defaults.intervalMs;
+      result.nextDueEstimateMs = latestHeartbeat + result.intervalMs;
     }
   } catch {
     // ignore
   }
 
-  return defaults;
+  return result;
 }
 
 /** GET /api/cron/jobs -- list all cron jobs with heartbeat & status info */

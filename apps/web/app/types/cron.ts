@@ -81,6 +81,7 @@ export type CronRunLogEntry = {
 export type HeartbeatInfo = {
   intervalMs: number;
   nextDueEstimateMs: number | null;
+  every?: string;
 };
 
 export type CronStatusInfo = {

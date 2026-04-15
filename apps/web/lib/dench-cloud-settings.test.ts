@@ -140,7 +140,13 @@ vi.mock("./integrations", () => ({
   writeIntegrationsMetadata: vi.fn(),
 }));
 
-import { saveApiKey, saveVoiceId, selectModel } from "./dench-cloud-settings";
+import {
+  getCloudSettingsState,
+  saveActiveCloudSettings,
+  saveApiKey,
+  saveVoiceId,
+  selectModel,
+} from "./dench-cloud-settings";
 
 describe("dench cloud settings", () => {
   beforeEach(() => {
@@ -264,5 +270,59 @@ describe("dench cloud settings", () => {
 
     const written = JSON.parse(mocks.state.configText);
     expect(written.messages.tts.providers.elevenlabs.voiceId).toBe("voice_456");
+  });
+
+  it("returns the stored enrichment max mode setting in cloud state", async () => {
+    mocks.state.configText = JSON.stringify({
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dc-key",
+            enrichmentMaxMode: true,
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: {
+            primary: "dench-cloud/claude-sonnet-4.6",
+          },
+        },
+      },
+    });
+
+    const state = await getCloudSettingsState();
+
+    expect(state.enrichmentMaxModeEnabled).toBe(true);
+  });
+
+  it("persists enrichment max mode through save_active_settings without restarting by itself", async () => {
+    mocks.state.configText = JSON.stringify({
+      models: {
+        providers: {
+          "dench-cloud": {
+            apiKey: "dc-key",
+          },
+        },
+      },
+    });
+
+    const result = await saveActiveCloudSettings({
+      stableId: null,
+      voiceId: null,
+      enrichmentMaxModeEnabled: true,
+      integrations: {},
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.refresh).toEqual({
+      attempted: false,
+      restarted: false,
+      error: null,
+      profile: "default",
+    });
+
+    const written = JSON.parse(mocks.state.configText);
+    expect(written.models.providers["dench-cloud"].enrichmentMaxMode).toBe(true);
   });
 });

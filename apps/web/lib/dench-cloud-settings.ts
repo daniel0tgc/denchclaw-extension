@@ -77,6 +77,12 @@ function resolveDenchApiKey(config: UnknownRecord): string | null {
   return null;
 }
 
+function readDenchEnrichmentMaxModeEnabled(config: UnknownRecord): boolean {
+  const models = asRecord(config.models);
+  const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
+  return provider?.enrichmentMaxMode === true;
+}
+
 function resolveGatewayUrl(config: UnknownRecord): string {
   const settings = readConfiguredDenchCloudSettings(config);
   return settings.gatewayUrl ?? normalizeDenchGatewayUrl(
@@ -244,6 +250,7 @@ export type CloudSettingsState = {
   selectedDenchModel: string | null;
   selectedVoiceId: string | null;
   elevenLabsEnabled: boolean;
+  enrichmentMaxModeEnabled: boolean;
   models: DenchCloudCatalogModel[];
   recommendedModelId: string;
   validationError?: string;
@@ -261,6 +268,7 @@ export type SaveActiveCloudSettingsInput = {
   stableId: string | null;
   voiceId: string | null;
   integrations: DenchIntegrationToggleDraft;
+  enrichmentMaxModeEnabled: boolean;
 };
 export async function getCloudVoiceState(): Promise<CloudVoiceState> {
   const config = readConfig();
@@ -318,6 +326,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
   const isDenchPrimary = Boolean(primaryModel?.startsWith("dench-cloud/"));
   const settings = readConfiguredDenchCloudSettings(config);
   const voiceState = await getCloudVoiceState();
+  const enrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled(config);
 
   if (voiceState.status === "no_key") {
     return {
@@ -329,6 +338,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
       selectedDenchModel: null,
       selectedVoiceId: voiceState.selectedVoiceId,
       elevenLabsEnabled: voiceState.elevenLabsEnabled,
+      enrichmentMaxModeEnabled,
       models: [],
       recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
     };
@@ -344,6 +354,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
       selectedDenchModel: null,
       selectedVoiceId: voiceState.selectedVoiceId,
       elevenLabsEnabled: voiceState.elevenLabsEnabled,
+      enrichmentMaxModeEnabled,
       models: [],
       recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
       validationError: voiceState.validationError,
@@ -361,6 +372,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
     selectedDenchModel: settings.selectedModel ?? null,
     selectedVoiceId: voiceState.selectedVoiceId,
     elevenLabsEnabled: voiceState.elevenLabsEnabled,
+    enrichmentMaxModeEnabled,
     models: catalog.models,
     recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
   };
@@ -524,7 +536,9 @@ export async function saveActiveCloudSettings(
   const currentPrimaryModel = resolvePrimaryModel(config);
   const desiredPrimaryModel = input.stableId ? `dench-cloud/${input.stableId}` : currentPrimaryModel;
   const currentVoiceId = readSelectedVoiceId(config);
+  const currentEnrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled(config);
   const nextVoiceId = input.voiceId?.trim() || null;
+  const nextEnrichmentMaxModeEnabled = input.enrichmentMaxModeEnabled === true;
   let changed = false;
   let requiresRefresh = false;
 
@@ -587,6 +601,18 @@ export async function saveActiveCloudSettings(
 
   if (currentVoiceId !== nextVoiceId) {
     setSelectedVoiceId(config, nextVoiceId);
+    changed = true;
+  }
+
+  if (currentEnrichmentMaxModeEnabled !== nextEnrichmentMaxModeEnabled) {
+    const models = ensureRecord(config, "models");
+    const providers = ensureRecord(models, "providers");
+    const denchCloud = ensureRecord(providers, "dench-cloud");
+    if (nextEnrichmentMaxModeEnabled) {
+      denchCloud.enrichmentMaxMode = true;
+    } else {
+      delete denchCloud.enrichmentMaxMode;
+    }
     changed = true;
   }
 

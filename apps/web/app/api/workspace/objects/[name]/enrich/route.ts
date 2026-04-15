@@ -55,7 +55,7 @@ export async function POST(
 		return Response.json({ error: "Apollo integration is not enabled." }, { status: 403 });
 	}
 
-	const { apiKey, gatewayUrl } = resolveDenchGatewayCredentials();
+	const { apiKey, gatewayUrl, enrichmentMaxModeEnabled } = resolveDenchGatewayCredentials();
 	if (!apiKey || !gatewayUrl) {
 		return Response.json({ error: "Gateway credentials unavailable." }, { status: 500 });
 	}
@@ -171,6 +171,7 @@ export async function POST(
 						apiKey,
 						category,
 						inputValue,
+						enrichmentMaxModeEnabled,
 					);
 
 					if (!payload) {
@@ -244,6 +245,7 @@ async function callApolloGateway(
 	apiKey: string,
 	category: "people" | "company",
 	inputValue: string,
+	enrichmentMaxModeEnabled: boolean,
 ): Promise<unknown> {
 	if (category === "people") {
 		const body: Record<string, string> = {};
@@ -254,6 +256,9 @@ async function callApolloGateway(
 			body.email = inputValue;
 		} else {
 			body.email = inputValue;
+		}
+		if (enrichmentMaxModeEnabled) {
+			body.mode = "max";
 		}
 
 		const response = await fetch(
@@ -278,6 +283,9 @@ async function callApolloGateway(
 
 	const url = new URL(`${gatewayUrl}${ENRICHMENT_BASE_PATH}/company`);
 	url.searchParams.set("domain", domain);
+	if (enrichmentMaxModeEnabled) {
+		url.searchParams.set("mode", "max");
+	}
 	const response = await fetch(url, {
 		method: "GET",
 		headers: { authorization: `Bearer ${apiKey}` },

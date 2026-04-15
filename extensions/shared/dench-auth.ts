@@ -3,6 +3,7 @@ import path from "node:path";
 
 const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
 const AUTH_PROFILES_REL = path.join("agents", "main", "agent", "auth-profiles.json");
+const OPENCLAW_CONFIG_FILENAME = "openclaw.json";
 
 /**
  * Read the Dench Cloud API key from the single source of truth
@@ -44,4 +45,25 @@ export function resolveDenchGatewayUrl(pluginConfig?: Record<string, unknown>): 
   const configured = pluginConfig?.gatewayUrl;
   if (typeof configured === "string" && configured.trim()) return configured.trim();
   return process.env.DENCH_GATEWAY_URL?.trim() || DEFAULT_GATEWAY_URL;
+}
+
+/**
+ * Read Dench Cloud enrichment preferences from the local profile config.
+ */
+export function readDenchEnrichmentMaxModeEnabled(): boolean {
+  const stateDir = process.env.OPENCLAW_STATE_DIR;
+  if (!stateDir) {
+    return false;
+  }
+
+  try {
+    const configPath = path.join(stateDir, OPENCLAW_CONFIG_FILENAME);
+    if (!existsSync(configPath)) {
+      return false;
+    }
+    const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+    return raw?.models?.providers?.["dench-cloud"]?.enrichmentMaxMode === true;
+  } catch {
+    return false;
+  }
 }

@@ -1,5 +1,9 @@
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { readDenchAuthProfileKey, resolveDenchGatewayUrl } from "../shared/dench-auth.js";
+import {
+  readDenchAuthProfileKey,
+  readDenchEnrichmentMaxModeEnabled,
+  resolveDenchGatewayUrl,
+} from "../shared/dench-auth.js";
 
 export const id = "apollo-enrichment";
 
@@ -154,9 +158,13 @@ async function executeApolloEnrich(
 
   try {
     let response: Response;
+    const enrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled();
 
     if (action === "people") {
       const body = buildPeopleBody(params);
+      if (enrichmentMaxModeEnabled) {
+        body.mode = "max";
+      }
       if (!body.email && !body.linkedinUrl && !body.firstName && !body.lastName) {
         return jsonResult({
           error:
@@ -178,6 +186,9 @@ async function executeApolloEnrich(
       }
       const url = new URL(`${gatewayUrl}${ENRICHMENT_BASE_PATH}/company`);
       url.searchParams.set("domain", domain);
+      if (enrichmentMaxModeEnabled) {
+        url.searchParams.set("mode", "max");
+      }
       response = await fetch(url, {
         method: "GET",
         headers: {

@@ -1286,10 +1286,14 @@ export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationTo
 export function resolveDenchGatewayCredentials(): {
   apiKey: string | null;
   gatewayUrl: string | null;
+  enrichmentMaxModeEnabled: boolean;
 } {
   const config = readOpenClawConfigForIntegrations();
+  const models = asRecord(config.models);
+  const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
   return {
     apiKey: resolveDenchApiKey(config),
     gatewayUrl: resolveGatewayBaseUrl(config),
+    enrichmentMaxModeEnabled: readBoolean(provider?.enrichmentMaxMode) === true,
   };
 }

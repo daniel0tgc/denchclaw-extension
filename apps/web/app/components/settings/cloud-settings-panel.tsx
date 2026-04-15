@@ -13,6 +13,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { Switch } from "../ui/switch";
 
 type CloudStatus = "no_key" | "invalid_key" | "valid";
 
@@ -42,6 +43,7 @@ type CloudState = {
   selectedDenchModel: string | null;
   selectedVoiceId: string | null;
   elevenLabsEnabled: boolean;
+  enrichmentMaxModeEnabled: boolean;
   models: CatalogModel[];
   recommendedModelId: string;
   validationError?: string;
@@ -60,6 +62,19 @@ type ActionNotice = {
 };
 
 type IntegrationDraftState = Record<DenchIntegrationId, boolean>;
+
+const MAX_MODE_PROVIDER_LOGOS = [
+  { id: "dench", name: "Dench", src: "/dench-workspace-icon.png", rounded: true },
+  { id: "aviato", name: "Aviato", src: "/integrations/aviato.ico", rounded: true },
+  { id: "apollo", name: "Apollo", src: "/integrations/apollo.ico", rounded: true },
+  { id: "pdl", name: "People Data Labs", src: "/integrations/people-data-labs.ico", rounded: true },
+  { id: "datagma", name: "Datagma", src: "/integrations/datagma.png", rounded: true },
+  { id: "rocketreach", name: "RocketReach", src: "/integrations/rocketreach.ico", rounded: true },
+  { id: "hunter", name: "Hunter", src: "/integrations/hunter.png", rounded: true },
+  { id: "bettercontacts", name: "Better Contacts", src: "/integrations/bettercontacts.png", rounded: true },
+  { id: "dropcontacts", name: "Dropcontact", src: "/integrations/dropcontacts.ico", rounded: true },
+  { id: "explorium", name: "Explorium", src: "/integrations/explorium.png", rounded: true },
+] as const;
 
 const DENCH_API_KEY_URL = "https://dench.com/api";
 
@@ -134,6 +149,60 @@ function NoticeBanner({ notice }: { notice: ActionNotice }) {
   return (
     <div className={`rounded-xl border px-4 py-3 text-sm ${toneClass}`}>
       {notice.message}
+    </div>
+  );
+}
+
+function EnrichmentMaxModeCard({
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <div
+      className="rounded-xl border px-4 py-4"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+            Enrichment Max Mode
+          </div>
+          <div className="max-w-[42rem] text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
+            Run the full Dench enrichment waterfall for people and company requests, even after an early hit.
+            This gives you richer merged results, but it can take longer and use more credits.
+          </div>
+        </div>
+        <Switch
+          aria-label="Enable enrichment max mode"
+          checked={enabled}
+          disabled={disabled}
+          onCheckedChange={onToggle}
+        />
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {MAX_MODE_PROVIDER_LOGOS.map((provider) => (
+          <div
+            key={provider.id}
+            className="flex h-8 w-8 items-center justify-center"
+            title={provider.name}
+            aria-label={provider.name}
+          >
+            <img
+              src={provider.src}
+              alt=""
+              width={24}
+              height={24}
+              className={provider.rounded ? "h-6 w-6 rounded-[6px] object-contain" : "h-6 w-6 object-contain"}
+              draggable={false}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -468,6 +537,7 @@ export function CloudSettingsPanel() {
   const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftVoiceId, setDraftVoiceId] = useState<string | null>(null);
+  const [draftEnrichmentMaxModeEnabled, setDraftEnrichmentMaxModeEnabled] = useState(false);
   const [draftIntegrations, setDraftIntegrations] = useState<IntegrationDraftState>({
     exa: false,
     apollo: false,
@@ -564,8 +634,10 @@ export function CloudSettingsPanel() {
     }
     setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
     setDraftVoiceId(data.selectedVoiceId);
+    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
     setDraftIntegrations(buildIntegrationDraft(integrationsData));
   }, [
+    data?.enrichmentMaxModeEnabled,
     data?.status,
     data?.isDenchPrimary,
     data?.selectedDenchModel,
@@ -625,6 +697,11 @@ export function CloudSettingsPanel() {
     setDraftVoiceId(voiceId);
   }, []);
 
+  const handleDraftEnrichmentMaxModeChange = useCallback((enabled: boolean) => {
+    setNotice(null);
+    setDraftEnrichmentMaxModeEnabled(enabled);
+  }, []);
+
   const handleDraftIntegrationToggle = useCallback((integration: DenchIntegrationState, enabled: boolean) => {
     setNotice(null);
     setDraftIntegrations((current) => ({
@@ -640,11 +717,15 @@ export function CloudSettingsPanel() {
     setNotice(null);
     setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
     setDraftVoiceId(data.selectedVoiceId);
+    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
     setDraftIntegrations(buildIntegrationDraft(integrationsData));
   }, [data, integrationsData]);
 
   const baselineModel = data?.status === "valid" && data.isDenchPrimary ? data.selectedDenchModel : null;
   const baselineVoiceId = data?.status === "valid" ? data.selectedVoiceId : null;
+  const baselineEnrichmentMaxModeEnabled = data?.status === "valid"
+    ? data.enrichmentMaxModeEnabled
+    : false;
   const baselineIntegrations = useMemo(
     () => buildIntegrationDraft(integrationsData),
     [integrationsData],
@@ -652,6 +733,7 @@ export function CloudSettingsPanel() {
   const hasUnsavedChanges = Boolean(data?.status === "valid" && (
     draftModel !== baselineModel
     || draftVoiceId !== baselineVoiceId
+    || draftEnrichmentMaxModeEnabled !== baselineEnrichmentMaxModeEnabled
     || draftIntegrations.exa !== baselineIntegrations.exa
     || draftIntegrations.apollo !== baselineIntegrations.apollo
     || draftIntegrations.elevenlabs !== baselineIntegrations.elevenlabs
@@ -675,6 +757,7 @@ export function CloudSettingsPanel() {
           action: "save_active_settings",
           stableId: draftModel,
           voiceId: draftVoiceId,
+          enrichmentMaxModeEnabled: draftEnrichmentMaxModeEnabled,
           integrations: draftIntegrations,
         }),
       });
@@ -716,7 +799,7 @@ export function CloudSettingsPanel() {
     } finally {
       setSavingActive(false);
     }
-  }, [draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
+  }, [draftEnrichmentMaxModeEnabled, draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
 
   const handleRepairIntegrations = useCallback(async () => {
     setRepairingIntegrations(true);
@@ -837,31 +920,40 @@ export function CloudSettingsPanel() {
           onRepair={() => void handleRepairIntegrations()}
         />
       </div>
+      <EnrichmentMaxModeCard
+        enabled={draftEnrichmentMaxModeEnabled}
+        disabled={savingActive}
+        onToggle={handleDraftEnrichmentMaxModeChange}
+      />
       <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            className="h-9 rounded-lg px-4 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 cursor-pointer"
-            style={{
-              color: "var(--color-text-muted)",
-              background: "transparent",
-            }}
-            onClick={resetDraft}
-            disabled={!hasUnsavedChanges || savingActive}
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            className="h-9 min-w-24 rounded-lg px-5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40 cursor-pointer"
-            style={{
-              background: "var(--color-accent)",
-              color: "var(--color-bg)",
-            }}
-            onClick={() => void handleSaveActiveSettings()}
-            disabled={!hasUnsavedChanges || savingActive || integrationsLoading || Boolean(integrationsError)}
-          >
-            {savingActive ? "Saving..." : "Save"}
-          </button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="shrink-0 rounded-lg px-4 text-sm font-medium"
+          style={{
+            color: "var(--color-text-muted)",
+            background: "transparent",
+          }}
+          onClick={resetDraft}
+          disabled={!hasUnsavedChanges || savingActive}
+        >
+          Reset
+        </Button>
+        <Button
+          type="button"
+          className="min-w-28 shrink-0 rounded-lg px-5 text-sm font-semibold"
+          style={{
+            background: "var(--color-accent)",
+            color: "var(--color-bg)",
+          }}
+          onClick={() => void handleSaveActiveSettings()}
+          disabled={!hasUnsavedChanges || savingActive || integrationsLoading || Boolean(integrationsError)}
+        >
+          <span className="inline-flex items-center justify-center gap-2 leading-none">
+            {savingActive ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            <span>{savingActive ? "Saving..." : "Save"}</span>
+          </span>
+        </Button>
       </div>
     </div>
   );

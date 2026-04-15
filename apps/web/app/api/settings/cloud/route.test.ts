@@ -32,6 +32,7 @@ const validState = {
   selectedDenchModel: "anthropic.claude-opus-4-6-v1",
   selectedVoiceId: "voice_123",
   elevenLabsEnabled: true,
+  enrichmentMaxModeEnabled: false,
   models: [
     {
       id: "claude-opus-4.6",
@@ -204,6 +205,7 @@ describe("cloud settings API", () => {
         action: "save_active_settings",
         stableId: "gpt-5.4",
         voiceId: "voice_123",
+        enrichmentMaxModeEnabled: true,
         integrations: {
           exa: true,
           apollo: true,
@@ -216,6 +218,7 @@ describe("cloud settings API", () => {
     expect(mockedSaveActive).toHaveBeenCalledWith({
       stableId: "gpt-5.4",
       voiceId: "voice_123",
+      enrichmentMaxModeEnabled: true,
       integrations: {
         exa: true,
         apollo: true,
@@ -233,6 +236,19 @@ describe("cloud settings API", () => {
         integrations: {
           exa: "yes",
         },
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it("POST save_active_settings rejects invalid max mode payloads", async () => {
+    const req = new Request("http://localhost/api/settings/cloud", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "save_active_settings",
+        enrichmentMaxModeEnabled: "yes",
       }),
     });
     const res = await POST(req);

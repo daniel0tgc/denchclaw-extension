@@ -28,6 +28,7 @@ type PostBody = {
   stableId?: string;
   voiceId?: string | null;
   integrations?: DenchIntegrationToggleDraft;
+  enrichmentMaxModeEnabled?: boolean;
 };
 
 function isSupportedIntegration(id: string): id is DenchIntegrationId {
@@ -116,6 +117,12 @@ export async function POST(request: Request) {
       if (voiceId === undefined) {
         return Response.json({ error: "Field 'voiceId' must be a string or null." }, { status: 400 });
       }
+      if (body.enrichmentMaxModeEnabled !== undefined && typeof body.enrichmentMaxModeEnabled !== "boolean") {
+        return Response.json(
+          { error: "Field 'enrichmentMaxModeEnabled' must be a boolean." },
+          { status: 400 },
+        );
+      }
       if (body.integrations !== undefined && (!body.integrations || typeof body.integrations !== "object" || Array.isArray(body.integrations))) {
         return Response.json({ error: "Field 'integrations' must be an object." }, { status: 400 });
       }
@@ -135,6 +142,7 @@ export async function POST(request: Request) {
         stableId,
         voiceId,
         integrations,
+        enrichmentMaxModeEnabled: body.enrichmentMaxModeEnabled === true,
       });
       if (result.error) {
         return Response.json({ error: result.error, ...result }, { status: 409 });

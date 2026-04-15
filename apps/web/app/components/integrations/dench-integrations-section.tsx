@@ -40,23 +40,6 @@ function RefreshNoticeBanner({ notice }: { notice: IntegrationActionNotice }) {
   );
 }
 
-/** Apollo.io mark (vector commonly used for the brand; fill follows theme via currentColor). */
-function ApolloIoLogo({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 64 64"
-      aria-hidden="true"
-      className={className}
-    >
-      <path
-        fill="currentColor"
-        d="M32.4,0l-24,49.6h7.8l16.2-33.9l15.5,33.9h7.7L32.4,0z M25.5,49.6L32.4,64l6.7-14.4H25.5z"
-      />
-    </svg>
-  );
-}
-
 function integrationLogo(id: DenchIntegrationId): ReactNode {
   switch (id) {
     case "exa":
@@ -71,10 +54,34 @@ function integrationLogo(id: DenchIntegrationId): ReactNode {
         />
       );
     case "apollo":
-      return <ApolloIoLogo className="h-5 w-5 shrink-0" />;
+      return (
+        <img
+          src="/dench-workspace-icon.png"
+          alt=""
+          width={20}
+          height={20}
+          className="h-5 w-5 shrink-0 rounded-md object-contain"
+          draggable={false}
+        />
+      );
     case "elevenlabs":
       return <SiElevenlabs className="h-5 w-5 shrink-0" aria-hidden />;
   }
+}
+
+function integrationDisplayNameFromId(id: DenchIntegrationId, fallbackLabel?: string): string {
+  switch (id) {
+    case "apollo":
+      return "Dench Enrichments";
+    case "exa":
+      return fallbackLabel ?? "Exa";
+    case "elevenlabs":
+      return fallbackLabel ?? "ElevenLabs";
+  }
+}
+
+function integrationDisplayName(integration: DenchIntegrationState): string {
+  return integrationDisplayNameFromId(integration.id, integration.label);
 }
 
 const INTEGRATION_DESCRIPTIONS: Record<DenchIntegrationId, string> = {
@@ -92,6 +99,7 @@ function IntegrationCard({
   isSaving: boolean;
   onToggle: (integration: DenchIntegrationState, enabled: boolean) => void;
 }) {
+  const displayName = integrationDisplayName(integration);
   const description = INTEGRATION_DESCRIPTIONS[integration.id];
   const statusText = isSaving
     ? "Saving..."
@@ -115,7 +123,7 @@ function IntegrationCard({
         </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-foreground">
-            {integration.label}
+            {displayName}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] leading-4 text-muted-foreground">
             <span>{statusText}</span>
@@ -134,7 +142,7 @@ function IntegrationCard({
         </div>
       </div>
       <Switch
-        aria-label={`Toggle ${integration.label}`}
+        aria-label={`Toggle ${displayName}`}
         checked={integration.enabled}
         disabled={isSaving || integration.locked}
         onCheckedChange={(checked) => onToggle(integration, checked)}
@@ -215,6 +223,7 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
       props.onToggle(integration, enabled);
       return;
     }
+    const displayName = integrationDisplayName(integration);
     setSavingId(integration.id);
     setNotice(null);
     try {
@@ -225,7 +234,7 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
       });
       const payload = (await response.json()) as IntegrationToggleResponse | { error?: string };
       if (!response.ok) {
-        throw new Error("error" in payload && payload.error ? payload.error : `Failed to update ${integration.label}`);
+        throw new Error("error" in payload && payload.error ? payload.error : `Failed to update ${displayName}`);
       }
 
       const nextState = payload as IntegrationToggleResponse;
@@ -233,23 +242,23 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
       if (nextState.refresh.restarted) {
         setNotice({
           tone: "success",
-          message: `${integration.label} updated and the ${nextState.refresh.profile} gateway restarted successfully.`,
+          message: `${displayName} updated and the ${nextState.refresh.profile} gateway restarted successfully.`,
         });
       } else if (nextState.changed) {
         setNotice({
           tone: "warning",
-          message: `${integration.label} updated, but the gateway restart did not complete: ${nextState.refresh.error ?? "unknown error"}.`,
+          message: `${displayName} updated, but the gateway restart did not complete: ${nextState.refresh.error ?? "unknown error"}.`,
         });
       } else {
         setNotice({
           tone: "success",
-          message: `${integration.label} was already in the requested state.`,
+          message: `${displayName} was already in the requested state.`,
         });
       }
     } catch (err) {
       setNotice({
         tone: "warning",
-        message: err instanceof Error ? err.message : `Failed to update ${integration.label}.`,
+        message: err instanceof Error ? err.message : `Failed to update ${displayName}.`,
       });
     } finally {
       setSavingId(null);
@@ -275,7 +284,11 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
       const nextState = payload as IntegrationRepairResponse;
       applyState(nextState);
       if (nextState.changed && nextState.refresh.restarted) {
-        const repairedNames = nextState.repairedIds.length > 0 ? nextState.repairedIds.join(", ") : "profiles";
+        const repairedNames = nextState.repairedIds.length > 0
+          ? nextState.repairedIds
+            .map((id) => integrationDisplayNameFromId(id))
+            .join(", ")
+          : "profiles";
         setNotice({
           tone: "success",
           message: `Repair completed for ${repairedNames} and the ${nextState.refresh.profile} gateway restarted successfully.`,

@@ -251,6 +251,7 @@ export type EnrichmentStartPayload = {
 	apolloPath: string;
 	category: "people" | "company";
 	inputFieldName: string;
+	scope: "all" | "empty" | number;
 };
 
 export function AddColumnPopover({
@@ -446,6 +447,7 @@ export function AddColumnPopover({
 					apolloPath: selectedEnrichCol.apolloPath,
 					category: enrichCategory,
 					inputFieldName: enrichInputField,
+					scope: "all",
 				});
 			}
 		} catch {

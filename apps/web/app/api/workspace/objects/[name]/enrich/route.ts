@@ -67,6 +67,14 @@ export async function POST(
 		return Response.json({ error: "Missing required fields." }, { status: 400 });
 	}
 
+	if (category !== "people" && category !== "company") {
+		return Response.json({ error: "Invalid category." }, { status: 400 });
+	}
+
+	if (scope !== "all" && scope !== "empty" && (typeof scope !== "number" || scope <= 0 || !Number.isFinite(scope))) {
+		return Response.json({ error: "Invalid scope." }, { status: 400 });
+	}
+
 	const dbFile = findDuckDBForObject(name);
 	if (!dbFile) {
 		return Response.json({ error: "DuckDB not found." }, { status: 404 });

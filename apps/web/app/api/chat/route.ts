@@ -32,7 +32,6 @@ import {
 	needsOpenAiSwitchAcknowledgement,
 } from "@/lib/chat-models";
 import {
-	buildChatImageHydrationErrorMessage,
 	hydrateMessageImageAttachments,
 } from "@/lib/chat-image-attachments";
 
@@ -185,12 +184,6 @@ export async function POST(req: Request) {
 		);
 	}
 	const imageHydration = hydrateMessageImageAttachments(agentMessage);
-	const imageHydrationError = buildChatImageHydrationErrorMessage(
-		imageHydration.skipped,
-	);
-	if (imageHydrationError) {
-		return new Response(imageHydrationError, { status: 400 });
-	}
 	const imageAttachments = imageHydration.attachments.length > 0
 		? imageHydration.attachments
 		: undefined;

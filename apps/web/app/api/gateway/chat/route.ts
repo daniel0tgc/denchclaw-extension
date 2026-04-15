@@ -6,7 +6,6 @@ import {
 	type SseEvent,
 } from "@/lib/active-runs";
 import {
-	buildChatImageHydrationErrorMessage,
 	hydrateMessageImageAttachments,
 } from "@/lib/chat-image-attachments";
 
@@ -19,12 +18,6 @@ export async function POST(req: Request) {
 		return new Response("sessionKey and message are required", { status: 400 });
 	}
 	const imageHydration = hydrateMessageImageAttachments(message);
-	const imageHydrationError = buildChatImageHydrationErrorMessage(
-		imageHydration.skipped,
-	);
-	if (imageHydrationError) {
-		return new Response(imageHydrationError, { status: 400 });
-	}
 	const imageAttachments = imageHydration.attachments.length > 0
 		? imageHydration.attachments
 		: undefined;

@@ -729,7 +729,7 @@ export function ObjectTable({
 							apolloPath: payload.apolloPath,
 							category: payload.category,
 							inputFieldName: payload.inputFieldName,
-							scope: "all",
+							scope: payload.scope,
 						}),
 						signal: ac.signal,
 					},
@@ -808,6 +808,7 @@ export function ObjectTable({
 			apolloPath: meta.enrichment.apolloPath,
 			category: meta.enrichment.category,
 			inputFieldName: meta.enrichment.inputFieldName,
+			scope,
 		});
 	}, [fields, startEnrichment]);
 

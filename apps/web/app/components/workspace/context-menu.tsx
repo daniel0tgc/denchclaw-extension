@@ -6,6 +6,7 @@ export type ContextMenuAction =
   | "open"
   | "newFile"
   | "newFolder"
+  | "newTable"
   | "rename"
   | "duplicate"
   | "copy"
@@ -56,6 +57,7 @@ export function getMenuItems(target: ContextMenuTarget): ContextMenuItem[] {
       { separator: true },
       { action: "newFile", label: "New File", shortcut: "\u2318N", disabled: isSystem },
       { action: "newFolder", label: "New Folder", shortcut: "\u21E7\u2318N", disabled: isSystem },
+      { action: "newTable", label: "New Table", disabled: isSystem },
       { separator: true },
       { action: "rename", label: "Rename", shortcut: "Enter", disabled: isSystem },
       { action: "duplicate", label: "Duplicate", shortcut: "\u2318D", disabled: isSystem },
@@ -71,6 +73,7 @@ export function getMenuItems(target: ContextMenuTarget): ContextMenuItem[] {
   return [
     { action: "newFile", label: "New File", shortcut: "\u2318N" },
     { action: "newFolder", label: "New Folder", shortcut: "\u21E7\u2318N" },
+    { action: "newTable", label: "New Table" },
     { separator: true },
     { action: "paste", label: "Paste", shortcut: "\u2318V", disabled: true },
   ];

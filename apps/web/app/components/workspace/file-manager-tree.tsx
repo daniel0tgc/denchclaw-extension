@@ -325,6 +325,18 @@ async function apiMkdir(path: string) {
   return res.json();
 }
 
+async function apiCreateTable(name: string, parentPath: string = "") {
+  const res = await fetch("/api/workspace/objects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      ...(parentPath ? { parentPath } : {}),
+    }),
+  });
+  return res.json();
+}
+
 async function apiCreateFile(path: string, content: string = "") {
   const res = await fetch(fileWriteUrl(path), {
     method: "POST",
@@ -389,12 +401,14 @@ function NewItemPrompt({
   onSubmit,
   onCancel,
 }: {
-  kind: "file" | "folder";
+  kind: "file" | "folder" | "table";
   parentPath: string;
   onSubmit: (name: string) => void;
   onCancel: () => void;
 }) {
-  const [value, setValue] = useState(kind === "file" ? "untitled.md" : "new-folder");
+  const [value, setValue] = useState(
+    kind === "file" ? "untitled.md" : kind === "table" ? "new_table" : "new-folder",
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -853,7 +867,7 @@ export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // New item prompt
-  const [newItemPrompt, setNewItemPrompt] = useState<{ kind: "file" | "folder"; parentPath: string } | null>(null);
+  const [newItemPrompt, setNewItemPrompt] = useState<{ kind: "file" | "folder" | "table"; parentPath: string } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dragExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1055,6 +1069,11 @@ export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact
           setNewItemPrompt({ kind: "folder", parentPath: parent });
           break;
         }
+        case "newTable": {
+          const parent = target.kind === "folder" ? target.path : target.kind === "file" ? parentPath(target.path) : "";
+          setNewItemPrompt({ kind: "table", parentPath: parent });
+          break;
+        }
         case "getInfo": {
           // Future: show info panel. For now, copy path.
           if (target.kind !== "empty") {
@@ -1096,15 +1115,33 @@ export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact
       if (!newItemPrompt || !name) {return;}
 
       const fullPath = newItemPrompt.parentPath ? `${newItemPrompt.parentPath}/${name}` : name;
+      let createdPath = fullPath;
 
       if (newItemPrompt.kind === "folder") {
         await apiMkdir(fullPath);
+      } else if (newItemPrompt.kind === "table") {
+        const result = await apiCreateTable(name, newItemPrompt.parentPath);
+        if (!result?.ok) {
+          window.alert(result?.error ?? "Failed to create table.");
+          return;
+        }
+        createdPath = typeof result.path === "string" && result.path ? result.path : fullPath;
       } else {
         await apiCreateFile(fullPath, "");
       }
 
       setNewItemPrompt(null);
       onRefresh();
+
+      if (newItemPrompt.kind === "table") {
+        setSelectedPath(createdPath);
+        onSelect({
+          name,
+          path: createdPath,
+          type: "object",
+          defaultView: "table",
+        });
+      }
 
       // Auto-expand parent
       setExpandedPaths((prev) => {
@@ -1113,7 +1150,7 @@ export function FileManagerTree({ tree, activePath, onSelect, onRefresh, compact
         return next;
       });
     },
-    [newItemPrompt, onRefresh],
+    [newItemPrompt, onRefresh, onSelect],
   );
 
   // Keyboard shortcuts

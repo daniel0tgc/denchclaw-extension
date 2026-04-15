@@ -725,7 +725,6 @@ export function ObjectTable({
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({
 							fieldId: payload.fieldId,
-							enrichmentKey: payload.apolloPath,
 							apolloPath: payload.apolloPath,
 							category: payload.category,
 							inputFieldName: payload.inputFieldName,

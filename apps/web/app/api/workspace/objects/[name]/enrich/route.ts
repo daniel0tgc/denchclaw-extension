@@ -20,7 +20,6 @@ function sqlEscape(s: string): string {
 
 type EnrichRequestBody = {
 	fieldId: string;
-	enrichmentKey: string;
 	apolloPath: string;
 	category: "people" | "company";
 	inputFieldName: string;
@@ -71,7 +70,16 @@ export async function POST(
 		return Response.json({ error: "Invalid category." }, { status: 400 });
 	}
 
-	if (scope !== "all" && scope !== "empty" && (typeof scope !== "number" || scope <= 0 || !Number.isFinite(scope))) {
+	if (
+		scope !== "all"
+		&& scope !== "empty"
+		&& (
+			typeof scope !== "number"
+			|| scope <= 0
+			|| !Number.isFinite(scope)
+			|| !Number.isInteger(scope)
+		)
+	) {
 		return Response.json({ error: "Invalid scope." }, { status: 400 });
 	}
 
@@ -140,6 +148,7 @@ export async function POST(
 
 	// Set up SSE stream
 	const encoder = new TextEncoder();
+	let cancelled = false;
 	const stream = new ReadableStream({
 		async start(controller) {
 			function send(data: Record<string, unknown>) {
@@ -150,6 +159,7 @@ export async function POST(
 			let failed = 0;
 
 			for (let i = 0; i < entries.length; i++) {
+				if (cancelled) break;
 				const entry = entries[i];
 				const inputValue = entry.input_value?.trim();
 
@@ -173,6 +183,7 @@ export async function POST(
 						inputValue,
 						enrichmentMaxModeEnabled,
 					);
+					if (cancelled) break;
 
 					if (!payload) {
 						failed++;
@@ -203,7 +214,6 @@ export async function POST(
 						continue;
 					}
 
-					// Write value to DB
 					patchEntryField(dbFile, entry.entry_id, fieldId, value);
 
 					enriched++;
@@ -215,6 +225,7 @@ export async function POST(
 						total,
 					});
 				} catch (err) {
+					if (cancelled) break;
 					failed++;
 					send({
 						type: "error",
@@ -226,8 +237,13 @@ export async function POST(
 				}
 			}
 
-			send({ type: "done", enriched, failed, total });
-			controller.close();
+			if (!cancelled) {
+				send({ type: "done", enriched, failed, total });
+				controller.close();
+			}
+		},
+		cancel() {
+			cancelled = true;
 		},
 	});
 
@@ -255,7 +271,7 @@ async function callApolloGateway(
 		} else if (inputValue.includes("@")) {
 			body.email = inputValue;
 		} else {
-			body.email = inputValue;
+			return null;
 		}
 		if (enrichmentMaxModeEnabled) {
 			body.mode = "max";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
@@ -544,6 +544,7 @@ export function CloudSettingsPanel() {
     apollo: false,
     elevenlabs: false,
   });
+  const [draftResetKey, setDraftResetKey] = useState(0);
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -588,7 +589,10 @@ export function CloudSettingsPanel() {
       setIntegrationsLoading(false);
       return;
     }
-    void fetchIntegrations();
+    void (async () => {
+      await fetchIntegrations();
+      setDraftResetKey((current) => current + 1);
+    })();
   }, [data?.status, fetchIntegrations]);
 
   useEffect(() => {
@@ -629,21 +633,24 @@ export function CloudSettingsPanel() {
     };
   }, [data?.status, data?.gatewayUrl]);
 
+  const integrationsDataRef = useRef(integrationsData);
+  integrationsDataRef.current = integrationsData;
+
   useEffect(() => {
-    if (data?.status !== "valid" || !integrationsData) {
+    if (data?.status !== "valid" || !integrationsDataRef.current) {
       return;
     }
     setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
     setDraftVoiceId(data.selectedVoiceId);
     setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
-    setDraftIntegrations(buildIntegrationDraft(integrationsData));
+    setDraftIntegrations(buildIntegrationDraft(integrationsDataRef.current));
   }, [
     data?.enrichmentMaxModeEnabled,
     data?.status,
     data?.isDenchPrimary,
     data?.selectedDenchModel,
     data?.selectedVoiceId,
-    integrationsData,
+    draftResetKey,
   ]);
 
   const handleSaveKey = useCallback(async (apiKey: string) => {
@@ -773,8 +780,12 @@ export function CloudSettingsPanel() {
       setData(payload.state);
       if (payload.integrationsState) {
         setIntegrationsData(payload.integrationsState as IntegrationsState);
+        setDraftResetKey((current) => current + 1);
       } else {
-        void fetchIntegrations();
+        void (async () => {
+          await fetchIntegrations();
+          setDraftResetKey((current) => current + 1);
+        })();
       }
       const refresh = payload.refresh as RefreshInfo;
       if (!payload.changed) {
@@ -819,6 +830,7 @@ export function CloudSettingsPanel() {
       }
 
       setIntegrationsData(payload);
+      setDraftResetKey((current) => current + 1);
       if (payload.changed && payload.refresh.restarted) {
         const repairedNames = payload.repairedIds.length > 0 ? payload.repairedIds.join(", ") : "profiles";
         setNotice({

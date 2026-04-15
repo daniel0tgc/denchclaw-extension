@@ -76,7 +76,6 @@ describe("workspace enrichment route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fieldId: "field_1",
-          enrichmentKey: "person.name",
           apolloPath: "person.name",
           category: "people",
           inputFieldName: "email",
@@ -131,7 +130,6 @@ describe("workspace enrichment route", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fieldId: "field_1",
-          enrichmentKey: "organization.name",
           apolloPath: "organization.name",
           category: "company",
           inputFieldName: "website",
@@ -144,5 +142,74 @@ describe("workspace enrichment route", () => {
     expect(response.status).toBe(200);
     await response.text();
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-integer numeric scope values", async () => {
+    const { POST } = await import("./route.js");
+    const response = await POST(
+      new Request("http://localhost/api/workspace/objects/leads/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fieldId: "field_1",
+          apolloPath: "person.name",
+          category: "people",
+          inputFieldName: "email",
+          scope: 1.5,
+        }),
+      }),
+      { params: Promise.resolve({ name: "leads" }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Invalid scope.",
+    });
+  });
+
+  it("skips unknown people identifiers instead of sending them as email", async () => {
+    const { duckdbQueryOnFile } = await import("@/lib/workspace");
+    vi.mocked(duckdbQueryOnFile).mockImplementation((_dbFile: string, sql: string) => {
+      if (sql.includes("SELECT id FROM objects WHERE name")) {
+        return [{ id: "obj_1" }] as never;
+      }
+      if (sql.includes("SELECT id, name FROM fields")) {
+        return [{ id: "input_1", name: "email" }] as never;
+      }
+      if (sql.includes("SELECT id FROM fields WHERE id")) {
+        return [{ id: "field_1" }] as never;
+      }
+      if (sql.includes("FROM entries e")) {
+        return [{ entry_id: "entry_1", input_value: "Jane Example" }] as never;
+      }
+      if (sql.includes("COUNT(*) as cnt")) {
+        return [{ cnt: 0 }] as never;
+      }
+      return [] as never;
+    });
+
+    global.fetch = vi.fn(async () => {
+      throw new Error("fetch should not be called for unsupported people identifiers");
+    }) as typeof fetch;
+
+    const { POST } = await import("./route.js");
+    const response = await POST(
+      new Request("http://localhost/api/workspace/objects/leads/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fieldId: "field_1",
+          apolloPath: "person.name",
+          category: "people",
+          inputFieldName: "email",
+          scope: 1,
+        }),
+      }),
+      { params: Promise.resolve({ name: "leads" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

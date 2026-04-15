@@ -174,6 +174,9 @@ describe("CloudSettingsPanel", () => {
       if (url === "/api/voice/voices") {
         return new Response(JSON.stringify(voicesPayload));
       }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
 
@@ -200,6 +203,9 @@ describe("CloudSettingsPanel", () => {
       }
       if (url === "/api/voice/voices") {
         return new Response(JSON.stringify(voicesPayload));
+      }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
       }
 
       if (url === "/api/settings/cloud" && init?.method === "POST") {
@@ -260,7 +266,7 @@ describe("CloudSettingsPanel", () => {
 
     await user.click(await screen.findByRole("button", { name: "Select primary model" }));
     await user.click(await screen.findByText("Claude Opus 4.6"));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     const voiceTrigger = await screen.findByRole("button", {
       name: "Select ElevenLabs voice",
@@ -274,12 +280,12 @@ describe("CloudSettingsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Exa:off:open" }));
 
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
@@ -295,6 +301,9 @@ describe("CloudSettingsPanel", () => {
       }
       if (url === "/api/voice/voices") {
         return new Response(JSON.stringify(voicesPayload));
+      }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;

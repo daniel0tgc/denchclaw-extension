@@ -1046,6 +1046,26 @@ function parseEveryString(every: string | undefined): { value: number; unit: Hea
   return { value: Number(match[1]), unit: match[2] as HeartbeatUnit };
 }
 
+function inferHeartbeatEditorState(heartbeat: HeartbeatInfo): { value: number; unit: HeartbeatUnit } {
+  const parsed = parseEveryString(heartbeat.every);
+  if (parsed) {
+    return parsed;
+  }
+
+  if (heartbeat.intervalMs > 0 && heartbeat.intervalMs % 86_400_000 === 0) {
+    return { value: heartbeat.intervalMs / 86_400_000, unit: "d" };
+  }
+
+  if (heartbeat.intervalMs > 0 && heartbeat.intervalMs % 3_600_000 === 0) {
+    return { value: heartbeat.intervalMs / 3_600_000, unit: "h" };
+  }
+
+  return {
+    value: Math.max(1, Math.round(heartbeat.intervalMs / 60_000)),
+    unit: "m",
+  };
+}
+
 function HeartbeatSettingCard({
   heartbeat,
   heartbeatCountdown,
@@ -1055,25 +1075,24 @@ function HeartbeatSettingCard({
   heartbeatCountdown: string | null;
   onSaved: () => void;
 }) {
-  const parsed = parseEveryString(heartbeat.every);
-  const [editValue, setEditValue] = useState<number>(parsed?.value ?? Math.round(heartbeat.intervalMs / 60_000));
-  const [editUnit, setEditUnit] = useState<HeartbeatUnit>(parsed?.unit ?? "m");
+  const currentEditorState = inferHeartbeatEditorState(heartbeat);
+  const [editValue, setEditValue] = useState<number>(currentEditorState.value);
+  const [editUnit, setEditUnit] = useState<HeartbeatUnit>(currentEditorState.unit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const lastSyncedRef = useRef(heartbeat.every);
+  const currentHeartbeatKey = heartbeat.every ?? `interval:${heartbeat.intervalMs}`;
+  const lastSyncedRef = useRef(currentHeartbeatKey);
 
   useEffect(() => {
-    if (heartbeat.every && heartbeat.every !== lastSyncedRef.current) {
-      lastSyncedRef.current = heartbeat.every;
-      const next = parseEveryString(heartbeat.every);
-      if (next) {
-        setEditValue(next.value);
-        setEditUnit(next.unit);
-      }
+    if (currentHeartbeatKey !== lastSyncedRef.current) {
+      lastSyncedRef.current = currentHeartbeatKey;
+      const next = inferHeartbeatEditorState(heartbeat);
+      setEditValue(next.value);
+      setEditUnit(next.unit);
     }
-  }, [heartbeat.every]);
+  }, [currentHeartbeatKey, heartbeat.every, heartbeat.intervalMs]);
 
-  const currentRaw = parsed ? `${parsed.value}${parsed.unit}` : null;
+  const currentRaw = `${currentEditorState.value}${currentEditorState.unit}`;
   const draftRaw = `${editValue}${editUnit}`;
   const isDirty = currentRaw !== draftRaw;
 

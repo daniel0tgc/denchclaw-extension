@@ -249,11 +249,14 @@ function asRecord(
 function parseAttachments(
 	text: string,
 ): { paths: string[]; message: string } | null {
-	const match = text.match(/\[Attached files: (.+?)\]/);
-	if (!match) {return null;}
-	const afterIdx = (match.index ?? 0) + match[0].length;
-	const message = text.slice(afterIdx).trim();
-	const paths = match[1]
+	const prefix = "[Attached files: ";
+	const start = text.indexOf(prefix);
+	if (start === -1) {return null;}
+	const contentStart = start + prefix.length;
+	const end = text.indexOf("]", contentStart);
+	if (end === -1) {return null;}
+	const message = text.slice(end + 1).trim();
+	const paths = text.slice(contentStart, end)
 		.split(", ")
 		.map((p) => p.trim())
 		.filter(Boolean);

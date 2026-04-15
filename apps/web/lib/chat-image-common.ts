@@ -1,6 +1,6 @@
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
 
-export const ATTACHED_FILES_PATTERN = /\[Attached files: ([^\]]+)\]/;
+const ATTACHED_FILES_PREFIX = "[Attached files: ";
 
 export const CHAT_IMAGE_EXTENSION_TO_MIME = {
 	".jpg": "image/jpeg",
@@ -35,9 +35,12 @@ export const CHAT_BROWSER_SAFE_IMAGE_EXTENSIONS = new Set([
 ]);
 
 export function extractAttachedFilePaths(text: string): string[] {
-	const match = text.match(ATTACHED_FILES_PATTERN);
-	if (!match) {return [];}
-	return match[1]
+	const start = text.indexOf(ATTACHED_FILES_PREFIX);
+	if (start === -1) {return [];}
+	const contentStart = start + ATTACHED_FILES_PREFIX.length;
+	const end = text.indexOf("]", contentStart);
+	if (end === -1) {return [];}
+	return text.slice(contentStart, end)
 		.split(", ")
 		.map((path) => path.trim())
 		.filter(Boolean);

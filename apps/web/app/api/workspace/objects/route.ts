@@ -90,7 +90,8 @@ export async function POST(request: Request) {
 		return Response.json({ error: "DuckDB not found." }, { status: 404 });
 	}
 
-	const rootPrefix = resolve(workspaceRoot) + sep;
+	const resolvedRoot = resolve(workspaceRoot);
+	const rootPrefix = resolvedRoot + sep;
 	let parentDir = workspaceRoot;
 	let parentWorkspacePath = "";
 	if (parentPath) {
@@ -98,8 +99,8 @@ export async function POST(request: Request) {
 		if (!resolvedParent?.withinWorkspace || resolvedParent.workspaceRelativePath == null) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
-		const absParent = resolvedParent.absolutePath;
-		if (!absParent.startsWith(rootPrefix) && absParent !== resolve(workspaceRoot)) {
+		const absParent = resolve(resolvedParent.absolutePath);
+		if (!(absParent + sep).startsWith(rootPrefix)) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
 		try {

@@ -1169,15 +1169,19 @@ export function resolveFilesystemPath(
   if (kind === "workspaceRelative") {
     if (!resolvedWsRoot) {return null;}
     absolutePath = resolve(resolvedWsRoot, normalize(inputPath));
-    if (!absolutePath.startsWith(resolvedWsRoot + "/") && absolutePath !== resolvedWsRoot) {return null;}
+    if (!(absolutePath + "/").startsWith(resolvedWsRoot + "/")) {return null;}
   } else if (kind === "homeRelative") {
     absolutePath = resolve(normalize(expandHomeRelativePath(inputPath)));
-    if (!absolutePath.startsWith(home + "/") && absolutePath !== home) {return null;}
+    if (!(absolutePath + "/").startsWith(home + "/")) {return null;}
   } else {
     absolutePath = resolve(normalize(inputPath));
-    const inWs = resolvedWsRoot && (absolutePath.startsWith(resolvedWsRoot + "/") || absolutePath === resolvedWsRoot);
-    const inHome = absolutePath.startsWith(home + "/") || absolutePath === home;
-    if (!inWs && !inHome) {return null;}
+    if (resolvedWsRoot && (absolutePath + "/").startsWith(resolvedWsRoot + "/")) {
+      // within workspace — ok
+    } else if ((absolutePath + "/").startsWith(home + "/")) {
+      // within home — ok
+    } else {
+      return null;
+    }
   }
 
   if (!options.allowMissing && !existsSync(absolutePath)) {return null;}

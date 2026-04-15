@@ -9,13 +9,6 @@ import {
 	writeObjectYaml,
 } from "@/lib/workspace";
 
-function isWithinRoot(root: string, target: string): boolean {
-	const normalizedRoot = resolve(root);
-	const normalizedTarget = resolve(target);
-	return normalizedTarget === normalizedRoot
-		|| normalizedTarget.startsWith(normalizedRoot + sep);
-}
-
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -97,6 +90,7 @@ export async function POST(request: Request) {
 		return Response.json({ error: "DuckDB not found." }, { status: 404 });
 	}
 
+	const rootPrefix = resolve(workspaceRoot) + sep;
 	let parentDir = workspaceRoot;
 	let parentWorkspacePath = "";
 	if (parentPath) {
@@ -104,17 +98,18 @@ export async function POST(request: Request) {
 		if (!resolvedParent?.withinWorkspace || resolvedParent.workspaceRelativePath == null) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
-		if (!isWithinRoot(workspaceRoot, resolvedParent.absolutePath)) {
+		const absParent = resolvedParent.absolutePath;
+		if (!absParent.startsWith(rootPrefix) && absParent !== resolve(workspaceRoot)) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
 		try {
-			if (!statSync(resolvedParent.absolutePath).isDirectory()) {
+			if (!statSync(absParent).isDirectory()) {
 				return Response.json({ error: "Parent path must be a directory." }, { status: 400 });
 			}
 		} catch {
 			return Response.json({ error: "Parent path does not exist." }, { status: 400 });
 		}
-		parentDir = resolvedParent.absolutePath;
+		parentDir = absParent;
 		parentWorkspacePath = resolvedParent.workspaceRelativePath;
 	}
 
@@ -127,7 +122,7 @@ export async function POST(request: Request) {
 	}
 
 	const objectDir = join(parentDir, name);
-	if (!isWithinRoot(workspaceRoot, objectDir)) {
+	if (!objectDir.startsWith(rootPrefix)) {
 		return Response.json({ error: "Object path must be inside the workspace." }, { status: 400 });
 	}
 	if (existsSync(objectDir)) {

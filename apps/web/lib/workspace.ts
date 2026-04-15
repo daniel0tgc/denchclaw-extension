@@ -1143,11 +1143,6 @@ function toPortableRelativePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function isPathWithinRoot(root: string, absolutePath: string): boolean {
-  const relPath = relative(resolve(root), resolve(absolutePath));
-  return relPath === "" || (!relPath.startsWith("..") && !isNodeAbsolute(relPath));
-}
-
 function expandHomeRelativePath(inputPath: string): string {
   if (!isHomeRelativePath(inputPath)) {return inputPath;}
   return join(homedir(), inputPath.slice(2));
@@ -1167,27 +1162,30 @@ export function resolveFilesystemPath(
   if (kind === "virtual") {return null;}
 
   const workspaceRoot = resolveWorkspaceRoot();
+  const resolvedWsRoot = workspaceRoot ? resolve(workspaceRoot) : null;
+  const home = homedir();
   let absolutePath: string;
 
   if (kind === "workspaceRelative") {
-    if (!workspaceRoot) {return null;}
-    absolutePath = resolve(workspaceRoot, normalize(inputPath));
-    if (!isPathWithinRoot(workspaceRoot, absolutePath)) {return null;}
+    if (!resolvedWsRoot) {return null;}
+    absolutePath = resolve(resolvedWsRoot, normalize(inputPath));
+    if (!absolutePath.startsWith(resolvedWsRoot + "/") && absolutePath !== resolvedWsRoot) {return null;}
   } else if (kind === "homeRelative") {
-    const home = homedir();
     absolutePath = resolve(normalize(expandHomeRelativePath(inputPath)));
     if (!absolutePath.startsWith(home + "/") && absolutePath !== home) {return null;}
   } else {
     absolutePath = resolve(normalize(inputPath));
+    const inWs = resolvedWsRoot && (absolutePath.startsWith(resolvedWsRoot + "/") || absolutePath === resolvedWsRoot);
+    const inHome = absolutePath.startsWith(home + "/") || absolutePath === home;
+    if (!inWs && !inHome) {return null;}
   }
-
-  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(absolutePath)) {return null;}
 
   if (!options.allowMissing && !existsSync(absolutePath)) {return null;}
 
-  const withinWorkspace = !!workspaceRoot && isPathWithinRoot(workspaceRoot, absolutePath);
-  const workspaceRelativePath = withinWorkspace && workspaceRoot
-    ? toPortableRelativePath(relative(resolve(workspaceRoot), absolutePath))
+  const withinWorkspace = !!resolvedWsRoot
+    && (absolutePath.startsWith(resolvedWsRoot + "/") || absolutePath === resolvedWsRoot);
+  const workspaceRelativePath = withinWorkspace && resolvedWsRoot
+    ? toPortableRelativePath(relative(resolvedWsRoot, absolutePath))
     : null;
 
   return {
@@ -1320,10 +1318,11 @@ export function parseObjectYaml(content: string): ObjectYamlConfig {
  * Returns null if the file does not exist.
  */
 export function readObjectYaml(objectDir: string): ObjectYamlConfig | null {
-  const safeDir = resolve(objectDir);
   const wsRoot = resolveWorkspaceRoot();
-  if (wsRoot && !safeDir.startsWith(resolve(wsRoot) + "/") && safeDir !== resolve(wsRoot)) {return null;}
-  const yamlPath = join(safeDir, ".object.yaml");
+  const resolvedRoot = wsRoot ? resolve(wsRoot) : null;
+  const yamlPath = join(resolve(objectDir), ".object.yaml");
+
+  if (resolvedRoot && !yamlPath.startsWith(resolvedRoot + "/")) {return null;}
   if (!existsSync(yamlPath)) {return null;}
   const raw = readFileSync(yamlPath, "utf-8");
   return parseObjectYaml(raw);
@@ -1333,12 +1332,13 @@ export function readObjectYaml(objectDir: string): ObjectYamlConfig | null {
  * Write a .object.yaml file, merging view config with existing top-level keys.
  */
 export function writeObjectYaml(objectDir: string, config: ObjectYamlConfig): void {
-  const safeDir = resolve(objectDir);
   const wsRoot = resolveWorkspaceRoot();
-  if (wsRoot && !safeDir.startsWith(resolve(wsRoot) + "/") && safeDir !== resolve(wsRoot)) {
+  const resolvedRoot = wsRoot ? resolve(wsRoot) : null;
+  const yamlPath = join(resolve(objectDir), ".object.yaml");
+
+  if (resolvedRoot && !yamlPath.startsWith(resolvedRoot + "/")) {
     throw new Error("Object directory must be within the workspace.");
   }
-  const yamlPath = join(safeDir, ".object.yaml");
 
   let existing: ObjectYamlConfig = {};
   if (existsSync(yamlPath)) {
@@ -1369,8 +1369,9 @@ export function findObjectDir(objectName: string): string | null {
   const root = resolveWorkspaceRoot();
   if (!root) {return null;}
 
-  // Check direct match: workspace/{objectName}/
-  const direct = join(root, objectName);
+  const resolvedRoot = resolve(root);
+  const direct = join(resolvedRoot, objectName);
+  if (!direct.startsWith(resolvedRoot + "/")) {return null;}
   if (existsSync(direct) && existsSync(join(direct, ".object.yaml"))) {
     return direct;
   }

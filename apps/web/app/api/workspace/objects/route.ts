@@ -100,7 +100,7 @@ export async function POST(request: Request) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
 		const absParent = resolve(resolvedParent.absolutePath);
-		if (!(absParent + sep).startsWith(rootPrefix)) {
+		if (!absParent.startsWith(rootPrefix)) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
 		try {

@@ -1168,17 +1168,32 @@ export function resolveFilesystemPath(
 
   if (kind === "workspaceRelative") {
     if (!resolvedWsRoot) {return null;}
-    absolutePath = resolve(resolvedWsRoot, normalize(inputPath));
-    if (!(absolutePath + "/").startsWith(resolvedWsRoot + "/")) {return null;}
+    const wsPrefix = resolvedWsRoot + "/";
+    const resolved = resolve(resolvedWsRoot, normalize(inputPath));
+    if (resolved.startsWith(wsPrefix)) {
+      absolutePath = resolved;
+    } else if (resolved === resolvedWsRoot) {
+      absolutePath = resolvedWsRoot;
+    } else {
+      return null;
+    }
   } else if (kind === "homeRelative") {
-    absolutePath = resolve(normalize(expandHomeRelativePath(inputPath)));
-    if (!(absolutePath + "/").startsWith(home + "/")) {return null;}
+    const homePrefix = home + "/";
+    const resolved = resolve(normalize(expandHomeRelativePath(inputPath)));
+    if (resolved.startsWith(homePrefix)) {
+      absolutePath = resolved;
+    } else if (resolved === home) {
+      absolutePath = home;
+    } else {
+      return null;
+    }
   } else {
-    absolutePath = resolve(normalize(inputPath));
-    if (resolvedWsRoot && (absolutePath + "/").startsWith(resolvedWsRoot + "/")) {
-      // within workspace — ok
-    } else if ((absolutePath + "/").startsWith(home + "/")) {
-      // within home — ok
+    const resolved = resolve(normalize(inputPath));
+    const homePrefix = home + "/";
+    if (resolvedWsRoot && resolved.startsWith(resolvedWsRoot + "/")) {
+      absolutePath = resolved;
+    } else if (resolved.startsWith(homePrefix)) {
+      absolutePath = resolved;
     } else {
       return null;
     }

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { access, readdir as readdirAsync } from "node:fs/promises";
-import { execSync, exec } from "node:child_process";
+import { execSync, execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve, normalize, relative, isAbsolute as isNodeAbsolute } from "node:path";
 import { homedir } from "node:os";
@@ -12,7 +12,7 @@ import {
   type WorkspacePathKind,
 } from "./workspace-paths";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 async function pathExistsAsync(path: string): Promise<boolean> {
   try {
@@ -803,13 +803,10 @@ export function duckdbQuery<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    // Escape single quotes in SQL for shell safety
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const result = execSync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+    const result = execFileSync(bin, ["-json", db, sql], {
       encoding: "utf-8",
       timeout: 10_000,
-      maxBuffer: 10 * 1024 * 1024, // 10 MB
-      shell: "/bin/sh",
+      maxBuffer: 10 * 1024 * 1024,
     });
 
     const trimmed = result.trim();
@@ -835,12 +832,10 @@ export async function duckdbQueryAsync<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+    const { stdout } = await execFileAsync(bin, ["-json", db, sql], {
       encoding: "utf-8",
       timeout: 10_000,
       maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
     });
 
     const trimmed = stdout.trim();
@@ -875,12 +870,10 @@ export function duckdbQueryAll<T = Record<string, unknown>>(
 
   for (const db of dbPaths) {
     try {
-      const escapedSql = sql.replace(/'/g, "'\\''");
-      const result = execSync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      const result = execFileSync(bin, ["-json", db, sql], {
         encoding: "utf-8",
         timeout: 10_000,
         maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
       });
       const trimmed = result.trim();
       if (!trimmed || trimmed === "[]") {continue;}
@@ -919,12 +912,10 @@ export async function duckdbQueryAllAsync<T = Record<string, unknown>>(
 
   for (const db of dbPaths) {
     try {
-      const escapedSql = sql.replace(/'/g, "'\\''");
-      const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      const { stdout } = await execFileAsync(bin, ["-json", db, sql], {
         encoding: "utf-8",
         timeout: 10_000,
         maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
       });
       const trimmed = stdout.trim();
       if (!trimmed || trimmed === "[]") {continue;}
@@ -957,16 +948,13 @@ export function findDuckDBForObject(objectName: string): string | null {
   const bin = resolveDuckdbBin();
   if (!bin) {return null;}
 
-  // Build the SQL then apply the same shell-escape as duckdbQuery:
-  // replace every ' with '\'' so the single-quoted shell arg stays valid.
   const sql = `SELECT id FROM objects WHERE name = '${objectName.replace(/'/g, "''")}' LIMIT 1`;
-  const escapedSql = sql.replace(/'/g, "'\\''");
 
   for (const db of dbPaths) {
     try {
-      const result = execSync(
-        `'${bin}' -json '${db}' '${escapedSql}'`,
-        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024, shell: "/bin/sh" },
+      const result = execFileSync(
+        bin, ["-json", db, sql],
+        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024 },
       );
       const trimmed = result.trim();
       if (trimmed && trimmed !== "[]") {return db;}
@@ -987,13 +975,12 @@ export async function findDuckDBForObjectAsync(objectName: string): Promise<stri
   if (!bin) {return null;}
 
   const sql = `SELECT id FROM objects WHERE name = '${objectName.replace(/'/g, "''")}' LIMIT 1`;
-  const escapedSql = sql.replace(/'/g, "'\\''");
 
   for (const db of dbPaths) {
     try {
-      const { stdout } = await execAsync(
-        `'${bin}' -json '${db}' '${escapedSql}'`,
-        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024, shell: "/bin/sh" },
+      const { stdout } = await execFileAsync(
+        bin, ["-json", db, sql],
+        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024 },
       );
       const trimmed = stdout.trim();
       if (trimmed && trimmed !== "[]") {return db;}
@@ -1031,11 +1018,9 @@ export function duckdbExecOnFile(dbFilePath: string, sql: string): boolean {
   if (!bin) {return false;}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    execSync(`'${bin}' '${dbFilePath}' '${escapedSql}'`, {
+    execFileSync(bin, [dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 10_000,
-      shell: "/bin/sh",
     });
     return true;
   } catch {
@@ -1049,11 +1034,9 @@ export async function duckdbExecOnFileAsync(dbFilePath: string, sql: string): Pr
   if (!bin) {return false;}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    await execAsync(`'${bin}' '${dbFilePath}' '${escapedSql}'`, {
+    await execFileAsync(bin, [dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 10_000,
-      shell: "/bin/sh",
     });
     return true;
   } catch {
@@ -1112,12 +1095,10 @@ export function duckdbQueryOnFile<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const result = execSync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+    const result = execFileSync(bin, ["-json", dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 15_000,
       maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
     });
 
     const trimmed = result.trim();
@@ -1137,12 +1118,10 @@ export async function duckdbQueryOnFileAsync<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const { stdout } = await execAsync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+    const { stdout } = await execFileAsync(bin, ["-json", dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 15_000,
       maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
     });
 
     const trimmed = stdout.trim();
@@ -1182,6 +1161,8 @@ export function resolveFilesystemPath(
   inputPath: string,
   options: { allowMissing?: boolean } = {},
 ): ResolvedFilesystemPath | null {
+  if (inputPath.includes("\0")) {return null;}
+
   const kind = classifyWorkspacePath(inputPath);
   if (kind === "virtual") {return null;}
 
@@ -1193,10 +1174,14 @@ export function resolveFilesystemPath(
     absolutePath = resolve(workspaceRoot, normalize(inputPath));
     if (!isPathWithinRoot(workspaceRoot, absolutePath)) {return null;}
   } else if (kind === "homeRelative") {
+    const home = homedir();
     absolutePath = resolve(normalize(expandHomeRelativePath(inputPath)));
+    if (!absolutePath.startsWith(home + "/") && absolutePath !== home) {return null;}
   } else {
     absolutePath = resolve(normalize(inputPath));
   }
+
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(absolutePath)) {return null;}
 
   if (!options.allowMissing && !existsSync(absolutePath)) {return null;}
 
@@ -1335,7 +1320,10 @@ export function parseObjectYaml(content: string): ObjectYamlConfig {
  * Returns null if the file does not exist.
  */
 export function readObjectYaml(objectDir: string): ObjectYamlConfig | null {
-  const yamlPath = join(objectDir, ".object.yaml");
+  const safeDir = resolve(objectDir);
+  const wsRoot = resolveWorkspaceRoot();
+  if (wsRoot && !safeDir.startsWith(resolve(wsRoot) + "/") && safeDir !== resolve(wsRoot)) {return null;}
+  const yamlPath = join(safeDir, ".object.yaml");
   if (!existsSync(yamlPath)) {return null;}
   const raw = readFileSync(yamlPath, "utf-8");
   return parseObjectYaml(raw);
@@ -1345,9 +1333,13 @@ export function readObjectYaml(objectDir: string): ObjectYamlConfig | null {
  * Write a .object.yaml file, merging view config with existing top-level keys.
  */
 export function writeObjectYaml(objectDir: string, config: ObjectYamlConfig): void {
-  const yamlPath = join(objectDir, ".object.yaml");
+  const safeDir = resolve(objectDir);
+  const wsRoot = resolveWorkspaceRoot();
+  if (wsRoot && !safeDir.startsWith(resolve(wsRoot) + "/") && safeDir !== resolve(wsRoot)) {
+    throw new Error("Object directory must be within the workspace.");
+  }
+  const yamlPath = join(safeDir, ".object.yaml");
 
-  // Read existing to preserve keys we don't manage
   let existing: ObjectYamlConfig = {};
   if (existsSync(yamlPath)) {
     try {
@@ -1359,7 +1351,6 @@ export function writeObjectYaml(objectDir: string, config: ObjectYamlConfig): vo
 
   const merged = { ...existing, ...config };
 
-  // Remove undefined values
   for (const key of Object.keys(merged)) {
     if (merged[key] === undefined) {delete merged[key];}
   }

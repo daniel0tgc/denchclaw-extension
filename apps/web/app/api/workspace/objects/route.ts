@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import {
 	duckdbExecOnFileAsync,
 	duckdbPathAsync,
@@ -8,6 +8,13 @@ import {
 	resolveWorkspaceRoot,
 	writeObjectYaml,
 } from "@/lib/workspace";
+
+function isWithinRoot(root: string, target: string): boolean {
+	const normalizedRoot = resolve(root);
+	const normalizedTarget = resolve(target);
+	return normalizedTarget === normalizedRoot
+		|| normalizedTarget.startsWith(normalizedRoot + sep);
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -97,6 +104,9 @@ export async function POST(request: Request) {
 		if (!resolvedParent?.withinWorkspace || resolvedParent.workspaceRelativePath == null) {
 			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
 		}
+		if (!isWithinRoot(workspaceRoot, resolvedParent.absolutePath)) {
+			return Response.json({ error: "Parent path must be inside the workspace." }, { status: 400 });
+		}
 		try {
 			if (!statSync(resolvedParent.absolutePath).isDirectory()) {
 				return Response.json({ error: "Parent path must be a directory." }, { status: 400 });
@@ -117,6 +127,9 @@ export async function POST(request: Request) {
 	}
 
 	const objectDir = join(parentDir, name);
+	if (!isWithinRoot(workspaceRoot, objectDir)) {
+		return Response.json({ error: "Object path must be inside the workspace." }, { status: 400 });
+	}
 	if (existsSync(objectDir)) {
 		return Response.json(
 			{ error: "A file or folder with that name already exists in the target location." },

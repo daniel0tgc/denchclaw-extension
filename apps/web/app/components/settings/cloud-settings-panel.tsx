@@ -5,6 +5,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
 import { DenchIntegrationsSection } from "../integrations/dench-integrations-section";
+import { McpServersSection } from "./mcp-servers-section";
 import type { DenchIntegrationId, DenchIntegrationState, IntegrationsState } from "@/lib/integrations";
 import {
   DropdownMenu,
@@ -925,6 +926,7 @@ export function CloudSettingsPanel() {
         disabled={savingActive}
         onToggle={handleDraftEnrichmentMaxModeChange}
       />
+      <McpServersSection />
       <div className="flex items-center justify-end gap-2 pt-2">
         <Button
           type="button"

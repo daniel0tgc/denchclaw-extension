@@ -142,7 +142,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
-      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+      vi.mocked(startRun).mockClear();
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -430,7 +430,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
-      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+      vi.mocked(startRun).mockClear();
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -465,7 +465,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
-      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+      vi.mocked(startRun).mockClear();
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -509,7 +509,7 @@ describe("Chat API routes", () => {
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
       vi.mocked(hasActiveRun).mockReturnValue(false);
       vi.mocked(subscribeToRun).mockReturnValue(() => {});
-      const startRunCallCount = vi.mocked(startRun).mock.calls.length;
+      vi.mocked(startRun).mockClear();
 
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/chat", {
@@ -531,7 +531,7 @@ describe("Chat API routes", () => {
 
       expect(res.status).toBe(400);
       await expect(res.text()).resolves.toContain("exceeds the 5 MB limit");
-      expect(startRun).toHaveBeenCalledTimes(startRunCallCount);
+      expect(startRun).not.toHaveBeenCalled();
     });
   });
 

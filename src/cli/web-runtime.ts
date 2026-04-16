@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, execSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -164,23 +164,10 @@ function writeJsonFile(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
 }
 
-function resolveCommandForPlatform(command: string): string {
-  if (process.platform !== "win32") {
-    return command;
-  }
-  if (path.extname(command)) {
-    return command;
-  }
-  const normalized = path.basename(command).toLowerCase();
-  if (
-    normalized === "npm" ||
-    normalized === "pnpm" ||
-    normalized === "npx" ||
-    normalized === "yarn"
-  ) {
-    return `${command}.cmd`;
-  }
-  return command;
+const IS_WINDOWS = process.platform === "win32";
+
+function platformSpawnOptions(): { shell: boolean; windowsHide: boolean } {
+  return { shell: IS_WINDOWS, windowsHide: IS_WINDOWS };
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -194,6 +181,29 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function terminatePidWithEscalation(pid: number): Promise<void> {
+  if (IS_WINDOWS) {
+    try {
+      execSync(`taskkill /pid ${pid} /f /t`, { stdio: "ignore", windowsHide: true });
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "ESRCH") {
+        return;
+      }
+      try {
+        process.kill(pid);
+      } catch {
+        // already gone
+      }
+    }
+    for (let i = 0; i < 8; i += 1) {
+      if (!isProcessAlive(pid)) {
+        return;
+      }
+      await sleep(100);
+    }
+    return;
+  }
+
   try {
     process.kill(pid, "SIGTERM");
   } catch (error) {
@@ -458,6 +468,9 @@ export function evaluateMajorVersionTransition(params: {
 }
 
 function resolveProcessCwd(pid: number): string | undefined {
+  if (IS_WINDOWS) {
+    return undefined;
+  }
   try {
     const lsof = resolveLsofCommandSync();
     const output = execFileSync(lsof, ["-nP", "-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
@@ -900,6 +913,7 @@ export function startManagedWebRuntime(params: {
   const child = spawn(process.execPath, [runtimeServerPath], {
     cwd: path.dirname(runtimeServerPath),
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", outFd, errFd],
     env: {
       ...process.env,
@@ -1046,9 +1060,10 @@ export async function runOpenClawCommand(params: {
   env?: NodeJS.ProcessEnv;
 }): Promise<{ code: number; stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(resolveCommandForPlatform(params.openclawCommand), params.args, {
+    const child = spawn(params.openclawCommand, params.args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: params.env ? { ...process.env, ...params.env } : process.env,
+      ...platformSpawnOptions(),
     });
     let stdout = "";
     let stderr = "";

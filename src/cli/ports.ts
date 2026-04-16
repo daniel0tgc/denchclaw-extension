@@ -1,6 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { resolveLsofCommandSync } from "../infra/ports-lsof.js";
 import { sleep } from "../utils.js";
+
+const IS_WINDOWS = process.platform === "win32";
 
 export type PortProcess = { pid: number; command?: string };
 
@@ -30,7 +32,35 @@ export function parseLsofOutput(output: string): PortProcess[] {
   return results;
 }
 
-export function listPortListeners(port: number): PortProcess[] {
+export function parseNetstatOutput(output: string, port: number): PortProcess[] {
+  const seen = new Set<number>();
+  const results: PortProcess[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.includes("LISTENING")) continue;
+    const columns = trimmed.split(/\s+/);
+    const localAddr = columns[1];
+    if (!localAddr) continue;
+    const addrPort = Number.parseInt(localAddr.slice(localAddr.lastIndexOf(":") + 1), 10);
+    if (addrPort !== port) continue;
+    const pid = Number.parseInt(columns[columns.length - 1], 10);
+    if (!Number.isFinite(pid) || pid <= 0 || seen.has(pid)) continue;
+    seen.add(pid);
+    results.push({ pid });
+  }
+  return results;
+}
+
+function listPortListenersWindows(port: number): PortProcess[] {
+  try {
+    const out = execSync(`netstat -ano -p TCP`, { encoding: "utf-8", windowsHide: true });
+    return parseNetstatOutput(out, port);
+  } catch {
+    return [];
+  }
+}
+
+function listPortListenersUnix(port: number): PortProcess[] {
   try {
     const lsof = resolveLsofCommandSync();
     const out = execFileSync(lsof, ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-FpFc"], {
@@ -45,16 +75,44 @@ export function listPortListeners(port: number): PortProcess[] {
     }
     if (status === 1) {
       return [];
-    } // no listeners
+    }
     throw err instanceof Error ? err : new Error(String(err));
   }
+}
+
+export function listPortListeners(port: number): PortProcess[] {
+  return IS_WINDOWS ? listPortListenersWindows(port) : listPortListenersUnix(port);
+}
+
+function terminatePid(pid: number): void {
+  if (IS_WINDOWS) {
+    try {
+      execSync(`taskkill /pid ${pid} /f /t`, { stdio: "ignore", windowsHide: true });
+    } catch {
+      process.kill(pid);
+    }
+    return;
+  }
+  process.kill(pid, "SIGTERM");
+}
+
+function forceKillPid(pid: number): void {
+  if (IS_WINDOWS) {
+    try {
+      execSync(`taskkill /pid ${pid} /f /t`, { stdio: "ignore", windowsHide: true });
+    } catch {
+      process.kill(pid);
+    }
+    return;
+  }
+  process.kill(pid, "SIGKILL");
 }
 
 export function forceFreePort(port: number): PortProcess[] {
   const listeners = listPortListeners(port);
   for (const proc of listeners) {
     try {
-      process.kill(proc.pid, "SIGTERM");
+      terminatePid(proc.pid);
     } catch (err) {
       throw new Error(
         `failed to kill pid ${proc.pid}${proc.command ? ` (${proc.command})` : ""}: ${String(err)}`,
@@ -65,10 +123,14 @@ export function forceFreePort(port: number): PortProcess[] {
   return listeners;
 }
 
-function killPids(listeners: PortProcess[], signal: NodeJS.Signals) {
+function killPids(listeners: PortProcess[], signal: "SIGTERM" | "SIGKILL") {
   for (const proc of listeners) {
     try {
-      process.kill(proc.pid, signal);
+      if (signal === "SIGKILL") {
+        forceKillPid(proc.pid);
+      } else {
+        terminatePid(proc.pid);
+      }
     } catch (err) {
       throw new Error(
         `failed to kill pid ${proc.pid}${proc.command ? ` (${proc.command})` : ""}: ${String(err)}`,
@@ -83,9 +145,9 @@ export async function forceFreePortAndWait(
   opts: {
     /** Total wait budget across signals. */
     timeoutMs?: number;
-    /** Poll interval for checking whether lsof reports listeners. */
+    /** Poll interval for checking whether listeners remain. */
     intervalMs?: number;
-    /** How long to wait after SIGTERM before escalating to SIGKILL. */
+    /** How long to wait after SIGTERM before escalating to SIGKILL (Unix only). */
     sigtermTimeoutMs?: number;
   } = {},
 ): Promise<ForceFreePortResult> {
@@ -96,6 +158,24 @@ export async function forceFreePortAndWait(
   const killed = forceFreePort(port);
   if (killed.length === 0) {
     return { killed, waitedMs: 0, escalatedToSigkill: false };
+  }
+
+  if (IS_WINDOWS) {
+    let waitedMs = 0;
+    const tries = intervalMs > 0 ? Math.ceil(timeoutMs / intervalMs) : 0;
+    for (let i = 0; i < tries; i++) {
+      if (listPortListeners(port).length === 0) {
+        return { killed, waitedMs, escalatedToSigkill: false };
+      }
+      await sleep(intervalMs);
+      waitedMs += intervalMs;
+    }
+    if (listPortListeners(port).length === 0) {
+      return { killed, waitedMs, escalatedToSigkill: false };
+    }
+    throw new Error(
+      `port ${port} still has listeners after --force: ${listPortListeners(port).map((p) => p.pid).join(", ")}`,
+    );
   }
 
   let waitedMs = 0;

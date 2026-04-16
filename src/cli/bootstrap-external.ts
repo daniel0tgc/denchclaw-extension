@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { confirm, isCancel, select, spinner, text } from "@clack/prompts";
@@ -229,23 +230,10 @@ type DenchCloudBootstrapSelection = {
   catalog?: DenchCloudCatalogLoadResult;
 };
 
-function resolveCommandForPlatform(command: string): string {
-  if (process.platform !== "win32") {
-    return command;
-  }
-  if (path.extname(command)) {
-    return command;
-  }
-  const normalized = path.basename(command).toLowerCase();
-  if (
-    normalized === "npm" ||
-    normalized === "pnpm" ||
-    normalized === "npx" ||
-    normalized === "yarn"
-  ) {
-    return `${command}.cmd`;
-  }
-  return command;
+const IS_WINDOWS = process.platform === "win32";
+
+function platformSpawnOptions(): { shell: boolean; windowsHide: boolean } {
+  return { shell: IS_WINDOWS, windowsHide: IS_WINDOWS };
 }
 
 async function runCommandWithTimeout(
@@ -264,10 +252,11 @@ async function runCommandWithTimeout(
   }
   const stdio: StdioOptions = options.ioMode === "inherit" ? "inherit" : ["ignore", "pipe", "pipe"];
   return await new Promise<SpawnResult>((resolve, reject) => {
-    const child = spawn(resolveCommandForPlatform(command), args, {
+    const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
       stdio,
+      ...platformSpawnOptions(),
     });
     let stdout = "";
     let stderr = "";
@@ -1129,8 +1118,9 @@ async function runOpenClawWithProgress(params: {
   s.start(params.startMessage);
 
   const result = await new Promise<SpawnResult>((resolve, reject) => {
-    const child = spawn(resolveCommandForPlatform(params.openclawCommand), params.args, {
+    const child = spawn(params.openclawCommand, params.args, {
       stdio: ["ignore", "pipe", "pipe"],
+      ...platformSpawnOptions(),
     });
     let stdout = "";
     let stderr = "";
@@ -1831,7 +1821,7 @@ function readLogTail(logPath: string, maxLines = 16): string | undefined {
 }
 
 function resolveLatestRuntimeLogPath(): string | undefined {
-  const runtimeLogDir = "/tmp/openclaw";
+  const runtimeLogDir = path.join(os.tmpdir(), "openclaw");
   if (!existsSync(runtimeLogDir)) {
     return undefined;
   }
@@ -3481,11 +3471,11 @@ export async function bootstrapCommand(
       runtime.log(
         theme.warn("Global OpenClaw was installed, but `openclaw` is not on shell PATH."),
       );
-      runtime.log(
-        theme.muted(
-          `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`,
-        ),
-      );
+      const pathHint =
+        IS_WINDOWS
+          ? `To add to PATH, run in PowerShell: $env:Path = "${installResult.globalBinDir};$env:Path"`
+          : `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`;
+      runtime.log(theme.muted(pathHint));
     }
 
     runtime.log(theme.muted(`Workspace seed: ${describeWorkspaceSeedResult(workspaceSeed)}`));

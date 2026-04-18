@@ -70,6 +70,7 @@ Verification:     PASS
 ```
 
 If something breaks, offer to revert:
+
 ```bash
 gh pr create --title "Revert: ..." --body "Reverting PR #123 due to ..."
 ```

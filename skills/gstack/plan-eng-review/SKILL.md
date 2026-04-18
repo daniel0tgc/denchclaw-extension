@@ -51,10 +51,10 @@ Name every transition. What triggers it? What guards it? What side effects does 
 
 ### 3. Error Map
 
-| Error | Trigger | Handler | User Sees | Tested? |
-|-------|---------|---------|-----------|---------|
-| `InvalidInput` | malformed request | controller | 422 + field errors | yes |
-| `ServiceTimeout` | upstream >5s | retry wrapper | "try again" toast | no |
+| Error            | Trigger           | Handler       | User Sees          | Tested? |
+| ---------------- | ----------------- | ------------- | ------------------ | ------- |
+| `InvalidInput`   | malformed request | controller    | 422 + field errors | yes     |
+| `ServiceTimeout` | upstream >5s      | retry wrapper | "try again" toast  | no      |
 
 No catch-all error handling. Every `catch(e)` must name what it catches.
 
@@ -70,11 +70,11 @@ What happens if each dependency is down? Timeout? Returns garbage?
 
 ### 5. Test Strategy
 
-| Layer | What to test | Coverage target |
-|-------|-------------|-----------------|
-| Unit | Business logic, validators | 100% of decision branches |
-| Integration | Service interactions | Happy path + error paths |
-| E2E | Critical user flows | Top 5 flows |
+| Layer       | What to test               | Coverage target           |
+| ----------- | -------------------------- | ------------------------- |
+| Unit        | Business logic, validators | 100% of decision branches |
+| Integration | Service interactions       | Happy path + error paths  |
+| E2E         | Critical user flows        | Top 5 flows               |
 
 ### 6. Performance Budget
 

@@ -402,10 +402,7 @@ export async function probeWebRuntime(port: number): Promise<WebProbeResult> {
   }
 }
 
-export async function waitForWebRuntime(
-  port: number,
-  pid?: number,
-): Promise<WebProbeResult> {
+export async function waitForWebRuntime(port: number, pid?: number): Promise<WebProbeResult> {
   let lastResult: WebProbeResult = { ok: false, reason: "web runtime did not respond" };
   for (let attempt = 0; attempt < WEB_APP_PROBE_ATTEMPTS; attempt += 1) {
     if (typeof pid === "number" && pid > 0 && !isProcessAlive(pid)) {
@@ -534,10 +531,7 @@ export function readLastKnownWebPort(stateDir: string): number {
  *    falling back to the standalone root node_modules/ when the original
  *    target is missing (e.g. .pnpm/ was removed by a prior flatten).
  */
-function dereferenceRuntimeNodeModules(
-  runtimeAppDir: string,
-  standaloneDir: string,
-): void {
+function dereferenceRuntimeNodeModules(runtimeAppDir: string, standaloneDir: string): void {
   const nmDir = path.join(runtimeAppDir, "node_modules");
   mkdirSync(nmDir, { recursive: true });
 
@@ -617,11 +611,7 @@ function resolveRemainingSymlinks(nmDir: string, rootNm: string): void {
   }
 }
 
-function resolveScopeSymlinks(
-  scopeDir: string,
-  scopeName: string,
-  rootNm: string,
-): void {
+function resolveScopeSymlinks(scopeDir: string, scopeName: string, rootNm: string): void {
   let scopeEntries: string[];
   try {
     scopeEntries = readdirSync(scopeDir);
@@ -639,11 +629,7 @@ function resolveScopeSymlinks(
   }
 }
 
-function resolveSymlinkedPackage(
-  linkPath: string,
-  packageName: string,
-  rootNm: string,
-): void {
+function resolveSymlinkedPackage(linkPath: string, packageName: string, rootNm: string): void {
   try {
     const target = readlinkSync(linkPath);
     const resolved = path.isAbsolute(target)
@@ -686,14 +672,8 @@ function resolveSymlinkedPackage(
  */
 function ensureSeedAssets(runtimeAppDir: string, packageRoot: string): void {
   const pairs: Array<[src: string, dst: string]> = [
-    [
-      path.join(packageRoot, "assets", "seed"),
-      path.join(runtimeAppDir, "assets", "seed"),
-    ],
-    [
-      path.join(packageRoot, "skills"),
-      path.join(runtimeAppDir, "skills"),
-    ],
+    [path.join(packageRoot, "assets", "seed"), path.join(runtimeAppDir, "assets", "seed")],
+    [path.join(packageRoot, "skills"), path.join(runtimeAppDir, "skills")],
   ];
   for (const [src, dst] of pairs) {
     if (!existsSync(src)) continue;
@@ -721,10 +701,7 @@ function ensureStaticAssets(runtimeAppDir: string, packageRoot: string): void {
       path.join(packageRoot, "apps", "web", ".next", "static"),
       path.join(runtimeAppDir, ".next", "static"),
     ],
-    [
-      path.join(packageRoot, "apps", "web", "public"),
-      path.join(runtimeAppDir, "public"),
-    ],
+    [path.join(packageRoot, "apps", "web", "public"), path.join(runtimeAppDir, "public")],
   ];
   for (const [src, dst] of pairs) {
     if (!existsSync(src)) continue;
@@ -743,10 +720,7 @@ function ensureStaticAssets(runtimeAppDir: string, packageRoot: string): void {
  * available so that browser tabs still running the previous version can
  * finish loading lazily-imported routes instead of hitting 400s.
  */
-function preservePreviousStaticAssets(
-  backupDir: string,
-  runtimeAppDir: string,
-): void {
+function preservePreviousStaticAssets(backupDir: string, runtimeAppDir: string): void {
   const oldStatic = path.join(backupDir, ".next", "static");
   const newStatic = path.join(runtimeAppDir, ".next", "static");
   if (!existsSync(oldStatic) || !existsSync(newStatic)) return;

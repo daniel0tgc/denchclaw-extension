@@ -23,6 +23,7 @@ find . -name "*.md" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -
 ```
 
 Key files to check:
+
 - `README.md`
 - `ARCHITECTURE.md`
 - `CONTRIBUTING.md`
@@ -41,6 +42,7 @@ git diff origin/main --stat
 ```
 
 For each changed file, determine:
+
 - What feature/behavior changed?
 - Does any documentation describe this feature?
 - Is the documentation still accurate?
@@ -50,38 +52,46 @@ For each changed file, determine:
 ## Step 3: Update Each Doc
 
 ### README.md
+
 - Are setup instructions still accurate?
 - Are feature descriptions current?
 - Are examples still working?
 - Are badges/links current?
 
 ### ARCHITECTURE.md
+
 - Do data flow descriptions match current code?
 - Are component diagrams current?
 - Are technology choices documented?
 
 ### CHANGELOG.md
+
 Add an entry for the release:
 
 ```markdown
 ## [Version] - YYYY-MM-DD
 
 ### Added
+
 - [New features]
 
 ### Changed
+
 - [Modified behavior]
 
 ### Fixed
+
 - [Bug fixes]
 ```
 
 ### TODOS.md
+
 - Mark completed items as done
 - Add new items discovered during implementation
 - Remove items that are no longer relevant
 
 ### API Documentation
+
 - Are endpoint descriptions current?
 - Are request/response examples accurate?
 - Are authentication requirements documented?

@@ -1,11 +1,13 @@
 import type { Command } from "commander";
-import { readTelemetryConfig, writeTelemetryConfig, getOrCreateAnonymousId } from "../../telemetry/config.js";
+import {
+  readTelemetryConfig,
+  writeTelemetryConfig,
+  getOrCreateAnonymousId,
+} from "../../telemetry/config.js";
 import { isTelemetryEnabled } from "../../telemetry/telemetry.js";
 
 export function registerTelemetryCommand(program: Command) {
-  const cmd = program
-    .command("telemetry")
-    .description("Manage anonymous telemetry for DenchClaw");
+  const cmd = program.command("telemetry").description("Manage anonymous telemetry for DenchClaw");
 
   cmd
     .command("status")
@@ -21,10 +23,14 @@ export function registerTelemetryCommand(program: Command) {
 
       console.log(`Telemetry config:  ${config.enabled ? "enabled" : "disabled"}`);
       if (envDisabled) {
-        console.log("Environment override: disabled (DO_NOT_TRACK, DENCHCLAW_TELEMETRY_DISABLED, or CI)");
+        console.log(
+          "Environment override: disabled (DO_NOT_TRACK, DENCHCLAW_TELEMETRY_DISABLED, or CI)",
+        );
       }
       console.log(`Effective status:  ${effective ? "enabled" : "disabled"}`);
-      console.log(`Privacy mode:      ${privacyOn ? "on (message content is redacted)" : "off (full content is captured)"}`);
+      console.log(
+        `Privacy mode:      ${privacyOn ? "on (message content is redacted)" : "off (full content is captured)"}`,
+      );
       console.log(`Install ID:        ${getOrCreateAnonymousId()}`);
       console.log("\nLearn more: https://github.com/openclaw/openclaw/blob/main/TELEMETRY.md");
     });
@@ -55,7 +61,9 @@ export function registerTelemetryCommand(program: Command) {
     .description("Enable privacy mode (redacts message content, default)")
     .action(() => {
       if (!isTelemetryEnabled()) {
-        console.log("Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable");
+        console.log(
+          "Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable",
+        );
         return;
       }
       writeTelemetryConfig({ privacyMode: true });
@@ -67,7 +75,9 @@ export function registerTelemetryCommand(program: Command) {
     .description("Disable privacy mode (sends full message content)")
     .action(() => {
       if (!isTelemetryEnabled()) {
-        console.log("Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable");
+        console.log(
+          "Telemetry is currently disabled. Enable it first with: npx denchclaw telemetry enable",
+        );
         return;
       }
       writeTelemetryConfig({ privacyMode: false });

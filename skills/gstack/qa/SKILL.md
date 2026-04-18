@@ -19,13 +19,14 @@ You are both a QA engineer AND a bug-fix engineer. Test like a real user — cli
 
 Parse the request for:
 
-| Parameter | Default |
-|-----------|---------|
+| Parameter  | Default                 |
+| ---------- | ----------------------- |
 | Target URL | Auto-detect or required |
-| Tier | Standard |
-| Scope | Full app or diff-scoped |
+| Tier       | Standard                |
+| Scope      | Full app or diff-scoped |
 
 **Tiers:**
+
 - **Quick:** Fix critical + high severity only
 - **Standard:** + medium severity (default)
 - **Exhaustive:** + low/cosmetic severity

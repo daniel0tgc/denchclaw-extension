@@ -32,21 +32,27 @@ If unclear, ask: "Are you building this for users/customers, or is this a person
 Ask these ONE AT A TIME. Wait for answers. Push back on vague answers.
 
 ### 1. Demand Reality
+
 "Who desperately needs this RIGHT NOW — not 'would be nice,' but their hair is on fire? Can you name a specific person or company? What are they doing today instead?"
 
 ### 2. Status Quo Challenge
+
 "What's the current workaround? How painful is it, really? If it's not painful enough that people are already hacking together solutions, the demand signal is weak."
 
 ### 3. Desperate Specificity
+
 "Describe the most specific, narrow version of this problem. Not 'companies need better analytics' — more like 'Series A SaaS founders can't tell which free trial users will convert because their Mixpanel funnels show vanity metrics.'"
 
 ### 4. Narrowest Wedge
+
 "What is the absolute smallest thing you could build that would make ONE person's life dramatically better? Not a platform. Not a suite. One workflow, one pain point, one user."
 
 ### 5. Observation
+
 "What have you personally observed that others haven't? What do you know about this problem that isn't obvious? The best startups come from non-obvious observations."
 
 ### 6. Future-Fit
+
 "If this works, where does it go in 5 years? Is this a feature, a product, or a company? And what does that tell you about where to start?"
 
 After all six questions, synthesize:
@@ -84,21 +90,27 @@ After the session, write a design document:
 # Design Doc: [Feature/Product Name]
 
 ## Problem Statement
+
 [Reframed problem from the session]
 
 ## Key Insights
+
 [Non-obvious observations that emerged]
 
 ## Approach
+
 [Chosen implementation approach]
 
 ## Narrowest Wedge
+
 [Smallest shippable version]
 
 ## Open Questions
+
 [Things to figure out during implementation]
 
 ## Rejected Alternatives
+
 [Other approaches considered and why they were rejected]
 ```
 

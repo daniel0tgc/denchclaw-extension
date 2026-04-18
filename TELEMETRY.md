@@ -16,20 +16,20 @@ Both layers share the same opt-out controls and privacy mode setting.
 
 ## Product Telemetry
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `cli_bootstrap_started` | `denchclaw bootstrap` begins | `version` |
-| `cli_bootstrap_completed` | Bootstrap finishes | `duration_ms`, `workspace_created`, `gateway_reachable`, `web_reachable`, `version` |
-| `chat_message_sent` | User sends a chat message in the web UI | `message_length`, `is_subagent` |
-| `chat_stopped` | User stops an active agent run | — |
-| `workspace_created` | New workspace is created | `has_seed` |
-| `workspace_switched` | User switches workspaces | — |
-| `workspace_deleted` | Workspace is deleted | — |
-| `session_created` | New web chat session is created | — |
-| `object_entry_created` | CRM object entry is created | — |
-| `report_executed` | A DuckDB report is executed | — |
-| `file_uploaded` | A file is uploaded to the workspace | — |
-| `$pageview` | User navigates within the web app | `$current_url` (path only, no query params with user data) |
+| Event                     | When                                    | Properties                                                                          |
+| ------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `cli_bootstrap_started`   | `denchclaw bootstrap` begins            | `version`                                                                           |
+| `cli_bootstrap_completed` | Bootstrap finishes                      | `duration_ms`, `workspace_created`, `gateway_reachable`, `web_reachable`, `version` |
+| `chat_message_sent`       | User sends a chat message in the web UI | `message_length`, `is_subagent`                                                     |
+| `chat_stopped`            | User stops an active agent run          | —                                                                                   |
+| `workspace_created`       | New workspace is created                | `has_seed`                                                                          |
+| `workspace_switched`      | User switches workspaces                | —                                                                                   |
+| `workspace_deleted`       | Workspace is deleted                    | —                                                                                   |
+| `session_created`         | New web chat session is created         | —                                                                                   |
+| `object_entry_created`    | CRM object entry is created             | —                                                                                   |
+| `report_executed`         | A DuckDB report is executed             | —                                                                                   |
+| `file_uploaded`           | A file is uploaded to the workspace     | —                                                                                   |
+| `$pageview`               | User navigates within the web app       | `$current_url` (path only, no query params with user data)                          |
 
 Every event includes baseline machine context: `os` (platform), `arch`, and
 `node_version`.
@@ -56,12 +56,12 @@ The ID is:
 empty and the install remains anonymous. When any field is populated, a PostHog
 person profile is created with those properties:
 
-| Field | PostHog property | Description |
-| --- | --- | --- |
-| `name` | `$name` | Display name shown in PostHog |
-| `email` | `$email` | Email address |
-| `avatar` | `$avatar` | Avatar URL |
-| `denchOrgId` | `dench_org_id` | Dench Cloud organization ID (set automatically by Dench Cloud) |
+| Field        | PostHog property | Description                                                    |
+| ------------ | ---------------- | -------------------------------------------------------------- |
+| `name`       | `$name`          | Display name shown in PostHog                                  |
+| `email`      | `$email`         | Email address                                                  |
+| `avatar`     | `$avatar`        | Avatar URL                                                     |
+| `denchOrgId` | `dench_org_id`   | Dench Cloud organization ID (set automatically by Dench Cloud) |
 
 These fields are **never written automatically** by the open-source CLI or web
 app. They are only populated when:
@@ -90,16 +90,16 @@ Session ($ai_session_id)
 
 ### Events
 
-| Event | When | Key properties |
-| --- | --- | --- |
-| `$ai_generation` | Agent run completes | `$ai_model`, `$ai_provider`, `$ai_input_tokens`, `$ai_output_tokens`, `$ai_latency`, `$ai_total_cost_usd`, `$ai_tools`, `$ai_is_error` |
-| `$ai_span` | Each tool call completes | `$ai_span_name` (tool name), `$ai_latency`, `$ai_is_error`, `$ai_parent_id` |
-| `$ai_trace` | Agent run completes | `$ai_trace_id`, `$ai_session_id`, `$ai_latency`, `tool_count` |
-| `survey sent` | User clicks Like/Dislike in the web UI | `$survey_response` (1=like, 2=dislike), `$ai_trace_id`, `message_id` |
-| `dench_message_received` | User sends a message (gateway-side) | `channel`, `session_id`, `has_attachments` |
-| `dench_session_start` | Agent session begins | `session_id`, `channel` |
-| `dench_session_end` | Agent session ends | `session_id`, `channel` |
-| `dench_turn_completed` | Agent run completes | `session_id`, `run_id`, `model` |
+| Event                    | When                                   | Key properties                                                                                                                         |
+| ------------------------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `$ai_generation`         | Agent run completes                    | `$ai_model`, `$ai_provider`, `$ai_input_tokens`, `$ai_output_tokens`, `$ai_latency`, `$ai_total_cost_usd`, `$ai_tools`, `$ai_is_error` |
+| `$ai_span`               | Each tool call completes               | `$ai_span_name` (tool name), `$ai_latency`, `$ai_is_error`, `$ai_parent_id`                                                            |
+| `$ai_trace`              | Agent run completes                    | `$ai_trace_id`, `$ai_session_id`, `$ai_latency`, `tool_count`                                                                          |
+| `survey sent`            | User clicks Like/Dislike in the web UI | `$survey_response` (1=like, 2=dislike), `$ai_trace_id`, `message_id`                                                                   |
+| `dench_message_received` | User sends a message (gateway-side)    | `channel`, `session_id`, `has_attachments`                                                                                             |
+| `dench_session_start`    | Agent session begins                   | `session_id`, `channel`                                                                                                                |
+| `dench_session_end`      | Agent session ends                     | `session_id`, `channel`                                                                                                                |
+| `dench_turn_completed`   | Agent run completes                    | `session_id`, `run_id`, `model`                                                                                                        |
 
 ### Privacy mode
 

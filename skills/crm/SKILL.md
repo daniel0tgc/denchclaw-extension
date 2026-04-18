@@ -107,19 +107,19 @@ Treat relation fields as the CRM's default foreign-link primitive. If a field ca
 
 When you create an object, or add/modify a field on an existing object, scan all existing objects (run `SELECT name FROM objects`) and add relation fields for every obvious link:
 
-| If you're creating... | And this object exists... | Auto-create this relation field |
-|---|---|---|
-| people / contact | company | "Company" on people → company (`many_to_one`) |
-| lead / prospect | company | "Company" on lead → company (`many_to_one`) |
-| deal / opportunity | people | "Primary Contact" on deal → people (`many_to_one`) |
-| deal / opportunity | company | "Company" on deal → company (`many_to_one`) |
-| task | people | "Assigned Contact" on task → people (`many_to_one`) |
-| task | project / deal | "Related To" on task → parent (`many_to_one`) |
-| case | people or company | "Client" on case → people/company (`many_to_one`) |
-| invoice / payment | company | "Company" on invoice → company (`many_to_one`) |
-| invoice / payment | deal | "Deal" on invoice → deal (`many_to_one`) |
-| property / listing | people | "Agent" on property → people (`many_to_one`) |
-| any child concept | its parent concept | relation to parent (`many_to_one`) |
+| If you're creating... | And this object exists... | Auto-create this relation field                     |
+| --------------------- | ------------------------- | --------------------------------------------------- |
+| people / contact      | company                   | "Company" on people → company (`many_to_one`)       |
+| lead / prospect       | company                   | "Company" on lead → company (`many_to_one`)         |
+| deal / opportunity    | people                    | "Primary Contact" on deal → people (`many_to_one`)  |
+| deal / opportunity    | company                   | "Company" on deal → company (`many_to_one`)         |
+| task                  | people                    | "Assigned Contact" on task → people (`many_to_one`) |
+| task                  | project / deal            | "Related To" on task → parent (`many_to_one`)       |
+| case                  | people or company         | "Client" on case → people/company (`many_to_one`)   |
+| invoice / payment     | company                   | "Company" on invoice → company (`many_to_one`)      |
+| invoice / payment     | deal                      | "Deal" on invoice → deal (`many_to_one`)            |
+| property / listing    | people                    | "Agent" on property → people (`many_to_one`)        |
+| any child concept     | its parent concept        | relation to parent (`many_to_one`)                  |
 
 **Use this SQL pattern** (safe — does nothing if the target object doesn't exist):
 
@@ -199,13 +199,13 @@ Relation fields **must be created via SQL** — the API does not support the `re
 
 This skill covers workspace fundamentals. For specialized operations, see these child skills (all inside the `crm/` skill folder):
 
-| Skill | Path | Covers |
-|-------|------|--------|
-| **DuckDB Operations** | `crm/duckdb-operations/SKILL.md` | DuckDB schema initialization, field types reference, auto-generated PIVOT views, SQL CRUD operations (create/read/update/delete objects, fields, entries), bulk import/export |
-| **Object Builder** | `crm/object-builder/SKILL.md` | Full 3-step workflow (SQL → filesystem → verify), CRM patterns (contact, lead, company, deal, case, property, task), kanban boards, post-mutation checklist, renaming objects |
-| **Views & Filters** | `crm/views-filters/SKILL.md` | `.object.yaml` format and template, view type settings (kanban, calendar, timeline, gallery, list), saved views, filter operators by field type, date format rules |
-| **Documents** | `crm/documents/SKILL.md` | Document management (markdown files), cross-nesting (documents under objects, objects under documents), default connected entry pages, and entry mutation/edit logs |
-| **Reports** | `crm/reports/SKILL.md` | Report generation (`.report.json` format), chart types (bar, line, area, pie, donut, radar, scatter, funnel), panel sizes, filter types, inline chat reports, post-report checklist |
-| **Actions** | `crm/actions/SKILL.md` | Action field type (`type: "action"`), executable buttons on entries, server-side script execution in any language (JS, Python, bash, etc.), inline JS SDK, NDJSON stdout protocol, environment variable context, bulk parallel execution, action_runs table, UI rendering in table/kanban/entry panel |
+| Skill                 | Path                             | Covers                                                                                                                                                                                                                                                                                                |
+| --------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **DuckDB Operations** | `crm/duckdb-operations/SKILL.md` | DuckDB schema initialization, field types reference, auto-generated PIVOT views, SQL CRUD operations (create/read/update/delete objects, fields, entries), bulk import/export                                                                                                                         |
+| **Object Builder**    | `crm/object-builder/SKILL.md`    | Full 3-step workflow (SQL → filesystem → verify), CRM patterns (contact, lead, company, deal, case, property, task), kanban boards, post-mutation checklist, renaming objects                                                                                                                         |
+| **Views & Filters**   | `crm/views-filters/SKILL.md`     | `.object.yaml` format and template, view type settings (kanban, calendar, timeline, gallery, list), saved views, filter operators by field type, date format rules                                                                                                                                    |
+| **Documents**         | `crm/documents/SKILL.md`         | Document management (markdown files), cross-nesting (documents under objects, objects under documents), default connected entry pages, and entry mutation/edit logs                                                                                                                                   |
+| **Reports**           | `crm/reports/SKILL.md`           | Report generation (`.report.json` format), chart types (bar, line, area, pie, donut, radar, scatter, funnel), panel sizes, filter types, inline chat reports, post-report checklist                                                                                                                   |
+| **Actions**           | `crm/actions/SKILL.md`           | Action field type (`type: "action"`), executable buttons on entries, server-side script execution in any language (JS, Python, bash, etc.), inline JS SDK, NDJSON stdout protocol, environment variable context, bulk parallel execution, action_runs table, UI rendering in table/kanban/entry panel |
 
 All child skills are seeded into the workspace alongside this parent skill and can be read at `{{WORKSPACE_PATH}}/skills/crm/<child>/SKILL.md`.

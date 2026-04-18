@@ -27,26 +27,18 @@ describe("resolveGatewayPort", () => {
   });
 
   it("legacy env CLAWDBOT_GATEWAY_PORT is still honoured (backwards compatibility)", () => {
-    expect(
-      resolveGatewayPort(undefined, { CLAWDBOT_GATEWAY_PORT: "19500" }),
-    ).toBe(19500);
+    expect(resolveGatewayPort(undefined, { CLAWDBOT_GATEWAY_PORT: "19500" })).toBe(19500);
   });
 
   it("config port overrides profile-based default (honours persisted config)", () => {
-    expect(
-      resolveGatewayPort(
-        { gateway: { port: 19005 } },
-        { OPENCLAW_PROFILE: "dench" },
-      ),
-    ).toBe(19005);
+    expect(resolveGatewayPort({ gateway: { port: 19005 } }, { OPENCLAW_PROFILE: "dench" })).toBe(
+      19005,
+    );
   });
 
   it("env var takes precedence over config port (explicit runtime override wins)", () => {
     expect(
-      resolveGatewayPort(
-        { gateway: { port: 19005 } },
-        { OPENCLAW_GATEWAY_PORT: "19500" },
-      ),
+      resolveGatewayPort({ gateway: { port: 19005 } }, { OPENCLAW_GATEWAY_PORT: "19500" }),
     ).toBe(19500);
   });
 

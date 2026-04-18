@@ -62,37 +62,37 @@ Every `.dench.app` folder MUST contain a `.dench.yaml` manifest.
 ### Full Schema
 
 ```yaml
-name: "My App"                    # Required. Display name shown in sidebar and tab bar
+name: "My App" # Required. Display name shown in sidebar and tab bar
 description: "What this app does" # Optional. Shown in tooltips and app info
-icon: "gamepad-2"                 # Optional. Lucide icon name OR relative path to image
-version: "1.0.0"                  # Optional. Shown as badge in app header
-author: "agent"                   # Optional. Creator attribution
-entry: "index.html"               # Optional. Main entry point (default: index.html)
-runtime: "static"                 # Optional. static | esbuild | build (default: static)
+icon: "gamepad-2" # Optional. Lucide icon name OR relative path to image
+version: "1.0.0" # Optional. Shown as badge in app header
+author: "agent" # Optional. Creator attribution
+entry: "index.html" # Optional. Main entry point (default: index.html)
+runtime: "static" # Optional. static | esbuild | build (default: static)
 
-display: "full"                   # Optional. "full" (default) | "widget"
-widget:                           # Only used when display: "widget"
-  width: 2                        # Grid columns (1-4)
-  height: 1                       # Grid rows (1-4)
-  refreshInterval: 60             # Auto-refresh seconds (optional)
+display: "full" # Optional. "full" (default) | "widget"
+widget: # Only used when display: "widget"
+  width: 2 # Grid columns (1-4)
+  height: 1 # Grid rows (1-4)
+  refreshInterval: 60 # Auto-refresh seconds (optional)
 
-permissions:                      # Optional. List of bridge API permissions
-  - database                      # db.query (SELECT only)
-  - database:write                # db.execute (INSERT/UPDATE/DELETE/CREATE)
-  - objects                       # objects.* CRUD on workspace tables
-  - files                         # files.read, files.list
-  - files:write                   # files.write, files.delete, files.mkdir
-  - agent                         # chat.*, agent.send, tool.register, memory.get
-  - ui                            # ui.toast, ui.navigate, ui.openEntry, etc.
-  - store                         # store.* per-app KV storage
-  - http                          # http.fetch CORS proxy
-  - events                        # events.on/off real-time subscriptions
-  - apps                          # apps.send/on inter-app messaging
-  - cron                          # cron.schedule/list/cancel
-  - webhooks                      # webhooks.register/on
-  - clipboard                     # clipboard.read/write
+permissions: # Optional. List of bridge API permissions
+  - database # db.query (SELECT only)
+  - database:write # db.execute (INSERT/UPDATE/DELETE/CREATE)
+  - objects # objects.* CRUD on workspace tables
+  - files # files.read, files.list
+  - files:write # files.write, files.delete, files.mkdir
+  - agent # chat.*, agent.send, tool.register, memory.get
+  - ui # ui.toast, ui.navigate, ui.openEntry, etc.
+  - store # store.* per-app KV storage
+  - http # http.fetch CORS proxy
+  - events # events.on/off real-time subscriptions
+  - apps # apps.send/on inter-app messaging
+  - cron # cron.schedule/list/cancel
+  - webhooks # webhooks.register/on
+  - clipboard # clipboard.read/write
 
-tools:                            # Optional. Expose app functions as agent-invokable tools
+tools: # Optional. Expose app functions as agent-invokable tools
   - name: "my-tool"
     description: "What this tool does"
     inputSchema:
@@ -104,11 +104,11 @@ tools:                            # Optional. Expose app functions as agent-invo
 
 ### Runtime Modes
 
-| Mode | When to Use | How It Works |
-|------|-------------|--------------|
-| `static` | Vanilla HTML/CSS/JS apps, CDN-loaded libraries, games, dashboards | Serves files directly. **Use this by default for everything.** |
-| `esbuild` | React/TSX apps without npm dependencies | Server-side esbuild transpiles JSX/TSX on load. Requires `esbuild.entry` and `esbuild.jsx` fields. |
-| `build` | Complex apps with npm dependencies (rare) | Runs `build.install` then `build.command`. Serves from `build.output` directory. |
+| Mode      | When to Use                                                       | How It Works                                                                                       |
+| --------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `static`  | Vanilla HTML/CSS/JS apps, CDN-loaded libraries, games, dashboards | Serves files directly. **Use this by default for everything.**                                     |
+| `esbuild` | React/TSX apps without npm dependencies                           | Server-side esbuild transpiles JSX/TSX on load. Requires `esbuild.entry` and `esbuild.jsx` fields. |
+| `build`   | Complex apps with npm dependencies (rare)                         | Runs `build.install` then `build.command`. Serves from `build.output` directory.                   |
 
 **Always default to `static` runtime.** It handles p5.js, Three.js, D3.js, Chart.js, and any CDN-loaded library perfectly. Only use `esbuild` or `build` when the user explicitly asks for React/TSX or npm-based tooling.
 
@@ -123,22 +123,22 @@ Supported image formats: PNG, SVG, JPG, JPEG, WebP. Use square aspect ratio (128
 
 ### Choosing Permissions
 
-| Permission | Grants | Use When |
-|------------|--------|----------|
-| `database` | `dench.db.query()` | App reads workspace DuckDB data (SELECT) |
-| `database:write` | `dench.db.execute()` | App writes to DuckDB (INSERT/UPDATE/DELETE/CREATE) |
-| `objects` | `dench.objects.*` | App does CRUD on workspace objects (people, tasks, etc.) |
-| `files` | `dench.files.read()`, `dench.files.list()` | App reads workspace files |
-| `files:write` | `dench.files.write()`, `dench.files.delete()`, `dench.files.mkdir()` | App writes/deletes workspace files |
-| `agent` | `dench.chat.*`, `dench.agent.send()`, `dench.tool.*`, `dench.memory.*` | App interacts with the AI agent |
-| `ui` | `dench.ui.*` | App shows toasts, navigates, opens entries |
-| `store` | `dench.store.*` | App needs persistent key-value storage |
-| `http` | `dench.http.fetch()` | App fetches external URLs (CORS-free) |
-| `events` | `dench.events.*` | App subscribes to real-time workspace events |
-| `apps` | `dench.apps.*` | App communicates with other open apps |
-| `cron` | `dench.cron.*` | App schedules recurring agent tasks |
-| `webhooks` | `dench.webhooks.*` | App receives external webhooks |
-| `clipboard` | `dench.clipboard.*` | App reads/writes the clipboard |
+| Permission       | Grants                                                                 | Use When                                                 |
+| ---------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- |
+| `database`       | `dench.db.query()`                                                     | App reads workspace DuckDB data (SELECT)                 |
+| `database:write` | `dench.db.execute()`                                                   | App writes to DuckDB (INSERT/UPDATE/DELETE/CREATE)       |
+| `objects`        | `dench.objects.*`                                                      | App does CRUD on workspace objects (people, tasks, etc.) |
+| `files`          | `dench.files.read()`, `dench.files.list()`                             | App reads workspace files                                |
+| `files:write`    | `dench.files.write()`, `dench.files.delete()`, `dench.files.mkdir()`   | App writes/deletes workspace files                       |
+| `agent`          | `dench.chat.*`, `dench.agent.send()`, `dench.tool.*`, `dench.memory.*` | App interacts with the AI agent                          |
+| `ui`             | `dench.ui.*`                                                           | App shows toasts, navigates, opens entries               |
+| `store`          | `dench.store.*`                                                        | App needs persistent key-value storage                   |
+| `http`           | `dench.http.fetch()`                                                   | App fetches external URLs (CORS-free)                    |
+| `events`         | `dench.events.*`                                                       | App subscribes to real-time workspace events             |
+| `apps`           | `dench.apps.*`                                                         | App communicates with other open apps                    |
+| `cron`           | `dench.cron.*`                                                         | App schedules recurring agent tasks                      |
+| `webhooks`       | `dench.webhooks.*`                                                     | App receives external webhooks                           |
+| `clipboard`      | `dench.clipboard.*`                                                    | App reads/writes the clipboard                           |
 
 Only request what you need. A game with no data access needs no permissions at all.
 
@@ -148,25 +148,25 @@ Only request what you need. A game with no data access needs no permissions at a
 
 The bridge SDK is auto-injected into every app's HTML. It provides `window.dench` with the following namespaces. All methods return Promises with a 30-second timeout.
 
-| Namespace | Permission | Methods | Details In |
-|-----------|------------|---------|------------|
-| `dench.db` | `database` / `database:write` | `query(sql)`, `execute(sql)` | **data-builder** |
-| `dench.objects` | `objects` | `list()`, `get()`, `create()`, `update()`, `delete()`, `bulkDelete()`, `getSchema()`, `getOptions()` | **data-builder** |
-| `dench.files` | `files` / `files:write` | `read()`, `list()`, `write()`, `delete()`, `mkdir()` | below |
-| `dench.app` | *(none)* | `getManifest()`, `getTheme()` | below |
-| `dench.chat` | `agent` | `createSession()`, `send()`, `getHistory()`, `getSessions()`, `abort()`, `isActive()` | **agent-builder** |
-| `dench.agent` | `agent` | `send(message)` | **agent-builder** |
-| `dench.tool` | `agent` | `register(name, handler)` | **agent-builder** |
-| `dench.memory` | `agent` | `get()` | **agent-builder** |
-| `dench.ui` | `ui` | `toast()`, `navigate()`, `openEntry()`, `setTitle()`, `confirm()`, `prompt()` | **platform-api** |
-| `dench.store` | `store` | `get()`, `set()`, `delete()`, `list()`, `clear()` | **platform-api** |
-| `dench.http` | `http` | `fetch(url, opts)` | **platform-api** |
-| `dench.events` | `events` | `on(channel, cb)`, `off(channel)` | **platform-api** |
-| `dench.context` | *(none)* | `getWorkspace()`, `getAppInfo()` | **platform-api** |
-| `dench.apps` | `apps` | `send()`, `on()`, `list()` | **platform-api** |
-| `dench.cron` | `cron` | `schedule()`, `list()`, `run()`, `cancel()` | **platform-api** |
-| `dench.webhooks` | `webhooks` | `register()`, `on()`, `poll()` | **platform-api** |
-| `dench.clipboard` | `clipboard` | `read()`, `write()` | **platform-api** |
+| Namespace         | Permission                    | Methods                                                                                              | Details In        |
+| ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------- |
+| `dench.db`        | `database` / `database:write` | `query(sql)`, `execute(sql)`                                                                         | **data-builder**  |
+| `dench.objects`   | `objects`                     | `list()`, `get()`, `create()`, `update()`, `delete()`, `bulkDelete()`, `getSchema()`, `getOptions()` | **data-builder**  |
+| `dench.files`     | `files` / `files:write`       | `read()`, `list()`, `write()`, `delete()`, `mkdir()`                                                 | below             |
+| `dench.app`       | _(none)_                      | `getManifest()`, `getTheme()`                                                                        | below             |
+| `dench.chat`      | `agent`                       | `createSession()`, `send()`, `getHistory()`, `getSessions()`, `abort()`, `isActive()`                | **agent-builder** |
+| `dench.agent`     | `agent`                       | `send(message)`                                                                                      | **agent-builder** |
+| `dench.tool`      | `agent`                       | `register(name, handler)`                                                                            | **agent-builder** |
+| `dench.memory`    | `agent`                       | `get()`                                                                                              | **agent-builder** |
+| `dench.ui`        | `ui`                          | `toast()`, `navigate()`, `openEntry()`, `setTitle()`, `confirm()`, `prompt()`                        | **platform-api**  |
+| `dench.store`     | `store`                       | `get()`, `set()`, `delete()`, `list()`, `clear()`                                                    | **platform-api**  |
+| `dench.http`      | `http`                        | `fetch(url, opts)`                                                                                   | **platform-api**  |
+| `dench.events`    | `events`                      | `on(channel, cb)`, `off(channel)`                                                                    | **platform-api**  |
+| `dench.context`   | _(none)_                      | `getWorkspace()`, `getAppInfo()`                                                                     | **platform-api**  |
+| `dench.apps`      | `apps`                        | `send()`, `on()`, `list()`                                                                           | **platform-api**  |
+| `dench.cron`      | `cron`                        | `schedule()`, `list()`, `run()`, `cancel()`                                                          | **platform-api**  |
+| `dench.webhooks`  | `webhooks`                    | `register()`, `on()`, `poll()`                                                                       | **platform-api**  |
+| `dench.clipboard` | `clipboard`                   | `read()`, `write()`                                                                                  | **platform-api**  |
 
 ### Core APIs (no child skill needed)
 
@@ -207,7 +207,10 @@ The bridge script is injected into `<head>`, so it's available by the time your 
 function whenDenchReady(fn) {
   if (window.dench) return fn();
   const check = setInterval(() => {
-    if (window.dench) { clearInterval(check); fn(); }
+    if (window.dench) {
+      clearInterval(check);
+      fn();
+    }
   }, 50);
 }
 
@@ -226,15 +229,21 @@ Apps should respect the DenchClaw theme. The bridge provides the current theme (
 ### Recommended Base Styles
 
 ```css
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background-color 0.2s, color 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
 }
 
 body.dark {
@@ -280,7 +289,7 @@ async function initTheme() {
     const theme = await dench.app.getTheme();
     document.body.className = theme;
   } catch {
-    document.body.className = 'dark';
+    document.body.className = "dark";
   }
 }
 initTheme();
@@ -320,12 +329,12 @@ Use **unpkg** or **cdnjs** for reliability:
 
 <!-- Three.js -->
 <script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.170/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+    }
   }
-}
 </script>
 
 <!-- D3.js -->
@@ -342,7 +351,7 @@ Use **unpkg** or **cdnjs** for reliability:
 
 <!-- cannon-es (3D physics) -->
 <script type="module">
-import * as CANNON from 'https://unpkg.com/cannon-es@0.20/dist/cannon-es.js';
+  import * as CANNON from "https://unpkg.com/cannon-es@0.20/dist/cannon-es.js";
 </script>
 
 <!-- GSAP (animation) -->
@@ -358,12 +367,12 @@ For Three.js and other module-based libraries, use import maps:
 
 ```html
 <script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.170/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+    }
   }
-}
 </script>
 <script type="module" src="app.js"></script>
 ```
@@ -401,9 +410,9 @@ apps/complex-app.dench.app/
 
 ```javascript
 // js/app.js
-import { Game } from './game.js';
-import { Renderer } from './renderer.js';
-import { UI } from './ui.js';
+import { Game } from "./game.js";
+import { Renderer } from "./renderer.js";
+import { UI } from "./ui.js";
 
 const game = new Game();
 const renderer = new Renderer(game);
@@ -424,17 +433,22 @@ init();
 // js/game.js
 export class Game {
   constructor() {
-    this.state = 'menu';
+    this.state = "menu";
     this.score = 0;
     this.entities = [];
   }
 
-  start() { this.state = 'playing'; this.loop(); }
+  start() {
+    this.state = "playing";
+    this.loop();
+  }
   loop() {
     this.update();
     requestAnimationFrame(() => this.loop());
   }
-  update() { /* game logic */ }
+  update() {
+    /* game logic */
+  }
 }
 ```
 
@@ -452,11 +466,11 @@ All asset paths are relative to the `.dench.app` folder root:
 // In p5.js
 let img;
 function preload() {
-  img = loadImage('assets/player.png');
+  img = loadImage("assets/player.png");
 }
 
 // In Three.js (module)
-const texture = new THREE.TextureLoader().load('assets/texture.jpg');
+const texture = new THREE.TextureLoader().load("assets/texture.jpg");
 
 // In HTML
 // <img src="assets/logo.png" />
@@ -467,20 +481,20 @@ const texture = new THREE.TextureLoader().load('assets/texture.jpg');
 
 The file server recognizes these extensions automatically:
 
-| Extension | MIME Type |
-|-----------|-----------|
-| `.html`, `.htm` | `text/html` |
-| `.css` | `text/css` |
-| `.js`, `.mjs` | `application/javascript` |
-| `.json` | `application/json` |
-| `.png` | `image/png` |
-| `.jpg`, `.jpeg` | `image/jpeg` |
-| `.gif` | `image/gif` |
-| `.svg` | `image/svg+xml` |
-| `.webp` | `image/webp` |
-| `.woff`, `.woff2` | `font/woff`, `font/woff2` |
-| `.ttf`, `.otf` | `font/ttf`, `font/otf` |
-| `.wasm` | `application/wasm` |
+| Extension              | MIME Type                                                                  |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `.html`, `.htm`        | `text/html`                                                                |
+| `.css`                 | `text/css`                                                                 |
+| `.js`, `.mjs`          | `application/javascript`                                                   |
+| `.json`                | `application/json`                                                         |
+| `.png`                 | `image/png`                                                                |
+| `.jpg`, `.jpeg`        | `image/jpeg`                                                               |
+| `.gif`                 | `image/gif`                                                                |
+| `.svg`                 | `image/svg+xml`                                                            |
+| `.webp`                | `image/webp`                                                               |
+| `.woff`, `.woff2`      | `font/woff`, `font/woff2`                                                  |
+| `.ttf`, `.otf`         | `font/ttf`, `font/otf`                                                     |
+| `.wasm`                | `application/wasm`                                                         |
 | `.mp3`, `.wav`, `.ogg` | Served as `application/octet-stream` (works fine for `<audio>` and Howler) |
 
 ### Generating Assets Inline
@@ -492,22 +506,22 @@ For games without pre-made art, generate sprites and textures programmatically:
 function createPlayerSprite(size) {
   const g = createGraphics(size, size);
   g.noStroke();
-  g.fill('#6366f1');
+  g.fill("#6366f1");
   g.ellipse(size / 2, size / 2, size * 0.8);
-  g.fill('#818cf8');
+  g.fill("#818cf8");
   g.ellipse(size / 2, size / 3, size * 0.3);
   return g;
 }
 
 // Three.js: Create a texture from canvas
 function createCheckerTexture(size = 256, divisions = 8) {
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext("2d");
   const cellSize = size / divisions;
   for (let y = 0; y < divisions; y++) {
     for (let x = 0; x < divisions; x++) {
-      ctx.fillStyle = (x + y) % 2 === 0 ? '#ffffff' : '#cccccc';
+      ctx.fillStyle = (x + y) % 2 === 0 ? "#ffffff" : "#cccccc";
       ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
     }
   }
@@ -563,7 +577,7 @@ function createCheckerTexture(size = 256, divisions = 8) {
     scene.traverse((obj) => {
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
         else obj.material.dispose();
       }
     });
@@ -584,8 +598,8 @@ async function loadData() {
     const result = await dench.db.query("SELECT * FROM objects");
     return result.rows || [];
   } catch (err) {
-    console.error('Failed to load data:', err.message);
-    showError('Could not load workspace data. Check permissions.');
+    console.error("Failed to load data:", err.message);
+    showError("Could not load workspace data. Check permissions.");
     return [];
   }
 }
@@ -594,19 +608,25 @@ async function loadData() {
 ### Loading State Pattern
 
 ```javascript
-function showLoading(message = 'Loading...') {
-  const el = document.getElementById('loading');
-  if (el) { el.textContent = message; el.style.display = 'flex'; }
+function showLoading(message = "Loading...") {
+  const el = document.getElementById("loading");
+  if (el) {
+    el.textContent = message;
+    el.style.display = "flex";
+  }
 }
 
 function hideLoading() {
-  const el = document.getElementById('loading');
-  if (el) el.style.display = 'none';
+  const el = document.getElementById("loading");
+  if (el) el.style.display = "none";
 }
 
 function showError(message) {
-  const el = document.getElementById('error');
-  if (el) { el.textContent = message; el.style.display = 'block'; }
+  const el = document.getElementById("error");
+  if (el) {
+    el.textContent = message;
+    el.style.display = "block";
+  }
 }
 ```
 
@@ -618,14 +638,14 @@ async function init() {
     const theme = await dench.app.getTheme();
     document.body.className = theme;
   } catch {
-    document.body.className = 'dark';
+    document.body.className = "dark";
   }
 
   try {
     const data = await dench.db.query("SELECT * FROM objects");
     renderDashboard(data.rows);
   } catch {
-    renderEmptyState('No data available. Make sure the app has database permission.');
+    renderEmptyState("No data available. Make sure the app has database permission.");
   }
 }
 ```
@@ -658,11 +678,11 @@ When asked to build an app, follow these steps:
 
 This skill covers app fundamentals. For specialized APIs, see these child skills (all inside the `app-builder/` skill folder):
 
-| Skill | Path | Covers |
-|-------|------|--------|
-| **Game Builder** | `app-builder/game-builder/SKILL.md` | 2D games with p5.js, 3D games with Three.js, physics (Matter.js), audio, sprites, particles, tilemaps, game state machines, complete game examples |
-| **Data Builder** | `app-builder/data-builder/SKILL.md` | Workspace objects CRUD (`dench.objects.*`), DuckDB queries and mutations (`dench.db.*`), Chart.js and D3.js dashboards, stat cards, interactive tools, CRUD form patterns |
-| **Agent Builder** | `app-builder/agent-builder/SKILL.md` | AI chat API (`dench.chat.*`), streaming responses, app-as-tool (`dench.tool.*`), agent memory access, Gateway WebSocket protocol, chat UI patterns |
-| **Platform API** | `app-builder/platform-api/SKILL.md` | UI integration (`dench.ui.*`), per-app KV store (`dench.store.*`), HTTP proxy (`dench.http.*`), real-time events (`dench.events.*`), inter-app messaging (`dench.apps.*`), cron scheduling (`dench.cron.*`), webhooks (`dench.webhooks.*`), clipboard (`dench.clipboard.*`), widget mode, context |
+| Skill             | Path                                 | Covers                                                                                                                                                                                                                                                                                            |
+| ----------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Game Builder**  | `app-builder/game-builder/SKILL.md`  | 2D games with p5.js, 3D games with Three.js, physics (Matter.js), audio, sprites, particles, tilemaps, game state machines, complete game examples                                                                                                                                                |
+| **Data Builder**  | `app-builder/data-builder/SKILL.md`  | Workspace objects CRUD (`dench.objects.*`), DuckDB queries and mutations (`dench.db.*`), Chart.js and D3.js dashboards, stat cards, interactive tools, CRUD form patterns                                                                                                                         |
+| **Agent Builder** | `app-builder/agent-builder/SKILL.md` | AI chat API (`dench.chat.*`), streaming responses, app-as-tool (`dench.tool.*`), agent memory access, Gateway WebSocket protocol, chat UI patterns                                                                                                                                                |
+| **Platform API**  | `app-builder/platform-api/SKILL.md`  | UI integration (`dench.ui.*`), per-app KV store (`dench.store.*`), HTTP proxy (`dench.http.*`), real-time events (`dench.events.*`), inter-app messaging (`dench.apps.*`), cron scheduling (`dench.cron.*`), webhooks (`dench.webhooks.*`), clipboard (`dench.clipboard.*`), widget mode, context |
 
 All child skills are seeded into the workspace alongside this parent skill and can be read at `{{WORKSPACE_PATH}}/skills/app-builder/<child>/SKILL.md`.

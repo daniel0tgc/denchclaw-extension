@@ -83,12 +83,14 @@ function mergeToolSummary(
       tool: {
         ...catalogTool,
         ...featuredTool,
-        required_args: featuredTool.required_args.length > 0
-          ? featuredTool.required_args
-          : catalogTool.required_args,
-        arg_hints: Object.keys(featuredTool.arg_hints).length > 0
-          ? featuredTool.arg_hints
-          : catalogTool.arg_hints,
+        required_args:
+          featuredTool.required_args.length > 0
+            ? featuredTool.required_args
+            : catalogTool.required_args,
+        arg_hints:
+          Object.keys(featuredTool.arg_hints).length > 0
+            ? featuredTool.arg_hints
+            : catalogTool.arg_hints,
         default_args: featuredTool.default_args ?? catalogTool.default_args,
         example_args: featuredTool.example_args ?? catalogTool.example_args,
         example_prompts: featuredTool.example_prompts?.length
@@ -159,7 +161,8 @@ function buildSearchDocuments(
       const recipeIntents = recipeIntentsByTool.get(toolName) ?? [];
       const merged = mergeToolSummary(catalogByName.get(toolName), featuredByName.get(toolName));
       const source = merged?.source ?? "recipe";
-      const tool = merged?.tool ?? buildSyntheticRecipeTool(app.toolkit_name, toolName, recipeIntents);
+      const tool =
+        merged?.tool ?? buildSyntheticRecipeTool(app.toolkit_name, toolName, recipeIntents);
 
       const fieldTokens: Record<string, string[]> = {
         tool_name: tokenize(tool.name),
@@ -169,14 +172,13 @@ function buildSearchDocuments(
         app: tokenize(`${app.toolkit_slug} ${app.toolkit_name}`),
         description: tokenize(tool.description_short),
         required_args: tokenize(tool.required_args.join(" ")),
-        arg_hints: tokenize([
-          ...Object.keys(tool.arg_hints),
-          ...Object.values(tool.arg_hints),
-        ].join(" ")),
+        arg_hints: tokenize(
+          [...Object.keys(tool.arg_hints), ...Object.values(tool.arg_hints)].join(" "),
+        ),
       };
 
       const weightedTokens = Object.entries(fieldTokens).flatMap(([field, tokens]) =>
-        repeatTokens(tokens, FIELD_WEIGHTS[field] ?? 1)
+        repeatTokens(tokens, FIELD_WEIGHTS[field] ?? 1),
       );
 
       docs.push({
@@ -218,7 +220,7 @@ function bm25Score(
       continue;
     }
     const df = documentFrequency.get(token) ?? 0;
-    const idf = Math.log(1 + ((totalDocs - df + 0.5) / (df + 0.5)));
+    const idf = Math.log(1 + (totalDocs - df + 0.5) / (df + 0.5));
     const numerator = frequency * (BM25_K1 + 1);
     const denominator = frequency + BM25_K1 * (1 - BM25_B + BM25_B * (docLength / avgDocLength));
     score += idf * (numerator / denominator);
@@ -275,8 +277,9 @@ export function searchComposioTools(params: {
     return { results: [], top_confidence: "low" };
   }
 
-  const avgDocLength = documents.reduce((sum, doc) => sum + doc.weightedTokens.length, 0)
-    / Math.max(documents.length, 1);
+  const avgDocLength =
+    documents.reduce((sum, doc) => sum + doc.weightedTokens.length, 0) /
+    Math.max(documents.length, 1);
   const documentFrequency = new Map<string, number>();
   for (const doc of documents) {
     const seen = new Set(doc.weightedTokens);

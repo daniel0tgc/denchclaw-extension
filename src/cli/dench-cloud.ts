@@ -112,9 +112,8 @@ function normalizeInputKinds(input: unknown, supportsImages: boolean): Array<"te
 
 export function normalizeDenchGatewayUrl(value: string | undefined): string {
   const raw = (value || DEFAULT_DENCH_CLOUD_GATEWAY_URL).trim();
-  const withProtocol = raw.startsWith("http://") || raw.startsWith("https://")
-    ? raw
-    : `https://${raw}`;
+  const withProtocol =
+    raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
   return withProtocol.replace(/\/+$/, "").replace(/\/v1$/u, "");
 }
 
@@ -223,18 +222,26 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
   const displayName = readString(record, "name", "displayName", "display_name");
   const provider = readString(record, "provider");
   const transportProvider = readString(record, "transportProvider", "transport_provider");
-  if (!publicId || !stableId || !displayName || !isNonEmptyString(provider) || !isNonEmptyString(transportProvider)) {
+  if (
+    !publicId ||
+    !stableId ||
+    !displayName ||
+    !isNonEmptyString(provider) ||
+    !isNonEmptyString(transportProvider)
+  ) {
     return null;
   }
 
   const supportsImages = readBoolean(record, "supportsImages", "supports_images") ?? false;
   const supportsStreaming = readBoolean(record, "supportsStreaming", "supports_streaming") ?? true;
   const supportsResponses = readBoolean(record, "supportsResponses", "supports_responses") ?? true;
-  const supportsReasoning = readBoolean(record, "supportsReasoning", "supports_reasoning")
-    ?? readBoolean(record, "reasoning")
-    ?? false;
+  const supportsReasoning =
+    readBoolean(record, "supportsReasoning", "supports_reasoning") ??
+    readBoolean(record, "reasoning") ??
+    false;
   const contextWindow = readNumber(record, "contextWindow", "context_window") ?? 200000;
-  const maxTokens = readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
+  const maxTokens =
+    readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
 
   const costRecord = asRecord(record.cost) ?? {};
   const inputCost = readNumber(costRecord, "input") ?? 0;
@@ -317,10 +324,7 @@ export async function fetchDenchCloudCatalog(
   }
 }
 
-export async function validateDenchCloudApiKey(
-  gatewayUrl: string,
-  apiKey: string,
-): Promise<void> {
+export async function validateDenchCloudApiKey(gatewayUrl: string, apiKey: string): Promise<void> {
   const response = await fetch(`${buildDenchGatewayApiBaseUrl(gatewayUrl)}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -445,10 +449,7 @@ export function resolveDenchCloudModel(
 ): DenchCloudCatalogModel | undefined {
   const normalized = requestedId?.trim();
   if (!normalized) {
-    return (
-      models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) ||
-      models[0]
-    );
+    return models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) || models[0];
   }
 
   return models.find((model) => model.id === normalized || model.stableId === normalized);
@@ -461,17 +462,13 @@ export function formatDenchCloudModelHint(model: DenchCloudCatalogModel): string
   return parts.join(" · ");
 }
 
-export function readConfiguredDenchCloudSettings(
-  rawConfig: Record<string, unknown> | undefined,
-): {
+export function readConfiguredDenchCloudSettings(rawConfig: Record<string, unknown> | undefined): {
   gatewayUrl?: string;
   apiKey?: string;
   selectedModel?: string;
   ttsElevenLabsBaseUrl?: string;
 } {
-  const provider = asRecord(
-    asRecord(asRecord(rawConfig?.models)?.providers)?.["dench-cloud"],
-  );
+  const provider = asRecord(asRecord(asRecord(rawConfig?.models)?.providers)?.["dench-cloud"]);
   const defaults = asRecord(asRecord(rawConfig?.agents)?.defaults);
   const modelValue = defaults?.model;
   const modelSetting = asRecord(modelValue);

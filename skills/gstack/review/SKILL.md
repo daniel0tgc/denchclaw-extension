@@ -60,22 +60,22 @@ git diff origin/<base>
 
 ### Pass 1 (CRITICAL)
 
-| Category | What to look for |
-|----------|-----------------|
-| **SQL & Data Safety** | Raw SQL injection, missing parameterization, unguarded DELETE/UPDATE |
-| **Race Conditions** | Concurrent access to shared state, read-modify-write without locks |
+| Category               | What to look for                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| **SQL & Data Safety**  | Raw SQL injection, missing parameterization, unguarded DELETE/UPDATE                    |
+| **Race Conditions**    | Concurrent access to shared state, read-modify-write without locks                      |
 | **LLM Trust Boundary** | LLM output used in SQL, eval, system commands, or rendered as HTML without sanitization |
-| **Enum Completeness** | New enum value added but not handled in all switch/case/if-else chains |
+| **Enum Completeness**  | New enum value added but not handled in all switch/case/if-else chains                  |
 
 ### Pass 2 (INFORMATIONAL)
 
-| Category | What to look for |
-|----------|-----------------|
+| Category                     | What to look for                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
 | **Conditional Side Effects** | Side effects (DB writes, API calls, emails) inside conditional branches that might not execute |
-| **Magic Numbers** | Hardcoded values that should be constants |
-| **Dead Code** | Unreachable code, unused imports, commented-out blocks |
-| **Test Gaps** | New code paths without corresponding tests |
-| **Performance** | N+1 queries, missing indexes, unbounded queries, large bundle imports |
+| **Magic Numbers**            | Hardcoded values that should be constants                                                      |
+| **Dead Code**                | Unreachable code, unused imports, commented-out blocks                                         |
+| **Test Gaps**                | New code paths without corresponding tests                                                     |
+| **Performance**              | N+1 queries, missing indexes, unbounded queries, large bundle imports                          |
 
 ---
 

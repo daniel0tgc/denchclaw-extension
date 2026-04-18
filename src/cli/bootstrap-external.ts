@@ -13,8 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { confirm, isCancel, select, spinner, text } from "@clack/prompts";
-import json5 from "json5";
 import gradient from "gradient-string";
+import json5 from "json5";
 import { isDaemonlessMode } from "../config/paths.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
@@ -435,7 +435,9 @@ function normalizeVersionOutput(raw: string | undefined): string | undefined {
   return first && first.length > 0 ? first : undefined;
 }
 
-function parseOpenClawCalendarVersion(raw: string | undefined): [number, number, number] | undefined {
+function parseOpenClawCalendarVersion(
+  raw: string | undefined,
+): [number, number, number] | undefined {
   const match = raw?.match(/\b(\d{4})\.(\d+)\.(\d+)\b/u);
   if (!match) {
     return undefined;
@@ -544,24 +546,28 @@ function readBundledPluginVersion(pluginDir: string): string | undefined {
 }
 
 function readConfiguredPluginAllowlist(stateDir: string): string[] {
-  const raw = readBootstrapConfig(stateDir) as {
-    plugins?: {
-      allow?: unknown;
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(stateDir) as
+    | {
+        plugins?: {
+          allow?: unknown;
+        };
+      }
+    | undefined;
   return Array.isArray(raw?.plugins?.allow)
     ? raw.plugins.allow.filter((value): value is string => typeof value === "string")
     : [];
 }
 
 function readConfiguredPluginLoadPaths(stateDir: string): string[] {
-  const raw = readBootstrapConfig(stateDir) as {
-    plugins?: {
-      load?: {
-        paths?: unknown;
-      };
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(stateDir) as
+    | {
+        plugins?: {
+          load?: {
+            paths?: unknown;
+          };
+        };
+      }
+    | undefined;
   return Array.isArray(raw?.plugins?.load?.paths)
     ? raw.plugins.load.paths.filter((value): value is string => typeof value === "string")
     : [];
@@ -580,14 +586,7 @@ async function setOpenClawConfigJson(params: {
 }): Promise<void> {
   await runOpenClawOrThrow({
     openclawCommand: params.openclawCommand,
-    args: [
-      "--profile",
-      params.profile,
-      "config",
-      "set",
-      params.key,
-      JSON.stringify(params.value),
-    ],
+    args: ["--profile", params.profile, "config", "set", params.key, JSON.stringify(params.value)],
     timeoutMs: 30_000,
     errorMessage: params.errorMessage,
   });
@@ -608,7 +607,9 @@ function readDenchIntegrationsMetadata(stateDir: string): Record<string, unknown
 
 type ElevenLabsTtsConfigShape = "providers" | "flat";
 
-function readTtsElevenLabsConfig(tts: Record<string, unknown>): Record<string, unknown> | undefined {
+function readTtsElevenLabsConfig(
+  tts: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   return asRecord(tts.elevenlabs) ?? asRecord(asRecord(tts.providers)?.elevenlabs);
 }
 
@@ -683,10 +684,7 @@ function disableDenchElevenLabsOverride(
     ) {
       delete elevenlabs.baseUrl;
     }
-    if (
-      typeof elevenlabs.apiKey === "string" &&
-      (!apiKey || elevenlabs.apiKey === apiKey)
-    ) {
+    if (typeof elevenlabs.apiKey === "string" && (!apiKey || elevenlabs.apiKey === apiKey)) {
       delete elevenlabs.apiKey;
     }
     if (Object.keys(elevenlabs).length === 0) {
@@ -723,7 +721,7 @@ function applyDenchManagedIntegrationDefaults(params: {
 
   const tools = { ...(asRecord(nextConfig.tools) ?? {}) };
   const deny = Array.isArray(tools.deny)
-    ? (tools.deny.filter((value): value is string => typeof value === "string"))
+    ? tools.deny.filter((value): value is string => typeof value === "string")
     : [];
   const web = { ...(asRecord(tools.web) ?? {}) };
   const search = { ...(asRecord(web.search) ?? {}) };
@@ -799,12 +797,8 @@ async function syncBundledPlugins(params: {
     };
     const currentAllow = readConfiguredPluginAllowlist(params.stateDir);
     const currentLoadPaths = readConfiguredPluginLoadPaths(params.stateDir);
-    const nextAllow = currentAllow.filter(
-      (value) => value !== "dench-cloud-provider",
-    );
-    const nextLoadPaths = currentLoadPaths.filter(
-      (value) => !isLegacyDenchCloudPluginPath(value),
-    );
+    const nextAllow = currentAllow.filter((value) => value !== "dench-cloud-provider");
+    const nextLoadPaths = currentLoadPaths.filter((value) => !isLegacyDenchCloudPluginPath(value));
     const legacyPluginDir = path.join(params.stateDir, "extensions", "dench-cloud-provider");
     const hadLegacyEntry = entries["dench-cloud-provider"] !== undefined;
     const hadLegacyInstall = installs["dench-cloud-provider"] !== undefined;
@@ -996,10 +990,7 @@ function stagePreOnboardConfig(
   defaults.elevatedDefault = "on";
 
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(
-    path.join(stateDir, "openclaw.json"),
-    `${JSON.stringify(raw, null, 2)}\n`,
-  );
+  writeFileSync(path.join(stateDir, "openclaw.json"), `${JSON.stringify(raw, null, 2)}\n`);
 }
 
 async function ensureAgentDefaults(openclawCommand: string, profile: string): Promise<void> {
@@ -1292,12 +1283,12 @@ function selectBootstrapDevicePairingRequest(pending: DeviceListEntry[]): {
     .filter((entry) => {
       const roles = resolveDeviceListEntryRoles(entry);
       const platformMatches = !entry.platform || entry.platform === process.platform;
-      return platformMatches && roles.includes("operator") && hasBootstrapDevicePairingScopes(entry);
+      return (
+        platformMatches && roles.includes("operator") && hasBootstrapDevicePairingScopes(entry)
+      );
     })
     .map((entry) => ({ entry, score: scoreBootstrapDevicePairingRequest(entry) }))
-    .sort(
-      (a, b) => b.score - a.score || (b.entry.createdAtMs ?? 0) - (a.entry.createdAtMs ?? 0),
-    );
+    .sort((a, b) => b.score - a.score || (b.entry.createdAtMs ?? 0) - (a.entry.createdAtMs ?? 0));
   if (candidates.length === 0) {
     return { status: "none", detail: "no pending local operator pairing request found" };
   }
@@ -1756,8 +1747,12 @@ async function ensureOpenClawCliAvailable(params: {
         const errorLines = [
           "npm install -g openclaw@latest failed.",
           hint,
-          combinedStderr ? `npm output: ${firstNonEmptyLine(combinedStderr) ?? combinedStderr.slice(0, 200).trim()}` : undefined,
-        ].filter(Boolean).join("\n");
+          combinedStderr
+            ? `npm output: ${firstNonEmptyLine(combinedStderr) ?? combinedStderr.slice(0, 200).trim()}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n");
         progress.fail("OpenClaw install failed (global and user-prefix).");
         return {
           available: false,
@@ -1809,7 +1804,9 @@ async function ensureOpenClawCliAvailable(params: {
   );
 
   const version = normalizeVersionOutput(check?.stdout || check?.stderr || globalAfter.version);
-  const available = Boolean((globalAfter.installed || fallbackCommand) && check && check.code === 0);
+  const available = Boolean(
+    (globalAfter.installed || fallbackCommand) && check && check.code === 0,
+  );
   const effectiveBinDir = globalBinDir ?? fallbackBinDir;
   progress.startStage("Caching OpenClaw check result");
   if (available) {
@@ -1960,13 +1957,7 @@ async function attemptGatewayAutoFix(params: {
     },
     {
       name: "openclaw gateway install --force",
-      args: [
-        "--profile",
-        params.profile,
-        "gateway",
-        "install",
-        "--force",
-      ],
+      args: ["--profile", params.profile, "gateway", "install", "--force"],
       timeoutMs: 2 * 60_000,
     },
     {
@@ -2164,9 +2155,11 @@ function writeAuthProfileKey(stateDir: string, apiKey: string): void {
     if (existsSync(authPath)) {
       raw = json5.parse(readFileSync(authPath, "utf-8"));
     }
-  } catch { /* fresh file */ }
+  } catch {
+    /* fresh file */
+  }
 
-  const profiles = ((raw.profiles ?? {}) as Record<string, unknown>);
+  const profiles = (raw.profiles ?? {}) as Record<string, unknown>;
   profiles["dench-cloud:default"] = {
     type: "api_key",
     provider: "dench-cloud",
@@ -2188,11 +2181,13 @@ export function checkAgentAuth(
   if (!provider) {
     return { ok: false, detail: "No model provider configured." };
   }
-  const rawConfig = readBootstrapConfig(stateDir) as {
-    models?: {
-      providers?: Record<string, unknown>;
-    };
-  } | undefined;
+  const rawConfig = readBootstrapConfig(stateDir) as
+    | {
+        models?: {
+          providers?: Record<string, unknown>;
+        };
+      }
+    | undefined;
   const customProvider = rawConfig?.models?.providers?.[provider];
   if (customProvider && typeof customProvider === "object") {
     const apiKey = (customProvider as Record<string, unknown>).apiKey;
@@ -2455,9 +2450,9 @@ function logBootstrapChecklist(diagnostics: BootstrapDiagnostics, runtime: Runti
 function isExplicitDenchCloudRequest(opts: BootstrapOptions): boolean {
   return Boolean(
     opts.denchCloud ||
-      opts.denchCloudApiKey?.trim() ||
-      opts.denchCloudModel?.trim() ||
-      opts.denchGatewayUrl?.trim(),
+    opts.denchCloudApiKey?.trim() ||
+    opts.denchCloudModel?.trim() ||
+    opts.denchGatewayUrl?.trim(),
   );
 }
 
@@ -2569,9 +2564,7 @@ function renderDenchCloudRecommendationBanner(): string {
   ].join(dot);
 
   const check = rich ? theme.success("✓") : "✓";
-  const cta = rich
-    ? theme.success("Recommended for most users")
-    : "Recommended for most users";
+  const cta = rich ? theme.success("Recommended for most users") : "Recommended for most users";
 
   return [
     "",
@@ -2617,14 +2610,20 @@ function preStageDenchCloudConfig(params: {
     nextConfig.models = models;
 
     const tools = { ...asRecord(nextConfig.tools) };
-    tools.alsoAllow = mergeAllowedTools(nextConfig.tools, (configPatch as Record<string, unknown>).tools);
+    tools.alsoAllow = mergeAllowedTools(
+      nextConfig.tools,
+      (configPatch as Record<string, unknown>).tools,
+    );
     delete tools.allow;
     nextConfig.tools = tools;
 
     if (params.selectedModel) {
       const agents = { ...asRecord(nextConfig.agents) };
       const defaults = { ...asRecord(agents.defaults) };
-      defaults.model = { ...asRecord(defaults.model), primary: `dench-cloud/${params.selectedModel}` };
+      defaults.model = {
+        ...asRecord(defaults.model),
+        primary: `dench-cloud/${params.selectedModel}`,
+      };
       agents.defaults = defaults;
       nextConfig.agents = agents;
     }
@@ -2680,7 +2679,10 @@ function rewriteDenchCloudTtsConfigFile(params: {
   elevenlabs.apiKey = params.apiKey;
   messages.tts = tts;
   nextConfig.messages = messages;
-  writeFileSync(path.join(params.stateDir, "openclaw.json"), `${JSON.stringify(nextConfig, null, 2)}\n`);
+  writeFileSync(
+    path.join(params.stateDir, "openclaw.json"),
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+  );
 }
 
 function isExpectedTtsShapeValidationError(
@@ -2725,9 +2727,10 @@ async function applyDenchCloudTtsConfig(params: {
       openclawCommand: params.openclawCommand,
       profile: params.profile,
       key: shape === "providers" ? "messages.tts.providers.elevenlabs" : "messages.tts.elevenlabs",
-      value: shape === "providers"
-        ? asRecord(asRecord(ttsConfig.providers)?.elevenlabs)
-        : asRecord(ttsConfig.elevenlabs),
+      value:
+        shape === "providers"
+          ? asRecord(asRecord(ttsConfig.providers)?.elevenlabs)
+          : asRecord(ttsConfig.elevenlabs),
       errorMessage: "Failed to configure ElevenLabs TTS via Dench Cloud gateway.",
     });
   };
@@ -2755,13 +2758,15 @@ async function applyDenchCloudBootstrapConfig(params: {
   selectedModel: string;
   openClawVersion?: string;
 }): Promise<ElevenLabsTtsConfigShape> {
-  const raw = readBootstrapConfig(params.stateDir) as {
-    agents?: {
-      defaults?: {
-        models?: unknown;
-      };
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(params.stateDir) as
+    | {
+        agents?: {
+          defaults?: {
+            models?: unknown;
+          };
+        };
+      }
+    | undefined;
   const existingAgentModels =
     raw?.agents?.defaults?.models && typeof raw.agents.defaults.models === "object"
       ? (raw.agents.defaults.models as Record<string, unknown>)
@@ -2902,9 +2907,11 @@ async function resolveDenchCloudBootstrapSelection(params: {
   const wantsDenchCloud = explicitRequest
     ? true
     : await confirm({
-      message: stylePromptMessage("Continue with Dench Cloud? Recommended. API key: dench.com/api"),
-      initialValue: existingDenchConfigured || !currentProvider,
-    });
+        message: stylePromptMessage(
+          "Continue with Dench Cloud? Recommended. API key: dench.com/api",
+        ),
+        initialValue: existingDenchConfigured || !currentProvider,
+      });
   if (isCancel(wantsDenchCloud) || !wantsDenchCloud) {
     return { enabled: false };
   }
@@ -2955,10 +2962,16 @@ async function resolveDenchCloudBootstrapSelection(params: {
       catalogSpinner?.stop("Models loaded.");
     }
 
-    const explicitModel = params.opts.denchCloudModel?.trim() || process.env.DENCH_CLOUD_MODEL?.trim();
-    const preselected = resolveDenchCloudModel(catalog.models, explicitModel || existing.selectedModel);
+    const explicitModel =
+      params.opts.denchCloudModel?.trim() || process.env.DENCH_CLOUD_MODEL?.trim();
+    const preselected = resolveDenchCloudModel(
+      catalog.models,
+      explicitModel || existing.selectedModel,
+    );
     if (!preselected && explicitModel) {
-      params.runtime.log(theme.warn(`Configured Dench Cloud model "${explicitModel}" is unavailable.`));
+      params.runtime.log(
+        theme.warn(`Configured Dench Cloud model "${explicitModel}" is unavailable.`),
+      );
     }
     const selection = await promptForDenchCloudModel({
       models: catalog.models,
@@ -2979,9 +2992,7 @@ async function resolveDenchCloudBootstrapSelection(params: {
       verifySpinner?.stop("Dench Cloud ready.");
     } catch (error) {
       verifySpinner?.stop("Verification failed.");
-      params.runtime.log(
-        theme.warn(error instanceof Error ? error.message : String(error)),
-      );
+      params.runtime.log(theme.warn(error instanceof Error ? error.message : String(error)));
       const retry = await confirm({
         message: stylePromptMessage("Re-enter your Dench Cloud API key?"),
         initialValue: true,
@@ -3192,11 +3203,11 @@ export async function bootstrapCommand(
       sourceDirName: "posthog-analytics",
       ...(process.env.POSTHOG_KEY
         ? {
-          enabled: true,
-          config: {
-            apiKey: process.env.POSTHOG_KEY,
-          },
-        }
+            enabled: true,
+            config: {
+              apiKey: process.env.POSTHOG_KEY,
+            },
+          }
         : {}),
     },
     {
@@ -3220,17 +3231,13 @@ export async function bootstrapCommand(
       pluginId: "apollo-enrichment",
       sourceDirName: "apollo-enrichment",
       enabled: denchCloudSelection.enabled,
-      ...(denchCloudSelection.enabled
-        ? { config: { enabled: true } }
-        : {}),
+      ...(denchCloudSelection.enabled ? { config: { enabled: true } } : {}),
     },
     {
       pluginId: "exa-search",
       sourceDirName: "exa-search",
       enabled: denchCloudSelection.enabled,
-      ...(denchCloudSelection.enabled
-        ? { config: { enabled: true } }
-        : {}),
+      ...(denchCloudSelection.enabled ? { config: { enabled: true } } : {}),
     },
   ];
 
@@ -3542,10 +3549,9 @@ export async function bootstrapCommand(
       runtime.log(
         theme.warn("Global OpenClaw was installed, but `openclaw` is not on shell PATH."),
       );
-      const pathHint =
-        IS_WINDOWS
-          ? `To add to PATH, run in PowerShell: $env:Path = "${installResult.globalBinDir};$env:Path"`
-          : `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`;
+      const pathHint = IS_WINDOWS
+        ? `To add to PATH, run in PowerShell: $env:Path = "${installResult.globalBinDir};$env:Path"`
+        : `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`;
       runtime.log(theme.muted(pathHint));
     }
 

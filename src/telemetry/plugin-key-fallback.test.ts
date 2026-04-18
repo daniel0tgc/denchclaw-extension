@@ -48,9 +48,7 @@ describe("posthog-analytics plugin key fallback", () => {
       OPENCLAW_VERSION: "",
     }));
 
-    const { default: register } = await import(
-      "../../extensions/posthog-analytics/index.js"
-    );
+    const { default: register } = await import("../../extensions/posthog-analytics/index.js");
     const api = createMockApi({ apiKey: "config-key", enabled: true });
     register(api);
 
@@ -68,9 +66,7 @@ describe("posthog-analytics plugin key fallback", () => {
       OPENCLAW_VERSION: "",
     }));
 
-    const { default: register } = await import(
-      "../../extensions/posthog-analytics/index.js"
-    );
+    const { default: register } = await import("../../extensions/posthog-analytics/index.js");
     const api = createMockApi();
     register(api);
 
@@ -88,9 +84,7 @@ describe("posthog-analytics plugin key fallback", () => {
       OPENCLAW_VERSION: "",
     }));
 
-    const { default: register } = await import(
-      "../../extensions/posthog-analytics/index.js"
-    );
+    const { default: register } = await import("../../extensions/posthog-analytics/index.js");
     const api = createMockApi();
     register(api);
 
@@ -105,9 +99,7 @@ describe("posthog-analytics plugin key fallback", () => {
       OPENCLAW_VERSION: "",
     }));
 
-    const { default: register } = await import(
-      "../../extensions/posthog-analytics/index.js"
-    );
+    const { default: register } = await import("../../extensions/posthog-analytics/index.js");
     const api = createMockApi();
     register(api);
 

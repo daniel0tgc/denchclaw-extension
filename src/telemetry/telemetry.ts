@@ -1,7 +1,7 @@
 import { PostHog } from "posthog-node";
+import { VERSION, resolveOpenClawVersion } from "../version.js";
 import { readTelemetryConfig, getOrCreateAnonymousId, readPersonInfo } from "./config.js";
 import type { PersonInfo } from "./config.js";
-import { VERSION, resolveOpenClawVersion } from "../version.js";
 
 const POSTHOG_KEY = process.env.POSTHOG_KEY || "";
 const POSTHOG_HOST = "https://us.i.posthog.com";
@@ -51,9 +51,7 @@ export function track(event: string, properties?: Record<string, unknown>): void
   if (!isTelemetryEnabled()) return;
 
   if (process.env.DENCHCLAW_TELEMETRY_DEBUG === "1") {
-    process.stderr.write(
-      `[telemetry:debug] ${JSON.stringify({ event, properties }, null, 2)}\n`,
-    );
+    process.stderr.write(`[telemetry:debug] ${JSON.stringify({ event, properties }, null, 2)}\n`);
     return;
   }
 

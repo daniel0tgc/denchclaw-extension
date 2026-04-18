@@ -128,10 +128,7 @@ function formatComposioToolCheatSheet(index: ComposioToolIndexFile): string {
     );
     if (gotchas.length > 0) {
       lines.push("");
-      lines.push(
-        "**Known gotchas:**",
-        ...gotchas.map(([k, v]) => `- \`${k}\`: ${v}`),
-      );
+      lines.push("**Known gotchas:**", ...gotchas.map(([k, v]) => `- \`${k}\`: ${v}`));
     }
 
     const extraRecipes = Object.entries(app.recipes).filter(

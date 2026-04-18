@@ -1,12 +1,12 @@
-import { createPostHogClient, shutdownPostHogClient } from "./lib/posthog-client.js";
-import { TraceContextManager, resolveSessionKey } from "./lib/trace-context.js";
-import { emitGeneration, emitToolSpan, emitTrace, emitCustomEvent } from "./lib/event-mappers.js";
-import { readPrivacyMode, readPersonInfo, readOrCreateAnonymousId } from "./lib/privacy.js";
 import {
   POSTHOG_KEY as BUILT_IN_KEY,
   DENCHCLAW_VERSION,
   OPENCLAW_VERSION,
 } from "./lib/build-env.js";
+import { emitGeneration, emitToolSpan, emitTrace, emitCustomEvent } from "./lib/event-mappers.js";
+import { createPostHogClient, shutdownPostHogClient } from "./lib/posthog-client.js";
+import { readPrivacyMode, readPersonInfo, readOrCreateAnonymousId } from "./lib/privacy.js";
+import { TraceContextManager, resolveSessionKey } from "./lib/trace-context.js";
 import type { PluginConfig } from "./lib/types.js";
 
 export const id = "posthog-analytics";
@@ -17,7 +17,9 @@ function debugLog(label: string, data: unknown): void {
   if (!DEBUG) return;
   try {
     process.stderr.write(`[posthog-analytics] ${label}: ${JSON.stringify(data, null, 2)}\n`);
-  } catch { /* ignore serialization errors */ }
+  } catch {
+    /* ignore serialization errors */
+  }
 }
 
 export default function register(api: any) {
@@ -36,7 +38,8 @@ export default function register(api: any) {
   const versionProps: Record<string, unknown> = {};
   const dcv = DENCHCLAW_VERSION || process.env.npm_package_version;
   if (dcv) versionProps.denchclaw_version = dcv;
-  const ocv = OPENCLAW_VERSION || process.env.OPENCLAW_VERSION || process.env.OPENCLAW_SERVICE_VERSION;
+  const ocv =
+    OPENCLAW_VERSION || process.env.OPENCLAW_VERSION || process.env.OPENCLAW_SERVICE_VERSION;
   if (ocv) versionProps.openclaw_version = ocv;
 
   const ph = createPostHogClient(apiKey, config?.host, versionProps);
@@ -55,8 +58,7 @@ export default function register(api: any) {
 
   const getPrivacyMode = () => readPrivacyMode(api.config);
 
-  const getConfigModel = (): string | undefined =>
-    api.config?.agents?.defaults?.model?.primary;
+  const getConfigModel = (): string | undefined => api.config?.agents?.defaults?.model?.primary;
 
   const ensureTrace = (ctx: any): void => {
     const sk = resolveSessionKey(ctx);
@@ -70,7 +72,11 @@ export default function register(api: any) {
     "before_model_resolve",
     (event: any, ctx: any) => {
       debugLog("before_model_resolve event", event);
-      debugLog("before_model_resolve ctx", { runId: ctx.runId, sessionId: ctx.sessionId, sessionKey: ctx.sessionKey });
+      debugLog("before_model_resolve ctx", {
+        runId: ctx.runId,
+        sessionId: ctx.sessionId,
+        sessionKey: ctx.sessionKey,
+      });
 
       const sk = resolveSessionKey(ctx);
       traceCtx.startTrace(sk, ctx.runId ?? sk);
@@ -85,7 +91,11 @@ export default function register(api: any) {
   api.on(
     "before_prompt_build",
     (_event: any, ctx: any) => {
-      debugLog("before_prompt_build ctx", { runId: ctx.runId, sessionId: ctx.sessionId, hasMessages: Boolean(ctx.messages) });
+      debugLog("before_prompt_build ctx", {
+        runId: ctx.runId,
+        sessionId: ctx.sessionId,
+        hasMessages: Boolean(ctx.messages),
+      });
 
       const sk = resolveSessionKey(ctx);
       ensureTrace(ctx);
@@ -99,7 +109,11 @@ export default function register(api: any) {
   api.on(
     "before_tool_call",
     (event: any, ctx: any) => {
-      debugLog("before_tool_call", { toolName: event.toolName, runId: ctx.runId, sessionId: ctx.sessionId });
+      debugLog("before_tool_call", {
+        toolName: event.toolName,
+        runId: ctx.runId,
+        sessionId: ctx.sessionId,
+      });
 
       const sk = resolveSessionKey(ctx);
       ensureTrace(ctx);
@@ -111,7 +125,13 @@ export default function register(api: any) {
   api.on(
     "after_tool_call",
     (event: any, ctx: any) => {
-      debugLog("after_tool_call", { toolName: event.toolName, runId: ctx.runId, sessionId: ctx.sessionId, hasError: Boolean(event.error), durationMs: event.durationMs });
+      debugLog("after_tool_call", {
+        toolName: event.toolName,
+        runId: ctx.runId,
+        sessionId: ctx.sessionId,
+        hasError: Boolean(event.error),
+        durationMs: event.durationMs,
+      });
 
       const sk = resolveSessionKey(ctx);
       ensureTrace(ctx);
@@ -124,7 +144,12 @@ export default function register(api: any) {
   api.on(
     "agent_end",
     (event: any, ctx: any) => {
-      debugLog("agent_end event", { success: event.success, error: event.error, durationMs: event.durationMs, messageCount: event.messages?.length });
+      debugLog("agent_end event", {
+        success: event.success,
+        error: event.error,
+        durationMs: event.durationMs,
+        messageCount: event.messages?.length,
+      });
       debugLog("agent_end ctx", { runId: ctx.runId, sessionId: ctx.sessionId });
 
       const sk = resolveSessionKey(ctx);

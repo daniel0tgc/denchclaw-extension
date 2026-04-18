@@ -1,6 +1,11 @@
 import type { PostHogClient } from "./posthog-client.js";
+import {
+  readOrCreateAnonymousId,
+  sanitizeMessages,
+  sanitizeOutputChoices,
+  stripSecrets,
+} from "./privacy.js";
 import type { TraceContextManager } from "./trace-context.js";
-import { readOrCreateAnonymousId, sanitizeMessages, sanitizeOutputChoices, stripSecrets } from "./privacy.js";
 
 /**
  * Extract token counts and cost from the LAST assistant message's usage metadata.
@@ -30,7 +35,8 @@ export function extractUsageFromMessages(messages: unknown): {
   if (!lastAssistantUsage) return { inputTokens: 0, outputTokens: 0, totalCostUsd: 0 };
 
   const inputTokens = typeof lastAssistantUsage.input === "number" ? lastAssistantUsage.input : 0;
-  const outputTokens = typeof lastAssistantUsage.output === "number" ? lastAssistantUsage.output : 0;
+  const outputTokens =
+    typeof lastAssistantUsage.output === "number" ? lastAssistantUsage.output : 0;
   const cost = lastAssistantUsage.cost as Record<string, unknown> | undefined;
   const totalCostUsd = cost && typeof cost.total === "number" ? cost.total : 0;
 
@@ -100,9 +106,10 @@ export function normalizeOutputForPostHog(messages: unknown): unknown[] | undefi
             type: "function",
             function: {
               name: block.name,
-              arguments: typeof block.arguments === "string"
-                ? block.arguments
-                : JSON.stringify(block.arguments ?? {}),
+              arguments:
+                typeof block.arguments === "string"
+                  ? block.arguments
+                  : JSON.stringify(block.arguments ?? {}),
             },
           });
         }
@@ -171,7 +178,12 @@ export function buildTraceState(
 
       chronological.push(entry);
       lastAssistantEntry = entry;
-    } else if (m.role === "user" || m.role === "tool" || m.role === "toolResult" || m.role === "system") {
+    } else if (
+      m.role === "user" ||
+      m.role === "tool" ||
+      m.role === "toolResult" ||
+      m.role === "system"
+    ) {
       const content = privacyMode ? "[REDACTED]" : extractText();
       const entry: Record<string, unknown> = { role: m.role, content };
       if (m.name) entry.name = m.name;
@@ -211,9 +223,7 @@ function extractToolNamesFromSingleMessage(m: Record<string, unknown>): string[]
  */
 export function extractInputMessages(messages: unknown): unknown[] | undefined {
   if (!Array.isArray(messages)) return undefined;
-  const input = messages.filter(
-    (m: any) => m && typeof m === "object" && m.role !== "assistant",
-  );
+  const input = messages.filter((m: any) => m && typeof m === "object" && m.role !== "assistant");
   return input.length > 0 ? input : undefined;
 }
 
@@ -231,11 +241,12 @@ export function emitGeneration(
     const trace = traceCtx.getTrace(sessionKey);
     if (!trace) return;
 
-    const latency = event.durationMs != null
-      ? event.durationMs / 1_000
-      : trace.startedAt
-        ? (Date.now() - trace.startedAt) / 1_000
-        : undefined;
+    const latency =
+      event.durationMs != null
+        ? event.durationMs / 1_000
+        : trace.startedAt
+          ? (Date.now() - trace.startedAt) / 1_000
+          : undefined;
 
     const spanToolNames = trace.toolSpans.map((s) => s.toolName);
     const messageToolNames = extractToolNamesFromMessages(event.messages);
@@ -247,9 +258,10 @@ export function emitGeneration(
       $ai_model: trace.model ?? event.model ?? "unknown",
       $ai_provider: trace.provider ?? event.provider,
       $ai_latency: latency,
-      $ai_tools: allToolNames.length > 0
-        ? allToolNames.map((name) => ({ type: "function", function: { name } }))
-        : undefined,
+      $ai_tools:
+        allToolNames.length > 0
+          ? allToolNames.map((name) => ({ type: "function", function: { name } }))
+          : undefined,
       $ai_stream: event.stream,
       $ai_temperature: event.temperature,
       $ai_is_error: event.success === false || Boolean(event.error),
@@ -269,10 +281,7 @@ export function emitGeneration(
       if (extracted.totalCostUsd > 0) properties.$ai_total_cost_usd = extracted.totalCostUsd;
     }
 
-    properties.$ai_input = sanitizeMessages(
-      event.messages ?? trace.input,
-      privacyMode,
-    );
+    properties.$ai_input = sanitizeMessages(event.messages ?? trace.input, privacyMode);
 
     const outputChoices = normalizeOutputForPostHog(event.messages);
     properties.$ai_output_choices = sanitizeOutputChoices(
@@ -281,9 +290,10 @@ export function emitGeneration(
     );
 
     if (event.error) {
-      properties.$ai_error = typeof event.error === "string"
-        ? event.error
-        : event.error?.message ?? String(event.error);
+      properties.$ai_error =
+        typeof event.error === "string"
+          ? event.error
+          : (event.error?.message ?? String(event.error));
     }
 
     ph.capture({
@@ -311,11 +321,12 @@ export function emitToolSpan(
     const span = traceCtx.getLastToolSpan(sessionKey);
     if (!trace || !span) return;
 
-    const latency = span.startedAt && span.endedAt
-      ? (span.endedAt - span.startedAt) / 1_000
-      : event.durationMs != null
-        ? event.durationMs / 1_000
-        : undefined;
+    const latency =
+      span.startedAt && span.endedAt
+        ? (span.endedAt - span.startedAt) / 1_000
+        : event.durationMs != null
+          ? event.durationMs / 1_000
+          : undefined;
 
     const properties: Record<string, unknown> = {
       $ai_trace_id: trace.traceId,
@@ -356,14 +367,9 @@ export function emitTrace(
     const trace = traceCtx.getTrace(sessionKey);
     if (!trace) return;
 
-    const latency = trace.startedAt
-      ? (Date.now() - trace.startedAt) / 1_000
-      : undefined;
+    const latency = trace.startedAt ? (Date.now() - trace.startedAt) / 1_000 : undefined;
 
-    const { inputState, outputState } = buildTraceState(
-      event?.messages,
-      privacyMode ?? true,
-    );
+    const { inputState, outputState } = buildTraceState(event?.messages, privacyMode ?? true);
 
     ph.capture({
       distinctId: readOrCreateAnonymousId(),

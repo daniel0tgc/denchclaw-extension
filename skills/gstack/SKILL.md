@@ -25,6 +25,7 @@ AI-assisted coding makes the marginal cost of completeness near-zero. When prese
 Before building infrastructure or unfamiliar patterns — **search first**.
 
 **Three layers of knowledge:**
+
 - **Layer 1** (tried and true): Don't reinvent the wheel.
 - **Layer 2** (new and popular): Search for these, but scrutinize.
 - **Layer 3** (first principles): Original observations from reasoning about the specific problem. The most valuable.
@@ -33,39 +34,40 @@ Before building infrastructure or unfamiliar patterns — **search first**.
 
 ## Sprint Workflow
 
-| Phase | Skill | Role | What it does |
-|-------|-------|------|--------------|
-| **Think** | [office-hours](office-hours/SKILL.md) | YC Office Hours | Forcing questions that reframe the product before code. Design doc feeds downstream. |
-| **Plan** | [plan-ceo-review](plan-ceo-review/SKILL.md) | CEO / Founder | Rethink the problem. 10-star product. Four modes: Expansion, Selective, Hold, Reduction. |
-| **Plan** | [plan-eng-review](plan-eng-review/SKILL.md) | Eng Manager | Lock architecture, data flow, diagrams, edge cases, tests. |
-| **Plan** | [plan-design-review](plan-design-review/SKILL.md) | Senior Designer | Rate design dimensions 0-10, explain what a 10 looks like, edit the plan. |
-| **Plan** | [design-consultation](design-consultation/SKILL.md) | Design Partner | Build a complete design system from scratch. |
-| **Review** | [review](review/SKILL.md) | Staff Engineer | Find bugs that pass CI but blow up in production. Auto-fix obvious ones. |
-| **Review** | [design-review](design-review/SKILL.md) | Designer Who Codes | Same audit as plan-design-review, then fixes what it finds. |
-| **Debug** | [investigate](investigate/SKILL.md) | Debugger | Systematic root-cause debugging. No fixes without investigation. |
-| **Test** | [qa](qa/SKILL.md) | QA Lead | Test the app, find bugs, fix with atomic commits, re-verify. |
-| **Test** | [qa-only](qa-only/SKILL.md) | QA Reporter | Same methodology as qa, but report only — no code changes. |
-| **Test** | [benchmark](benchmark/SKILL.md) | Performance Engineer | Page load times, Core Web Vitals, bundle sizes. Before/after on every PR. |
-| **Ship** | [ship](ship/SKILL.md) | Release Engineer | Sync main, run tests, audit coverage, push, open PR. |
-| **Ship** | [land-and-deploy](land-and-deploy/SKILL.md) | Release Engineer | Merge PR, wait for CI, deploy, verify production health. |
-| **Ship** | [canary](canary/SKILL.md) | SRE | Post-deploy monitoring loop. Console errors, perf regressions, page failures. |
-| **Reflect** | [retro](retro/SKILL.md) | Eng Manager | Weekly retro with per-person breakdowns, shipping streaks, test health. |
-| **Reflect** | [document-release](document-release/SKILL.md) | Technical Writer | Update all docs to match what shipped. Catches stale READMEs. |
+| Phase       | Skill                                               | Role                 | What it does                                                                             |
+| ----------- | --------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| **Think**   | [office-hours](office-hours/SKILL.md)               | YC Office Hours      | Forcing questions that reframe the product before code. Design doc feeds downstream.     |
+| **Plan**    | [plan-ceo-review](plan-ceo-review/SKILL.md)         | CEO / Founder        | Rethink the problem. 10-star product. Four modes: Expansion, Selective, Hold, Reduction. |
+| **Plan**    | [plan-eng-review](plan-eng-review/SKILL.md)         | Eng Manager          | Lock architecture, data flow, diagrams, edge cases, tests.                               |
+| **Plan**    | [plan-design-review](plan-design-review/SKILL.md)   | Senior Designer      | Rate design dimensions 0-10, explain what a 10 looks like, edit the plan.                |
+| **Plan**    | [design-consultation](design-consultation/SKILL.md) | Design Partner       | Build a complete design system from scratch.                                             |
+| **Review**  | [review](review/SKILL.md)                           | Staff Engineer       | Find bugs that pass CI but blow up in production. Auto-fix obvious ones.                 |
+| **Review**  | [design-review](design-review/SKILL.md)             | Designer Who Codes   | Same audit as plan-design-review, then fixes what it finds.                              |
+| **Debug**   | [investigate](investigate/SKILL.md)                 | Debugger             | Systematic root-cause debugging. No fixes without investigation.                         |
+| **Test**    | [qa](qa/SKILL.md)                                   | QA Lead              | Test the app, find bugs, fix with atomic commits, re-verify.                             |
+| **Test**    | [qa-only](qa-only/SKILL.md)                         | QA Reporter          | Same methodology as qa, but report only — no code changes.                               |
+| **Test**    | [benchmark](benchmark/SKILL.md)                     | Performance Engineer | Page load times, Core Web Vitals, bundle sizes. Before/after on every PR.                |
+| **Ship**    | [ship](ship/SKILL.md)                               | Release Engineer     | Sync main, run tests, audit coverage, push, open PR.                                     |
+| **Ship**    | [land-and-deploy](land-and-deploy/SKILL.md)         | Release Engineer     | Merge PR, wait for CI, deploy, verify production health.                                 |
+| **Ship**    | [canary](canary/SKILL.md)                           | SRE                  | Post-deploy monitoring loop. Console errors, perf regressions, page failures.            |
+| **Reflect** | [retro](retro/SKILL.md)                             | Eng Manager          | Weekly retro with per-person breakdowns, shipping streaks, test health.                  |
+| **Reflect** | [document-release](document-release/SKILL.md)       | Technical Writer     | Update all docs to match what shipped. Catches stale READMEs.                            |
 
 ### Safety Tools
 
-| Skill | What it does |
-|-------|--------------|
-| [careful](careful/SKILL.md) | Warn before destructive commands (rm -rf, DROP TABLE, force-push). |
-| [freeze](freeze/SKILL.md) | Restrict edits to one directory to prevent accidental changes. |
-| [guard](guard/SKILL.md) | Maximum safety: careful + freeze combined. |
-| [unfreeze](unfreeze/SKILL.md) | Remove the freeze boundary. |
+| Skill                         | What it does                                                       |
+| ----------------------------- | ------------------------------------------------------------------ |
+| [careful](careful/SKILL.md)   | Warn before destructive commands (rm -rf, DROP TABLE, force-push). |
+| [freeze](freeze/SKILL.md)     | Restrict edits to one directory to prevent accidental changes.     |
+| [guard](guard/SKILL.md)       | Maximum safety: careful + freeze combined.                         |
+| [unfreeze](unfreeze/SKILL.md) | Remove the freeze boundary.                                        |
 
 ---
 
 ## Completion Status Protocol
 
 When completing any skill workflow, report status using one of:
+
 - **DONE** — All steps completed successfully. Evidence provided.
 - **DONE_WITH_CONCERNS** — Completed, but with issues to flag.
 - **BLOCKED** — Cannot proceed. State what's blocking and what was tried.

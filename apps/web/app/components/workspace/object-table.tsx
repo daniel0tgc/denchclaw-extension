@@ -70,6 +70,16 @@ type ObjectTableProps = {
 	serverPagination?: ServerPaginationProps;
 	/** Server-side search callback. */
 	onServerSearch?: (query: string) => void;
+	/** When true, the DataTable's internal toolbar (search, columns, refresh, +Add) is suppressed. */
+	hideInternalToolbar?: boolean;
+	/** Controlled global filter value. When provided, the DataTable uses this instead of its own state. */
+	globalFilter?: string;
+	onGlobalFilterChange?: (value: string) => void;
+	/** If provided, the table's +Add action delegates to this callback instead of opening the built-in modal. */
+	onAddRequest?: () => void;
+	/** Controlled sticky-first-column toggle. */
+	stickyFirstColumnValue?: boolean;
+	onStickyFirstColumnChange?: (value: boolean) => void;
 };
 
 type EntryRow = Record<string, unknown> & { entry_id?: string };
@@ -77,7 +87,7 @@ type EntryRowCell = ReturnType<Row<EntryRow>["getVisibleCells"]>[number];
 
 const CREATED_AT_KEYS = ["created_at", "Created", "createdAt", "created"] as const;
 const UPDATED_AT_KEYS = ["updated_at", "Updated", "updatedAt", "updated"] as const;
-const FIXED_TABLE_COLUMN_IDS = new Set(["select", "actions", "__add_column"]);
+const FIXED_TABLE_COLUMN_IDS = new Set(["__rownum", "select", "actions", "__add_column"]);
 
 /* ─── Helpers ─── */
 
@@ -672,6 +682,12 @@ export function ObjectTable({
 	onColumnSizingChanged,
 	serverPagination,
 	onServerSearch,
+	hideInternalToolbar,
+	globalFilter,
+	onGlobalFilterChange,
+	onAddRequest,
+	stickyFirstColumnValue,
+	onStickyFirstColumnChange,
 }: ObjectTableProps) {
 	const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -992,10 +1008,14 @@ export function ObjectTable({
 		return cols;
 	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onRefresh, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn]);
 
-	// Add entry handler — opens modal instead of creating empty entry
+	// Add entry handler — delegates to parent when provided, otherwise opens local modal.
 	const handleAdd = useCallback(() => {
-		setShowAddModal(true);
-	}, []);
+		if (onAddRequest) {
+			onAddRequest();
+		} else {
+			setShowAddModal(true);
+		}
+	}, [onAddRequest]);
 
 	const getSelectedEntryIds = useCallback(() => {
 		return Object.keys(rowSelection)
@@ -1119,6 +1139,8 @@ export function ObjectTable({
 			addButtonLabel="+ Add"
 			rowActions={getRowActions}
 			stickyFirstColumn
+			stickyFirstColumnValue={stickyFirstColumnValue}
+			onStickyFirstColumnChange={onStickyFirstColumnChange}
 			activeRowId={activeEntryId}
 			getRowId={(row) => String(row.entry_id ?? "")}
 			initialColumnVisibility={columnVisibility}
@@ -1127,6 +1149,9 @@ export function ObjectTable({
 			onColumnSizingChange={onColumnSizingChanged}
 			serverPagination={serverPagination}
 			onServerSearch={onServerSearch}
+			hideToolbar={hideInternalToolbar}
+			globalFilter={globalFilter}
+			onGlobalFilterChange={onGlobalFilterChange}
 			getFirstDataColumnFaviconUrl={getFirstUrlColumnFaviconUrl}
 		/>
 
@@ -1166,7 +1191,7 @@ export function ObjectTable({
 
 /* ─── Add Entry Modal ─── */
 
-function AddEntryModal({
+export function AddEntryModal({
 	objectName,
 	fields,
 	members,

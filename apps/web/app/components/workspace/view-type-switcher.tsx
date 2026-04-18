@@ -76,7 +76,7 @@ type ViewTypeSwitcherProps = {
 
 export function ViewTypeSwitcher({ value, onChange }: ViewTypeSwitcherProps) {
 	return (
-		<div className="flex items-center gap-1">
+		<div className="flex items-center gap-0.5">
 			{VIEW_TYPES.map((vt) => {
 				const meta = VIEW_TYPE_META[vt];
 				const Icon = meta.icon;
@@ -86,16 +86,15 @@ export function ViewTypeSwitcher({ value, onChange }: ViewTypeSwitcherProps) {
 						key={vt}
 						type="button"
 						onClick={() => onChange(vt)}
-						className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded-md transition-colors cursor-pointer"
+						className="flex items-center justify-center w-7 h-7 rounded-md transition-colors cursor-pointer"
 						style={{
 							background: isActive ? "var(--color-surface-hover)" : "transparent",
 							color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
-							fontWeight: isActive ? 500 : 400,
 						}}
 						title={meta.label}
+						aria-label={meta.label}
 					>
 						<Icon />
-						<span className="hidden sm:inline">{meta.label}</span>
 					</button>
 				);
 			})}

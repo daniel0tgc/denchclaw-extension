@@ -39,6 +39,7 @@ type DbObject = {
   name: string;
   icon?: string;
   default_view?: string;
+  hidden_in_sidebar?: boolean | null;
 };
 
 /** Read .object.yaml metadata from a directory if it exists. */
@@ -71,20 +72,66 @@ async function readObjectMeta(
 }
 
 /**
+ * Names that should NEVER appear in the workspace tree, even if a stale
+ * .object.yaml file or folder exists on disk for them. Synced when a
+ * workspace was created before `hidden_in_sidebar` shipped — the rows
+ * still need to be hidden, and re-init'ing the workspace just to trigger
+ * the migration is a terrible UX.
+ *
+ * Kept in sync with the rows the migration marks hidden in
+ * `apps/web/lib/workspace-schema-migrations.ts`.
+ */
+const HARDCODED_HIDDEN_OBJECT_NAMES: ReadonlySet<string> = new Set([
+  "email_thread",
+  "email_message",
+  "calendar_event",
+  "interaction",
+]);
+
+/**
  * Query ALL discovered DuckDB files for objects so we can identify object
  * directories even when .object.yaml files are missing.
  * Shallower databases win on name conflicts (parent priority).
+ *
+ * Returns BOTH the visible-object map AND the set of hidden names, so
+ * buildTree can drop folders whose name is hidden (e.g. a stale
+ * `email_thread/` folder with a `.object.yaml` left over from a previous
+ * sync run that pre-dates the hidden_in_sidebar migration).
  */
-async function loadDbObjects(): Promise<Map<string, DbObject>> {
-  const map = new Map<string, DbObject>();
-  const rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-    "SELECT name, icon, default_view FROM objects",
-    "name",
-  );
-  for (const row of rows) {
-    map.set(row.name, row);
+async function loadDbObjects(): Promise<{
+  visible: Map<string, DbObject>;
+  hidden: Set<string>;
+}> {
+  const visible = new Map<string, DbObject>();
+  const hidden = new Set<string>(HARDCODED_HIDDEN_OBJECT_NAMES);
+  // Tolerate the column not existing on older workspaces — the schema
+  // migration that adds it runs early in workspace init, but if a user
+  // queries before that lands, the COALESCE keeps the query valid.
+  let rows: Array<DbObject & { name: string }> = [];
+  try {
+    rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
+      "SELECT name, icon, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
+      "name",
+    );
+  } catch {
+    // Older DuckDB schema — column doesn't exist. Fall back to fetching
+    // the columns we do have; the HARDCODED_HIDDEN_OBJECT_NAMES set
+    // already keeps the CRM-only objects out of the tree.
+    rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
+      "SELECT name, icon, default_view FROM objects",
+      "name",
+    );
   }
-  return map;
+  for (const row of rows) {
+    if (row.hidden_in_sidebar || HARDCODED_HIDDEN_OBJECT_NAMES.has(row.name)) {
+      hidden.add(row.name);
+      // Skip CRM-only objects (email_thread / email_message / calendar_event /
+      // interaction). They have dedicated UI and shouldn't show in the tree.
+      continue;
+    }
+    visible.set(row.name, row);
+  }
+  return { visible, hidden };
 }
 
 /** Resolve a dirent's effective type, following symlinks to their target. */
@@ -134,6 +181,7 @@ async function buildTree(
   absDir: string,
   relativeBase: string,
   dbObjects: Map<string, DbObject>,
+  hiddenObjectNames: Set<string>,
   showHidden = false,
 ): Promise<TreeNode[]> {
   const nodes: TreeNode[] = [];
@@ -149,6 +197,12 @@ async function buildTree(
     // .object.yaml is always needed for metadata; also shown as a node when showHidden is on
     if (e.name === ".object.yaml") {return true;}
     if (e.name.startsWith(".")) {return showHidden;}
+    // Skip top-level folders whose name matches a hidden CRM object
+    // (email_thread / email_message / calendar_event / interaction).
+    // These folders carry stale `.object.yaml` files from earlier
+    // workspace versions that would otherwise still render as objects
+    // in the sidebar tree.
+    if (relativeBase === "" && hiddenObjectNames.has(e.name)) {return false;}
     return true;
   });
 
@@ -181,7 +235,7 @@ async function buildTree(
       if (entry.name.endsWith(".dench.app")) {
         const manifest = await readAppManifest(absPath);
         const displayName = manifest?.name || entry.name.replace(/\.dench\.app$/, "");
-        const children = showHidden ? await buildTree(absPath, relPath, dbObjects, showHidden) : undefined;
+        const children = showHidden ? await buildTree(absPath, relPath, dbObjects, hiddenObjectNames, showHidden) : undefined;
         nodes.push({
           name: displayName,
           path: relPath,
@@ -196,7 +250,7 @@ async function buildTree(
 
       const objectMeta = await readObjectMeta(absPath);
       const dbObject = dbObjects.get(entry.name);
-      const children = await buildTree(absPath, relPath, dbObjects, showHidden);
+      const children = await buildTree(absPath, relPath, dbObjects, hiddenObjectNames, showHidden);
 
       if (objectMeta || dbObject) {
         nodes.push({
@@ -251,9 +305,9 @@ export async function GET(req: Request) {
     return Response.json({ tree, exists: false, workspaceRoot: null, openclawDir, workspace });
   }
 
-  const dbObjects = await loadDbObjects();
+  const { visible: dbObjects, hidden: hiddenObjectNames } = await loadDbObjects();
 
-  const tree = await buildTree(root, "", dbObjects, showHidden);
+  const tree = await buildTree(root, "", dbObjects, hiddenObjectNames, showHidden);
 
   return Response.json({ tree, exists: true, workspaceRoot: root, openclawDir, workspace });
 }

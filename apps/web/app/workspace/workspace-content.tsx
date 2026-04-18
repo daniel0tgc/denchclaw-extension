@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { WorkspaceSidebar } from "../components/workspace/workspace-sidebar";
 import { type TreeNode } from "../components/workspace/file-manager-tree";
 import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
-import { ObjectTable } from "../components/workspace/object-table";
+import { ObjectTable, AddEntryModal } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
 import { ObjectCalendar, type CalendarDateChangePayload } from "../components/workspace/object-calendar";
 import { ObjectTimeline, type TimelineDateChangePayload } from "../components/workspace/object-timeline";
@@ -25,6 +25,12 @@ import { RichDocumentEditor, isDocxFile, isTxtFile, textToHtml } from "../compon
 import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
+import { PeopleListView } from "../components/crm/people-list-view";
+import { CompaniesListView } from "../components/crm/companies-list-view";
+import { InboxView } from "../components/crm/inbox-view";
+import { CalendarView } from "../components/crm/calendar-view";
+import { PersonProfile } from "../components/crm/person-profile";
+import { CompanyProfile } from "../components/crm/company-profile";
 import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../components/chat-panel";
 import { EntryDetailPanel } from "../components/workspace/entry-detail-panel";
 import { useSearchIndex } from "@/lib/search-index";
@@ -183,7 +189,13 @@ type ContentState =
   | { kind: "cron-session"; jobId: string; job: CronJob; sessionId: string; run: import("../types/cron").CronRunLogEntry }
   | { kind: "duckdb-missing" }
   | { kind: "richDocument"; html: string; filePath: string; mode: "docx" | "txt" }
-  | { kind: "app"; appPath: string; manifest: DenchAppManifest; filename: string };
+  | { kind: "app"; appPath: string; manifest: DenchAppManifest; filename: string }
+  | { kind: "crm-people" }
+  | { kind: "crm-companies" }
+  | { kind: "crm-inbox" }
+  | { kind: "crm-calendar" }
+  | { kind: "crm-person"; entryId: string }
+  | { kind: "crm-company"; entryId: string };
 
 export type DenchAppManifest = {
   name: string;
@@ -1234,17 +1246,34 @@ function WorkspacePageInner() {
     [],
   );
 
-  const handleNavigate = useCallback((target: "cloud" | "integrations" | "skills" | "cron") => {
-    const config = {
-      cloud: { path: "~cloud", name: "Cloud", kind: "cloud" as const },
-      integrations: { path: "~integrations", name: "Integrations", kind: "integrations" as const },
-      skills: { path: "~skills", name: "Skills", kind: "skill-store" as const },
-      cron: { path: "~cron", name: "Cron", kind: "cron-dashboard" as const },
-    }[target];
-    openTabForNode({ path: config.path, name: config.name, type: "folder" });
-    setActivePath(config.path);
-    setContent({ kind: config.kind });
-  }, [openTabForNode]);
+  const handleNavigate = useCallback(
+    (
+      target:
+        | "cloud"
+        | "integrations"
+        | "skills"
+        | "cron"
+        | "crm-people"
+        | "crm-companies"
+        | "crm-inbox"
+        | "crm-calendar",
+    ) => {
+      const config = {
+        cloud: { path: "~cloud", name: "Cloud", kind: "cloud" as const },
+        integrations: { path: "~integrations", name: "Integrations", kind: "integrations" as const },
+        skills: { path: "~skills", name: "Skills", kind: "skill-store" as const },
+        cron: { path: "~cron", name: "Cron", kind: "cron-dashboard" as const },
+        "crm-people": { path: "~crm/people", name: "People", kind: "crm-people" as const },
+        "crm-companies": { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
+        "crm-inbox": { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
+        "crm-calendar": { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+      }[target];
+      openTabForNode({ path: config.path, name: config.name, type: "folder" });
+      setActivePath(config.path);
+      setContent({ kind: config.kind });
+    },
+    [openTabForNode],
+  );
 
   const handleComposioActionFromChat = useCallback((action: ComposioChatAction) => {
     setPendingComposioAction({
@@ -1779,12 +1808,29 @@ function WorkspacePageInner() {
   // Open entry modal handler
   const handleOpenEntry = useCallback(
     (objectName: string, entryId: string) => {
-      setEntryModal({ objectName, entryId });
+      // People + Company entries swap the MAIN panel for an Attio-style
+      // profile (mirroring dench-2025's base-object-vs-generic-object
+      // pattern). All other objects keep the existing side-panel modal.
+      const isPersonProfile = objectName === "people";
+      const isCompanyProfile = objectName === "company" || objectName === "companies";
+      if (isPersonProfile) {
+        openTabForNode({ path: "~crm/people", name: "People", type: "folder" });
+        setActivePath("~crm/people");
+        setContent({ kind: "crm-person", entryId });
+        setEntryModal(null);
+      } else if (isCompanyProfile) {
+        openTabForNode({ path: "~crm/companies", name: "Companies", type: "folder" });
+        setActivePath("~crm/companies");
+        setContent({ kind: "crm-company", entryId });
+        setEntryModal(null);
+      } else {
+        setEntryModal({ objectName, entryId });
+      }
       const params = new URLSearchParams(searchParams.toString());
       params.set("entry", `${objectName}:${entryId}`);
       router.push(`/?${params.toString()}`, { scroll: false });
     },
-    [searchParams, router],
+    [searchParams, router, openTabForNode],
   );
 
   // Close entry modal handler
@@ -1838,6 +1884,20 @@ function WorkspacePageInner() {
         openTabForNode({ path: "~cloud", name: "Cloud", type: "folder" });
         setActivePath("~cloud");
         setContent({ kind: "cloud" });
+      } else if (urlState.path.startsWith("~crm/")) {
+        const view = urlState.path.slice("~crm/".length).split("/")[0];
+        const map: Record<string, { name: string; kind: "crm-people" | "crm-companies" | "crm-inbox" | "crm-calendar" } | undefined> = {
+          people: { name: "People", kind: "crm-people" },
+          companies: { name: "Companies", kind: "crm-companies" },
+          inbox: { name: "Inbox", kind: "crm-inbox" },
+          calendar: { name: "Calendar", kind: "crm-calendar" },
+        };
+        const entry = map[view];
+        if (entry) {
+          openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
+          setActivePath(urlState.path);
+          setContent({ kind: entry.kind });
+        }
       } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
         const name = urlState.path.split("/").pop() || urlState.path;
         const syntheticNode: TreeNode = { name, path: urlState.path, type: "file" };
@@ -1847,6 +1907,18 @@ function WorkspacePageInner() {
       if (urlState.fileChat) {
         setFileChatSessionId(urlState.fileChat);
       }
+    } else if (urlState.crm) {
+      // Top-level CRM view (People/Companies/Inbox/Calendar) — render a
+      // dedicated component in the main panel.
+      const map = {
+        people: { path: "~crm/people", name: "People", kind: "crm-people" as const },
+        companies: { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
+        inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
+        calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+      }[urlState.crm];
+      openTabForNode({ path: map.path, name: map.name, type: "folder" });
+      setActivePath(map.path);
+      setContent({ kind: map.kind });
     } else if (urlState.chat) {
       if (urlState.subagent) {
         openSubagentChatTab({
@@ -1865,7 +1937,25 @@ function WorkspacePageInner() {
     }
 
     if (urlState.entry) {
-      setEntryModal(urlState.entry);
+      // People + Company entries get the dedicated profile UI in the main
+      // panel (mirrors dench-2025's "base object full screen" pattern).
+      // Other objects keep the existing side-panel entry modal flow.
+      if (urlState.entry.objectName === "people") {
+        const map = { path: "~crm/people", name: "People", type: "folder" as const };
+        openTabForNode(map);
+        setActivePath(map.path);
+        setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
+      } else if (
+        urlState.entry.objectName === "company" ||
+        urlState.entry.objectName === "companies"
+      ) {
+        const map = { path: "~crm/companies", name: "Companies", type: "folder" as const };
+        openTabForNode(map);
+        setActivePath(map.path);
+        setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
+      } else {
+        setEntryModal(urlState.entry);
+      }
     }
     if (urlState.browse) {
       setBrowseDir(urlState.browse);
@@ -1937,6 +2027,20 @@ function WorkspacePageInner() {
           openTabForNode({ path: "~cloud", name: "Cloud", type: "folder" });
           setActivePath("~cloud");
           setContent({ kind: "cloud" });
+        } else if (urlState.path.startsWith("~crm/")) {
+          const view = urlState.path.slice("~crm/".length).split("/")[0];
+          const map: Record<string, { name: string; kind: "crm-people" | "crm-companies" | "crm-inbox" | "crm-calendar" } | undefined> = {
+            people: { name: "People", kind: "crm-people" },
+            companies: { name: "Companies", kind: "crm-companies" },
+            inbox: { name: "Inbox", kind: "crm-inbox" },
+            calendar: { name: "Calendar", kind: "crm-calendar" },
+          };
+          const entry = map[view];
+          if (entry) {
+            openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
+            setActivePath(urlState.path);
+            setContent({ kind: entry.kind });
+          }
         } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
           const name = urlState.path.split("/").pop() || urlState.path;
           const synNode: TreeNode = { name, path: urlState.path, type: "file" };
@@ -1944,6 +2048,16 @@ function WorkspacePageInner() {
           void loadContent(synNode);
         }
         setFileChatSessionId(urlState.fileChat);
+      } else if (urlState.crm) {
+        const map = {
+          people: { path: "~crm/people", name: "People", kind: "crm-people" as const },
+          companies: { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
+          inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
+          calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+        }[urlState.crm];
+        openTabForNode({ path: map.path, name: map.name, type: "folder" });
+        setActivePath(map.path);
+        setContent({ kind: map.kind });
       } else if (urlState.chat) {
         if (urlState.subagent) {
           openSubagentChatTab({
@@ -1975,7 +2089,22 @@ function WorkspacePageInner() {
       }
 
       if (urlState.entry) {
-        setEntryModal(urlState.entry);
+        if (urlState.entry.objectName === "people") {
+          openTabForNode({ path: "~crm/people", name: "People", type: "folder" });
+          setActivePath("~crm/people");
+          setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
+          setEntryModal(null);
+        } else if (
+          urlState.entry.objectName === "company" ||
+          urlState.entry.objectName === "companies"
+        ) {
+          openTabForNode({ path: "~crm/companies", name: "Companies", type: "folder" });
+          setActivePath("~crm/companies");
+          setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
+          setEntryModal(null);
+        } else {
+          setEntryModal(urlState.entry);
+        }
       } else {
         setEntryModal(null);
       }
@@ -2466,6 +2595,17 @@ function WorkspacePageInner() {
                 activeTab={sidebarTab}
                 onTabChange={setSidebarTab}
                 onNavigate={handleNavigate}
+                activeCrmTarget={
+                  content.kind === "crm-people" || content.kind === "crm-person"
+                    ? "people"
+                    : content.kind === "crm-companies" || content.kind === "crm-company"
+                      ? "companies"
+                      : content.kind === "crm-inbox"
+                        ? "inbox"
+                        : content.kind === "crm-calendar"
+                          ? "calendar"
+                          : null
+                }
               />
             </div>
           </div>
@@ -3685,6 +3825,38 @@ function ContentRenderer({
         />
       );
 
+    case "crm-people":
+      return <PeopleListView onOpenPerson={(id) => onOpenEntry("people", id)} />;
+
+    case "crm-companies":
+      return <CompaniesListView onOpenCompany={(id) => onOpenEntry("company", id)} />;
+
+    case "crm-inbox":
+      return <InboxView onOpenPerson={(id) => onOpenEntry("people", id)} />;
+
+    case "crm-calendar":
+      return <CalendarView onOpenPerson={(id) => onOpenEntry("people", id)} />;
+
+    case "crm-person":
+      return (
+        <PersonProfile
+          personId={content.entryId}
+          onOpenPerson={(id) => onOpenEntry("people", id)}
+          onOpenCompany={(id) => onOpenEntry("company", id)}
+          onBackToList={() => onNavigate("/?crm=people")}
+        />
+      );
+
+    case "crm-company":
+      return (
+        <CompanyProfile
+          companyId={content.entryId}
+          onOpenPerson={(id) => onOpenEntry("people", id)}
+          onOpenCompany={(id) => onOpenEntry("company", id)}
+          onBackToList={() => onNavigate("/?crm=companies")}
+        />
+      );
+
     case "none":
     default:
       if (tree.length === 0) {
@@ -3759,6 +3931,11 @@ function ObjectView({
   const [columnWidths, setColumnWidths] = useState<Record<string, number> | undefined>(
     () => data.viewSettings?.column_widths,
   );
+
+  // --- Unified toolbar state (lifted up so the controls live above the view) ---
+  const [globalFilter, setGlobalFilter] = useState<string>(initialUrlState.search ?? "");
+  const [stickyFirstColumn, setStickyFirstColumn] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   // Sync object view state to URL params (additive — preserves path/entry/browse params).
   // Skip the initial render to avoid overwriting URL params that haven't been
@@ -4200,75 +4377,107 @@ function ObjectView({
     { id: "updated_at", name: "updated_at", type: "date" } as typeof data.fields[number],
   ], [data.fields]);
 
+  // Keep the unified search input in sync with external changes to serverSearch
+  // (e.g. when loading a saved view that clears search).
+  useEffect(() => {
+    setGlobalFilter(serverSearch);
+  }, [serverSearch]);
+
+  // Unified search handler — drives the global filter (for live UI feedback)
+  // and triggers the debounced server-side search.
+  const handleGlobalFilterChange = useCallback(
+    (value: string) => {
+      setGlobalFilter(value);
+      handleServerSearch(value);
+    },
+    [handleServerSearch],
+  );
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Object header — compact single bar */}
+    <div className="flex flex-col h-full min-w-0 overflow-hidden">
+      {/* Unified toolbar — title + count, view switcher, search, filter, views, settings, refresh, +Add */}
       <div
-        className="px-5 py-2.5 flex items-center gap-3 flex-shrink-0"
+        className="px-4 py-1.5 flex items-center gap-3 flex-shrink-0 min-w-0 overflow-hidden"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
-        <h1
-          className="text-sm font-semibold capitalize"
-          style={{ color: "var(--color-text)" }}
-        >
-          {data.object.name}
-        </h1>
-        {data.object.description && (
-          <span
-            className="text-xs"
-            style={{ color: "var(--color-text-muted)" }}
+        {/* Left: title + count (shrinks first when space is tight) */}
+        <div className="flex items-center gap-2 min-w-0 flex-shrink">
+          <h1
+            className="text-sm font-semibold capitalize truncate"
+            style={{ color: "var(--color-text)" }}
+            title={data.object.description || data.object.name}
           >
-            {data.object.description}
+            {data.object.name}
+          </h1>
+          <span
+            className="text-[11px] tabular-nums px-1.5 py-0.5 rounded-full flex-shrink-0"
+            style={{
+              color: "var(--color-text-muted)",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+            }}
+            title={`${totalCount.toLocaleString()} ${totalCount === 1 ? "entry" : "entries"} · ${data.fields.length} fields`}
+          >
+            {totalCount.toLocaleString()}
           </span>
-        )}
-        <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-          {totalCount} {totalCount === 1 ? "entry" : "entries"} · {data.fields.length} fields
-        </span>
-        <div className="flex-1" />
-        {displayFieldCandidates.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-              Display field:
-            </span>
-            <select
-              value={data.effectiveDisplayField ?? ""}
-              onChange={(e) => handleDisplayFieldChange(e.target.value)}
-              disabled={updatingDisplayField}
-              className="text-[11px] px-1.5 py-0.5 rounded outline-none cursor-pointer"
-              style={{
-                background: "var(--color-surface)",
-                color: "var(--color-text)",
-                border: "1px solid var(--color-border)",
-                opacity: updatingDisplayField ? 0.5 : 1,
-              }}
+        </div>
+
+        {/* Middle: icon-only view switcher */}
+        <ViewTypeSwitcher value={currentViewType} onChange={handleViewTypeChange} />
+
+        <div className="flex-1 min-w-0" />
+
+        {/* Right: search, filter, views, settings, refresh, +Add */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Search input — hidden on narrow widths so the rest of the toolbar fits */}
+          <div
+            className="hidden md:flex items-center gap-1.5 h-7 px-2 rounded-md focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow"
+            style={{
+              border: "1px solid var(--color-border)",
+              background: "var(--color-surface)",
+              width: 180,
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="shrink-0"
+              style={{ color: "var(--color-text-muted)", opacity: 0.6 }}
             >
-              {displayFieldCandidates.map((f) => (
-                <option key={f.id} value={f.name}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-            {updatingDisplayField && (
-              <div
-                className="w-3 h-3 border border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: "var(--color-text-muted)" }}
-              />
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={globalFilter}
+              onChange={(e) => handleGlobalFilterChange(e.target.value)}
+              placeholder={`Search ${data.object.name}...`}
+              className="w-full h-full text-[12px] bg-transparent outline-none border-0 p-0"
+              style={{ color: "var(--color-text)" }}
+            />
+            {globalFilter && (
+              <button
+                type="button"
+                onClick={() => handleGlobalFilterChange("")}
+                className="shrink-0 h-4 w-4 rounded-full flex items-center justify-center cursor-pointer"
+                style={{ color: "var(--color-text-muted)" }}
+                title="Clear search"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
             )}
           </div>
-        )}
-      </div>
 
-      {/* View switcher + Filter bar — single row */}
-      <div
-        className="px-5 py-1.5 flex items-center gap-4 flex-shrink-0"
-        style={{ borderBottom: "1px solid var(--color-border)" }}
-      >
-        <ViewTypeSwitcher value={currentViewType} onChange={handleViewTypeChange} />
-        <div
-          className="w-px h-4 flex-shrink-0"
-          style={{ background: "var(--color-border)" }}
-        />
-        <div className="flex-1 min-w-0">
+          {/* Filter + Views (compact pills) */}
           <ObjectFilterBar
             fields={data.fields}
             filters={filters}
@@ -4281,13 +4490,59 @@ function ObjectView({
             onSetActiveView={handleSetActiveView}
             members={filterBarMembers}
           />
+
+          {/* Settings gear — description, display field, view-type settings, columns */}
+          <ViewSettingsPopover
+            viewType={currentViewType}
+            settings={effectiveSettings}
+            fields={fieldsWithTimestamps}
+            onSettingsChange={handleViewSettingsChange}
+            description={data.object.description}
+            displayField={data.effectiveDisplayField}
+            displayFieldCandidates={displayFieldCandidates}
+            onDisplayFieldChange={handleDisplayFieldChange}
+            updatingDisplayField={updatingDisplayField}
+            columnVisibility={columnVisibility}
+            onColumnVisibilityChange={handleColumnVisibilityChanged}
+            stickyFirstColumn={stickyFirstColumn}
+            onStickyFirstColumnChange={setStickyFirstColumn}
+          />
+
+          {/* Refresh */}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="flex items-center justify-center w-7 h-7 rounded-md hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+            style={{ color: "var(--color-text-muted)" }}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+              <path d="M16 21h5v-5" />
+            </svg>
+          </button>
+
+          {/* Add entry button */}
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1 h-7 px-2.5 rounded-md text-[12px] font-medium cursor-pointer transition-colors"
+            style={{
+              background: "var(--color-accent)",
+              color: "#fff",
+            }}
+            title={`Add ${data.object.name}`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+            <span className="hidden md:inline">Add</span>
+          </button>
         </div>
-        <ViewSettingsPopover
-          viewType={currentViewType}
-          settings={effectiveSettings}
-          fields={fieldsWithTimestamps}
-          onSettingsChange={handleViewSettingsChange}
-        />
       </div>
 
       {/* View renderer — full-width, no padding */}
@@ -4331,6 +4586,12 @@ function ObjectView({
               onPageSizeChange: handlePageSizeChange,
             }}
             onServerSearch={handleServerSearch}
+            hideInternalToolbar
+            globalFilter={globalFilter}
+            onGlobalFilterChange={handleGlobalFilterChange}
+            stickyFirstColumnValue={stickyFirstColumn}
+            onStickyFirstColumnChange={setStickyFirstColumn}
+            onAddRequest={() => setShowAddModal(true)}
           />
         )}
         {currentViewType === "calendar" && (
@@ -4394,6 +4655,17 @@ function ObjectView({
           </div>
         )}
       </div>
+
+      {/* Add entry modal — lifted here so +Add works from any view */}
+      {showAddModal && (
+        <AddEntryModal
+          objectName={data.object.name}
+          fields={data.fields.filter((f) => f.type !== "action")}
+          members={members}
+          onClose={() => setShowAddModal(false)}
+          onSaved={handleRefresh}
+        />
+      )}
     </div>
   );
 }

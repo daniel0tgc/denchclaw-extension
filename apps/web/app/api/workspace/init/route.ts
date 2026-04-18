@@ -24,6 +24,7 @@ import {
 } from "@/lib/workspace-seed";
 import { resolveDenchPackageRoot } from "@/lib/project-root";
 import { trackServer } from "@/lib/telemetry";
+import { ensureLatestSchema } from "@/lib/workspace-schema-migrations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -182,6 +183,16 @@ export async function POST(req: Request) {
   // Switch the UI to the new workspace.
   setUIActiveWorkspace(workspaceName);
   const activeWorkspace = getActiveWorkspaceName();
+
+  // Apply onboarding-related schema additions on top of the seed (idempotent).
+  // Existing workspaces predating onboarding get the new objects/fields here;
+  // brand-new workspaces just have the seed run them and confirm.
+  try {
+    await ensureLatestSchema();
+  } catch {
+    // Non-fatal: the workspace works without the new objects, the user just
+    // won't see Gmail-imported rows until the migration is re-run.
+  }
 
   trackServer("workspace_created", { has_seed: seedBootstrap });
 

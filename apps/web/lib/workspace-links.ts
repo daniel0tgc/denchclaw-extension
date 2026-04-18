@@ -37,6 +37,7 @@ export type WorkspaceLink =
 
 export type CronDashboardView = "overview" | "calendar" | "timeline" | "insights";
 export type CronRunStatusFilter = "all" | "ok" | "error" | "running";
+export type CrmView = "people" | "companies" | "inbox" | "calendar";
 
 export type WorkspaceUrlState = {
   path: string | null;
@@ -69,6 +70,10 @@ export type WorkspaceUrlState = {
   cronRun: number | null;
   /** Whether the terminal drawer is open. */
   terminal: boolean;
+  /** Active CRM top-level view (renders in the main panel). */
+  crm: CrmView | null;
+  /** Selected email thread id when the Inbox CRM view is active. */
+  thread: string | null;
 };
 
 const VALID_VIEW_TYPES: ViewType[] = [
@@ -78,6 +83,7 @@ const VALID_VIEW_TYPES: ViewType[] = [
 const VALID_CRON_VIEWS: CronDashboardView[] = ["overview", "calendar", "timeline", "insights"];
 const VALID_CRON_CAL_MODES: CalendarMode[] = ["day", "week", "month", "year"];
 const VALID_CRON_RUN_FILTERS: CronRunStatusFilter[] = ["all", "ok", "error", "running"];
+const VALID_CRM_VIEWS: CrmView[] = ["people", "companies", "inbox", "calendar"];
 
 // ---------------------------------------------------------------------------
 // URL state codec
@@ -125,6 +131,7 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
   const cronCalModeRaw = params.get("cronCalMode") as CalendarMode | null;
   const cronRunFilterRaw = params.get("cronRunFilter") as CronRunStatusFilter | null;
   const cronRunRaw = params.get("cronRun");
+  const crmRaw = params.get("crm") as CrmView | null;
 
   return {
     path: params.get("path"),
@@ -153,6 +160,8 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
     cronRunFilter: cronRunFilterRaw && VALID_CRON_RUN_FILTERS.includes(cronRunFilterRaw) ? cronRunFilterRaw : null,
     cronRun: cronRunRaw ? parseInt(cronRunRaw, 10) || null : null,
     terminal: params.get("terminal") === "1",
+    crm: crmRaw && VALID_CRM_VIEWS.includes(crmRaw) ? crmRaw : null,
+    thread: params.get("thread"),
   };
 }
 
@@ -189,6 +198,8 @@ export function serializeUrlState(state: Partial<WorkspaceUrlState>): string {
   if (state.cronRunFilter && state.cronRunFilter !== "all") params.set("cronRunFilter", state.cronRunFilter);
   if (state.cronRun != null) params.set("cronRun", String(state.cronRun));
   if (state.terminal) params.set("terminal", "1");
+  if (state.crm) params.set("crm", state.crm);
+  if (state.thread) params.set("thread", state.thread);
 
   return params.toString();
 }
@@ -331,6 +342,11 @@ export function buildBrowseLink(dir: string, showHidden?: boolean): string {
   p.set("browse", dir);
   if (showHidden) p.set("hidden", "1");
   return `/?${p.toString()}`;
+}
+
+/** Build a URL for a CRM top-level view. */
+export function buildCrmLink(view: CrmView): string {
+  return `/?crm=${view}`;
 }
 
 // ---------------------------------------------------------------------------

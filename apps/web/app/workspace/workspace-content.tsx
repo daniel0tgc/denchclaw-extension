@@ -2383,15 +2383,24 @@ function WorkspacePageInner() {
   }, [activeContentTabId, contentTabs]);
 
   // v3: the center always shows a chat panel. If no chat tab exists (e.g. after
-  // closing the last one), create a fresh blank one so the hero state ("What can
-  // I help with?") renders instead of an empty center.
+  // closing the last one, on a fresh refresh, or before tab hydration completes),
+  // create a fresh blank one so the hero state ("What can I help with?") renders
+  // instead of an empty center.
   useEffect(() => {
     if (mainChatTabs.length > 0) return;
-    if (hydrationPhase.current !== "hydrated") return;
     const tab = createBlankChatTab();
     setTabState((prev) => openTab(prev, tab, { preview: true }));
     setActiveChatTabId(tab.id);
   }, [mainChatTabs.length]);
+
+  // Belt-and-braces: if visibleMainChatTabId loses its target (e.g. tab was
+  // closed externally), point activeChatTabId at the first available chat tab so
+  // the center never renders blank.
+  useEffect(() => {
+    if (mainChatTabs.length === 0) return;
+    if (activeChatTabId && mainChatTabs.some((t) => t.id === activeChatTabId)) return;
+    setActiveChatTabId(mainChatTabs[0].id);
+  }, [activeChatTabId, mainChatTabs]);
 
   // Right-panel content tab handlers.
   const handleContentTabActivate = useCallback(

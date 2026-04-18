@@ -357,6 +357,7 @@ These steps ensure the filesystem always mirrors DuckDB. The sidebar depends on 
 ## Common Mistakes and Recovery
 
 ### Object exists in DuckDB but doesn't appear in the sidebar
+
 The `.object.yaml` file is missing. Regenerate it:
 
 ```bash
@@ -366,6 +367,7 @@ mkdir -p {{WORKSPACE_PATH}}/lead
 ```
 
 ### PIVOT view returns wrong columns or errors
+
 The `IN (...)` field list is out of date. Regenerate the view by querying current fields:
 
 ```bash
@@ -374,6 +376,7 @@ duckdb {{WORKSPACE_PATH}}/workspace.duckdb -json "SELECT name FROM fields WHERE 
 ```
 
 ### `.object.yaml` is out of sync with DuckDB
+
 Query the current state and rewrite the file:
 
 ```bash
@@ -384,4 +387,5 @@ duckdb {{WORKSPACE_PATH}}/workspace.duckdb -json "SELECT name, type, required, e
 ```
 
 ### DuckDB name doesn't match directory name
+
 All three must be identical: the DuckDB `objects.name`, the filesystem directory name, and `.object.yaml` `name`. If they diverge, rename them to match. See the "Renaming / Moving Objects" section in the parent CRM skill.

@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { TraceContextManager, resolveSessionKey } from "../../extensions/posthog-analytics/lib/trace-context.js";
+import {
+  TraceContextManager,
+  resolveSessionKey,
+} from "../../extensions/posthog-analytics/lib/trace-context.js";
 
 describe("resolveSessionKey", () => {
   it("prefers sessionId over sessionKey and runId", () => {
@@ -107,9 +110,7 @@ describe("TraceContextManager", () => {
 
   it("redacts message content when privacy mode is on (prevents content leakage)", () => {
     ctx.startTrace("s", "r");
-    ctx.setInput("s", [
-      { role: "user", content: "My SSN is 123-45-6789" },
-    ], true);
+    ctx.setInput("s", [{ role: "user", content: "My SSN is 123-45-6789" }], true);
     const input = ctx.getTrace("s")!.input as Array<Record<string, unknown>>;
     expect(input[0].content).toBe("[REDACTED]");
     expect(input[0].role).toBe("user");

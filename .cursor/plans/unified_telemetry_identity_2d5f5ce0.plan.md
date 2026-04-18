@@ -37,7 +37,7 @@ We already have concrete evidence that identity is fragmented:
 
 - `[src/telemetry/telemetry.ts](src/telemetry/telemetry.ts)` uses a **machine hash** via `getAnonymousId()`.
 - `[extensions/posthog-analytics/lib/event-mappers.ts](extensions/posthog-analytics/lib/event-mappers.ts)` also uses a **machine hash** for all `$ai_*` events.
-- `[apps/web/lib/telemetry.ts](apps/web/lib/telemetry.ts)` falls back to `**randomUUID()`** when `distinctId` is not explicitly passed.
+- `[apps/web/lib/telemetry.ts](apps/web/lib/telemetry.ts)` falls back to `**randomUUID()`\*\* when `distinctId` is not explicitly passed.
 - `[apps/web/app/components/posthog-provider.tsx](apps/web/app/components/posthog-provider.tsx)` initializes `posthog-js` without a server-provided bootstrap distinct ID, so the browser can mint its own in-memory identity.
 - `[apps/web/app/api/web-sessions/shared.ts](apps/web/app/api/web-sessions/shared.ts)` stores session metadata but has no persisted telemetry identity.
 
@@ -86,8 +86,6 @@ flowchart TD
   TelemetryJson --> PluginPrivacy --> PluginEvents
   SessionRoutes --> TrackServer
 ```
-
-
 
 ## Design
 
@@ -254,4 +252,3 @@ After this change:
 - CLI events, web server events, browser events, feedback events, and OpenClaw plugin `$ai_*` events all roll up under the same person
 - users no longer appear fragmented across browser/server/plugin telemetry
 - the identity works for first-run `npx denchclaw` because it is created by the CLI/bootstrap path before the browser exists
-

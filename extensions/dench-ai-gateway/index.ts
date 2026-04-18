@@ -1,3 +1,5 @@
+import { registerDenchIntegrationsBridge } from "./composio-bridge.js";
+import { buildDenchCloudConfigPatch, buildDenchCloudProviderConfig } from "./config-patch.js";
 import {
   buildDenchGatewayApiBaseUrl,
   buildDenchGatewayCatalogUrl,
@@ -9,11 +11,6 @@ import {
   resolveDenchCloudModel,
   type DenchCloudCatalogModel,
 } from "./models.js";
-import {
-  buildDenchCloudConfigPatch,
-  buildDenchCloudProviderConfig,
-} from "./config-patch.js";
-import { registerDenchIntegrationsBridge } from "./composio-bridge.js";
 export { buildDenchCloudConfigPatch } from "./config-patch.js";
 
 export const id = "dench-ai-gateway";
@@ -43,7 +40,8 @@ function resolvePluginConfig(api: any): UnknownRecord | undefined {
 
 function resolveGatewayUrl(api: any): string {
   const pluginConfig = resolvePluginConfig(api);
-  const configured = typeof pluginConfig?.gatewayUrl === "string" ? pluginConfig.gatewayUrl : undefined;
+  const configured =
+    typeof pluginConfig?.gatewayUrl === "string" ? pluginConfig.gatewayUrl : undefined;
   return normalizeDenchGatewayUrl(
     configured || process.env.DENCH_GATEWAY_URL || DEFAULT_DENCH_CLOUD_GATEWAY_URL,
   );
@@ -100,10 +98,7 @@ export async function fetchDenchCloudCatalog(gatewayUrl: string): Promise<Catalo
   }
 }
 
-export async function validateDenchCloudApiKey(
-  gatewayUrl: string,
-  apiKey: string,
-): Promise<void> {
+export async function validateDenchCloudApiKey(gatewayUrl: string, apiKey: string): Promise<void> {
   const response = await fetch(`${buildDenchGatewayApiBaseUrl(gatewayUrl)}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -145,10 +140,7 @@ async function promptForModelSelection(params: {
   return selected;
 }
 
-function buildAuthNotes(params: {
-  gatewayUrl: string;
-  catalog: CatalogLoadResult;
-}): string[] {
+function buildAuthNotes(params: { gatewayUrl: string; catalog: CatalogLoadResult }): string[] {
   const notes = [
     `Dench Cloud uses ${buildDenchGatewayApiBaseUrl(params.gatewayUrl)} for model traffic.`,
   ];
@@ -215,10 +207,7 @@ async function runInteractiveAuth(ctx: any, gatewayUrl: string) {
 
 async function runNonInteractiveAuth(ctx: any, gatewayUrl: string) {
   const apiKey = String(
-    ctx?.opts?.denchCloudApiKey ||
-      ctx?.opts?.denchCloudKey ||
-      resolveEnvApiKey() ||
-      "",
+    ctx?.opts?.denchCloudApiKey || ctx?.opts?.denchCloudKey || resolveEnvApiKey() || "",
   ).trim();
   if (!apiKey) {
     throw new Error(

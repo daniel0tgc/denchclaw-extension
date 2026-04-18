@@ -66,10 +66,9 @@ describe("getOrCreateAnonymousId", () => {
     const id = getOrCreateAnonymousId();
 
     expect(id).toBe("fresh-install-id");
-    expect(mockMkdirSync).toHaveBeenCalledWith(
-      expect.stringContaining("state-dir"),
-      { recursive: true },
-    );
+    expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringContaining("state-dir"), {
+      recursive: true,
+    });
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
     const written = JSON.parse(mockWriteFileSync.mock.calls[0][1]);
     expect(written.anonymousId).toBe("fresh-install-id");
@@ -117,9 +116,7 @@ describe("readTelemetryConfig", () => {
 
   it("includes anonymousId when present in telemetry.json", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ enabled: true, anonymousId: "stored-id" }),
-    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabled: true, anonymousId: "stored-id" }));
 
     const { readTelemetryConfig } = await import("./config.js");
     const config = readTelemetryConfig();
@@ -171,9 +168,7 @@ describe("readPersonInfo", () => {
 
   it("returns null when no identity fields are present", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ enabled: true, anonymousId: "some-id" }),
-    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabled: true, anonymousId: "some-id" }));
 
     const { readPersonInfo } = await import("./config.js");
     expect(readPersonInfo()).toBeNull();
@@ -188,9 +183,7 @@ describe("readPersonInfo", () => {
 
   it("returns person info when name is set", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ enabled: true, name: "Alice" }),
-    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabled: true, name: "Alice" }));
 
     const { readPersonInfo } = await import("./config.js");
     const info = readPersonInfo();
@@ -199,9 +192,7 @@ describe("readPersonInfo", () => {
 
   it("returns person info when email is set", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ enabled: true, email: "alice@example.com" }),
-    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabled: true, email: "alice@example.com" }));
 
     const { readPersonInfo } = await import("./config.js");
     const info = readPersonInfo();
@@ -243,9 +234,7 @@ describe("readPersonInfo", () => {
 
   it("ignores non-string identity fields", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ enabled: true, name: 42, email: true }),
-    );
+    mockReadFileSync.mockReturnValue(JSON.stringify({ enabled: true, name: 42, email: true }));
 
     const { readPersonInfo } = await import("./config.js");
     expect(readPersonInfo()).toBeNull();

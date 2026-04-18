@@ -44,6 +44,7 @@ Plus **AI Slop Detection** — check for gratuitous gradients, card soup, icon o
 For each finding:
 
 ### Mechanical CSS fixes → AUTO-FIX
+
 - `outline: none` without alternative focus indicator → add `focus-visible` styles
 - `!important` that can be removed → increase specificity instead
 - `font-size < 16px` on mobile inputs → set to 16px to prevent iOS zoom
@@ -51,6 +52,7 @@ For each finding:
 - Color contrast below WCAG AA → adjust colors
 
 ### Design judgment needed → ASK
+
 Present each with before/after description and let the user decide.
 
 ---

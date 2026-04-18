@@ -35,42 +35,50 @@ Flag these specifically and recommend alternatives.
 Rate each dimension 0-10. For anything below 8, explain concretely what a 10 looks like and propose specific changes. Ask the user for input on each design choice.
 
 ### 1. Information Architecture (0-10)
+
 - Is the content hierarchy correct? What does the user see first, second, third?
 - Are there unnecessary levels of nesting?
 - Can the user find what they need without thinking?
 
 ### 2. Interaction Design (0-10)
+
 - Are interactions predictable? Does the UI respond to every user action?
 - Are empty states designed? Loading states? Error states?
 - Edge cases: what happens with 0 items? 1 item? 10,000 items? Very long text?
 
 ### 3. Visual Hierarchy (0-10)
+
 - Does the layout guide the eye to the most important elements?
 - Is there enough contrast between primary and secondary content?
 - Does the typography scale work? (Heading sizes, body text, captions)
 
 ### 4. Consistency (0-10)
+
 - Are patterns reused? Or does every screen invent its own layout?
 - Are button styles consistent? Form styles? Spacing?
 - Does it follow the existing design system (if one exists)?
 
 ### 5. Accessibility (0-10)
+
 - Color contrast ratios (WCAG AA minimum)
 - Keyboard navigation for all interactive elements
 - Screen reader support (proper ARIA labels, semantic HTML)
 - Focus indicators visible
 
 ### 6. Responsiveness (0-10)
+
 - Does it work at 375px (mobile)? 768px (tablet)? 1440px (desktop)?
 - Are touch targets at least 44px?
 - Does content reflow gracefully?
 
 ### 7. Performance (0-10)
+
 - Are images optimized? Using appropriate formats?
 - Is the layout shift minimal? (CLS)
 - Does it feel instant? (LCP < 2.5s)
 
 ### 8. Delight (0-10)
+
 - Is there anything that makes the user smile?
 - Are transitions smooth and purposeful (not decorative)?
 - Does it feel crafted or generated?

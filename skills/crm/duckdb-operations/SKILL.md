@@ -172,22 +172,22 @@ SELECT * FROM v_lead WHERE "Email Address" LIKE '%@gmail.com';
 
 ## Field Types Reference
 
-| Type     | Description                           | Storage                   | Query Cast  | API Create |
-| -------- | ------------------------------------- | ------------------------- | ----------- | ---------- |
-| text     | General text, names, descriptions     | VARCHAR                   | none        | yes |
-| email    | Email addresses (validated)           | VARCHAR                   | none        | yes |
-| phone    | Phone numbers (normalized)            | VARCHAR                   | none        | yes |
-| url      | URLs / website addresses              | VARCHAR                   | none        | yes |
-| number   | Numeric values (prices, scores)       | VARCHAR                   | `::NUMERIC` | yes |
-| boolean  | Yes/no flags                          | "true"/"false"            | `= 'true'`  | yes |
-| date     | ISO 8601 dates                        | VARCHAR                   | `::DATE`    | yes |
-| richtext | Rich text for Notes fields            | VARCHAR                   | none        | yes |
-| file     | File attachments                      | VARCHAR (file path/URL)   | none        | yes |
-| user     | Member ID from workspace_context.yaml | VARCHAR                   | none        | SQL only |
-| enum     | Dropdown with predefined values       | VARCHAR                   | none        | yes |
-| relation | Link to entry in another object       | VARCHAR (entry ID)        | none        | SQL only |
-| tags     | Free-form string array (labels, tags) | VARCHAR (JSON array str)  | none        | yes |
-| action   | Executable buttons (server-side scripts) | No entry_fields values (config in `default_value`) | N/A — excluded from PIVOT | yes |
+| Type     | Description                              | Storage                                            | Query Cast                | API Create |
+| -------- | ---------------------------------------- | -------------------------------------------------- | ------------------------- | ---------- |
+| text     | General text, names, descriptions        | VARCHAR                                            | none                      | yes        |
+| email    | Email addresses (validated)              | VARCHAR                                            | none                      | yes        |
+| phone    | Phone numbers (normalized)               | VARCHAR                                            | none                      | yes        |
+| url      | URLs / website addresses                 | VARCHAR                                            | none                      | yes        |
+| number   | Numeric values (prices, scores)          | VARCHAR                                            | `::NUMERIC`               | yes        |
+| boolean  | Yes/no flags                             | "true"/"false"                                     | `= 'true'`                | yes        |
+| date     | ISO 8601 dates                           | VARCHAR                                            | `::DATE`                  | yes        |
+| richtext | Rich text for Notes fields               | VARCHAR                                            | none                      | yes        |
+| file     | File attachments                         | VARCHAR (file path/URL)                            | none                      | yes        |
+| user     | Member ID from workspace_context.yaml    | VARCHAR                                            | none                      | SQL only   |
+| enum     | Dropdown with predefined values          | VARCHAR                                            | none                      | yes        |
+| relation | Link to entry in another object          | VARCHAR (entry ID)                                 | none                      | SQL only   |
+| tags     | Free-form string array (labels, tags)    | VARCHAR (JSON array str)                           | none                      | yes        |
+| action   | Executable buttons (server-side scripts) | No entry_fields values (config in `default_value`) | N/A — excluded from PIVOT | yes        |
 
 **"API Create" column**: "yes" means the field can be created via `POST /api/workspace/objects/{name}/fields`. "SQL only" means you must create it directly in DuckDB (the API endpoint does not accept `user` or `relation` types).
 

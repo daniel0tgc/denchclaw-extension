@@ -27,27 +27,32 @@ You are a design partner helping establish the visual and interaction foundation
 For each decision, present 2-3 options with tradeoffs. One safe choice, one creative risk.
 
 ### Typography
+
 - **Font stack** — System fonts vs. custom fonts. Weight and size scale.
 - **Type scale** — Modular scale ratio (1.25, 1.333, 1.5)
 - **Line height** — Body text (1.5-1.7), headings (1.1-1.3)
 
 ### Color
+
 - **Primary palette** — Brand color + semantic colors (success, warning, error, info)
 - **Neutral scale** — Gray scale from background to foreground
 - **Dark mode** — Inverted palette or separate design tokens?
 - **Contrast ratios** — WCAG AA minimum (4.5:1 for text, 3:1 for large text)
 
 ### Spacing
+
 - **Base unit** — 4px or 8px grid
 - **Scale** — 4, 8, 12, 16, 24, 32, 48, 64, 96
 - **Component spacing** — Padding and margin patterns
 
 ### Layout
+
 - **Grid system** — 12-column? Flexible? Max width?
 - **Breakpoints** — Mobile-first? Which breakpoints?
 - **Container widths** — Narrow (prose), medium (content), wide (dashboard)
 
 ### Components
+
 - **Buttons** — Primary, secondary, ghost, destructive. Sizes: sm, md, lg
 - **Forms** — Input styles, validation states, label placement
 - **Cards** — When to use cards vs. flat layout
@@ -55,6 +60,7 @@ For each decision, present 2-3 options with tradeoffs. One safe choice, one crea
 - **Feedback** — Toasts, alerts, modals, loading states
 
 ### Motion
+
 - **Duration scale** — 100ms (micro), 200ms (small), 300ms (medium), 500ms (large)
 - **Easing** — ease-out for enter, ease-in for exit
 - **Principles** — Purposeful, not decorative. Guide attention, not distract.
@@ -69,21 +75,27 @@ Write `DESIGN.md` at the project root:
 # Design System
 
 ## Principles
+
 [3-5 design principles specific to this product]
 
 ## Typography
+
 [Font stack, scale, usage guidelines]
 
 ## Color
+
 [Palettes with hex values, usage rules]
 
 ## Spacing
+
 [Scale and usage patterns]
 
 ## Components
+
 [Component patterns and when to use each]
 
 ## Patterns
+
 [Common layout patterns, empty states, loading states, error states]
 ```
 

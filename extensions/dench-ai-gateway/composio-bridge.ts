@@ -12,17 +12,20 @@ const DENCH_EXECUTE_INTEGRATIONS_PARAMETERS = {
   properties: {
     tool_slug: {
       type: "string",
-      description: "Exact tool slug returned by dench_search_integrations, for example GMAIL_FETCH_EMAILS or YOUTUBE_LIST_USER_SUBSCRIPTIONS.",
+      description:
+        "Exact tool slug returned by dench_search_integrations, for example GMAIL_FETCH_EMAILS or YOUTUBE_LIST_USER_SUBSCRIPTIONS.",
     },
     arguments: {
       type: "object",
       additionalProperties: true,
-      description: "JSON arguments object matching the tool's input_schema from the search results.",
+      description:
+        "JSON arguments object matching the tool's input_schema from the search results.",
       properties: {},
     },
     connected_account_id: {
       type: "string",
-      description: "Optional connected account id. Required only when multiple accounts are connected for the same toolkit. The gateway auto-selects when only one account exists.",
+      description:
+        "Optional connected account id. Required only when multiple accounts are connected for the same toolkit. The gateway auto-selects when only one account exists.",
     },
   },
   required: ["tool_slug"],
@@ -64,8 +67,7 @@ function createDenchExecuteIntegrationsTool(params: {
   return {
     name: DENCH_EXECUTE_INTEGRATIONS_NAME,
     label: `${DENCH_INTEGRATIONS_DISPLAY_NAME} Execute`,
-    description:
-      `Execute a ${DENCH_INTEGRATIONS_DISPLAY_NAME.toLowerCase()} tool by its slug. Pass the tool_slug from dench_search_integrations and the arguments matching its input_schema. The gateway handles authentication and account selection.`,
+    description: `Execute a ${DENCH_INTEGRATIONS_DISPLAY_NAME.toLowerCase()} tool by its slug. Pass the tool_slug from dench_search_integrations and the arguments matching its input_schema. The gateway handles authentication and account selection.`,
     parameters: DENCH_EXECUTE_INTEGRATIONS_PARAMETERS,
     async execute(_toolCallId: string, input: Record<string, unknown>) {
       const payload = asRecord(input) ?? {};
@@ -75,7 +77,8 @@ function createDenchExecuteIntegrationsTool(params: {
 
       if (!toolSlug) {
         return jsonResult({
-          error: "The `tool_slug` field is required. Use dench_search_integrations to find available tools first.",
+          error:
+            "The `tool_slug` field is required. Use dench_search_integrations to find available tools first.",
         });
       }
 
@@ -104,16 +107,16 @@ function createDenchExecuteIntegrationsTool(params: {
 
         if (!res.ok) {
           const errorCode = readString(asRecord(parsed?.error)?.code) ?? readString(parsed?.code);
-          const errorMessage = readString(asRecord(parsed?.error)?.message)
-            ?? readString(parsed?.error)
-            ?? text;
+          const errorMessage =
+            readString(asRecord(parsed?.error)?.message) ?? readString(parsed?.error) ?? text;
 
           if (errorCode === "composio_account_selection_required") {
             return jsonResult(
               {
                 error: errorMessage,
                 account_selection_required: true,
-                instruction: "Ask the user which connected account to use and pass its connected_account_id.",
+                instruction:
+                  "Ask the user which connected account to use and pass its connected_account_id.",
               },
               { status: "error", errorCode, tool_slug: toolSlug },
             );
@@ -140,10 +143,12 @@ function createDenchExecuteIntegrationsTool(params: {
         const contentPayload = error ? { error, data } : (data ?? parsed ?? {});
 
         return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify(contentPayload, null, 2),
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(contentPayload, null, 2),
+            },
+          ],
           details: {
             denchIntegrations: true,
             tool_slug: toolSlug,

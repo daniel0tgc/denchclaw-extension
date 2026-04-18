@@ -73,10 +73,7 @@ function createWebProfilesResponse(params?: {
   } as unknown as Response;
 }
 
-function createJsonResponse(params?: {
-  status?: number;
-  payload?: unknown;
-}): Response {
+function createJsonResponse(params?: { status?: number; payload?: unknown }): Response {
   const status = params?.status ?? 200;
   return {
     status,
@@ -137,9 +134,7 @@ function parseConfigSetValue(raw: string): unknown {
 
 function applyConfigSet(stateDir: string, keyPath: string, rawValue: string): void {
   const configPath = path.join(stateDir, "openclaw.json");
-  const current = existsSync(configPath)
-    ? JSON.parse(readFileSync(configPath, "utf-8"))
-    : {};
+  const current = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
   const segments = keyPath.split(".");
   let cursor: Record<string, unknown> = current;
   for (const segment of segments.slice(0, -1)) {
@@ -284,7 +279,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
     promptMocks.confirm.mockImplementation(async () =>
       promptMocks.confirmDecisions.length > 0
         ? promptMocks.confirmDecisions.shift()!
-        : promptMocks.confirmDecision
+        : promptMocks.confirmDecision,
     );
     promptMocks.select.mockReset();
     promptMocks.select.mockImplementation(async () => promptMocks.selectValue);
@@ -362,7 +357,11 @@ describe("bootstrapCommand always-onboard behavior", () => {
           stdout: `${JSON.stringify({ pending: pendingDeviceRequests, paired: pairedDevices })}\n`,
         }) as never;
       }
-      if (commandString === "openclaw" && argList.includes("devices") && argList.includes("approve")) {
+      if (
+        commandString === "openclaw" &&
+        argList.includes("devices") &&
+        argList.includes("approve")
+      ) {
         const requestId = argList.at(-1) ?? "";
         const match = pendingDeviceRequests.find((entry) => entry.requestId === requestId);
         if (!match) {
@@ -371,7 +370,9 @@ describe("bootstrapCommand always-onboard behavior", () => {
             stderr: `request not found: ${requestId}\n`,
           }) as never;
         }
-        pendingDeviceRequests = pendingDeviceRequests.filter((entry) => entry.requestId !== requestId);
+        pendingDeviceRequests = pendingDeviceRequests.filter(
+          (entry) => entry.requestId !== requestId,
+        );
         pairedDevices = [
           ...pairedDevices,
           {
@@ -385,11 +386,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
           stdout: `Approved ${String(match.deviceId ?? "device")} (${requestId})\n`,
         }) as never;
       }
-      if (
-        commandString === "openclaw" &&
-        argList.includes("config") &&
-        argList.includes("set")
-      ) {
+      if (commandString === "openclaw" && argList.includes("config") && argList.includes("set")) {
         const setIndex = argList.lastIndexOf("set");
         const keyPath = argList[setIndex + 1];
         const rawValue = argList[setIndex + 2];
@@ -791,9 +788,9 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(updatedConfig.agents.defaults.model.primary).toBe(
       "dench-cloud/anthropic.claude-opus-4-6-v1",
     );
-    expect(updatedConfig.agents.defaults.models["dench-cloud/anthropic.claude-opus-4-6-v1"]).toEqual(
-      expect.objectContaining({ alias: "Claude Opus 4.6 (Dench Cloud)" }),
-    );
+    expect(
+      updatedConfig.agents.defaults.models["dench-cloud/anthropic.claude-opus-4-6-v1"],
+    ).toEqual(expect.objectContaining({ alias: "Claude Opus 4.6 (Dench Cloud)" }));
     expect(updatedConfig.plugins.allow).toContain("posthog-analytics");
     expect(updatedConfig.plugins.allow).toContain("dench-ai-gateway");
     expect(updatedConfig.plugins.allow).not.toContain("dench-cloud-provider");
@@ -981,13 +978,13 @@ describe("bootstrapCommand always-onboard behavior", () => {
       );
     });
 
-    expect(runtime.log).toHaveBeenCalledWith(
-      expect.stringContaining("D E N C H   C L O U D"),
-    );
+    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("D E N C H   C L O U D"));
     expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("App Integrations"));
     expect(promptMocks.confirm).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("Continue with Dench Cloud? Recommended. API key: dench.com/api"),
+        message: expect.stringContaining(
+          "Continue with Dench Cloud? Recommended. API key: dench.com/api",
+        ),
       }),
     );
 
@@ -1903,7 +1900,9 @@ describe("bootstrapCommand always-onboard behavior", () => {
     );
     const gatewayRestartCalledInAutofix = spawnCalls.some(
       (call) =>
-        call.command === "openclaw" && call.args.includes("gateway") && call.args.includes("restart"),
+        call.command === "openclaw" &&
+        call.args.includes("gateway") &&
+        call.args.includes("restart"),
     );
     const toolsProfileSetCall = spawnCalls.find(
       (call) =>
@@ -2124,7 +2123,10 @@ describe("bootstrapCommand always-onboard behavior", () => {
           call.args.includes(key) &&
           call.args.includes(value),
       );
-      expect(postOnboardSetCall, `expected post-onboard config set for ${key}=${value}`).toBeDefined();
+      expect(
+        postOnboardSetCall,
+        `expected post-onboard config set for ${key}=${value}`,
+      ).toBeDefined();
       expect(postOnboardSetCall?.args).toEqual(
         expect.arrayContaining(["--profile", "dench", "config", "set", key, value]),
       );
@@ -2166,7 +2168,14 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(elevatedEnabledCalls).toHaveLength(2);
     for (const call of elevatedEnabledCalls) {
       expect(call.args).toEqual(
-        expect.arrayContaining(["--profile", "dench", "config", "set", "tools.elevated.enabled", "true"]),
+        expect.arrayContaining([
+          "--profile",
+          "dench",
+          "config",
+          "set",
+          "tools.elevated.enabled",
+          "true",
+        ]),
       );
     }
   });
@@ -2224,8 +2233,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
 
     const npmGlobalCalls = spawnCalls.filter(
       (call) =>
-        call.command === "npm" &&
-        (call.args.includes("-g") || call.args.includes("--global")),
+        call.command === "npm" && (call.args.includes("-g") || call.args.includes("--global")),
     );
 
     expect(npmGlobalCalls.length).toBeGreaterThan(0);

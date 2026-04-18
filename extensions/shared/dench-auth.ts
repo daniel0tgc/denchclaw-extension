@@ -29,11 +29,7 @@ export function readKeyFromAuthProfiles(authPath: string): string | undefined {
 }
 
 function envFallback(): string | undefined {
-  return (
-    process.env.DENCH_CLOUD_API_KEY?.trim() ||
-    process.env.DENCH_API_KEY?.trim() ||
-    undefined
-  );
+  return process.env.DENCH_CLOUD_API_KEY?.trim() || process.env.DENCH_API_KEY?.trim() || undefined;
 }
 
 /**

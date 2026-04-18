@@ -1,14 +1,11 @@
 import path from "node:path";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { readDenchAuthProfileKey, resolveDenchGatewayUrl } from "../shared/dench-auth.js";
 import {
   createComposioSearchContextSecret,
   signComposioSearchContext,
 } from "../shared/composio-search-context.js";
-import {
-  type ComposioManagedAccount,
-  type ComposioToolIndexFile,
-} from "./composio-cheat-sheet.js";
+import { readDenchAuthProfileKey, resolveDenchGatewayUrl } from "../shared/dench-auth.js";
+import { type ComposioManagedAccount, type ComposioToolIndexFile } from "./composio-cheat-sheet.js";
 import { type ComposioToolSearchResult } from "./composio-tool-search.js";
 
 export const id = "dench-identity";
@@ -30,7 +27,8 @@ const DENCH_SEARCH_INTEGRATIONS_PARAMETERS = {
     },
     toolkit: {
       type: "string",
-      description: "Optional toolkit slug to narrow search, for example gmail, github, slack, stripe, notion, or youtube.",
+      description:
+        "Optional toolkit slug to narrow search, for example gmail, github, slack, stripe, notion, or youtube.",
     },
     limit: {
       type: "integer",
@@ -56,7 +54,7 @@ const APP_ALIASES: Record<string, string> = {
   notion: "notion",
   calendar: "google-calendar",
   "google calendar": "google-calendar",
-  "gcal": "google-calendar",
+  gcal: "google-calendar",
   googlecalendar: "google-calendar",
   twitter: "x",
   x: "x",
@@ -66,14 +64,17 @@ const APP_ALIASES: Record<string, string> = {
   payments: "stripe",
 };
 
-const STATIC_COMPOSIO_FALLBACK: Record<string, Array<{
-  intent: string;
-  tool: string;
-  required_args: string[];
-  arg_hints: Record<string, string>;
-  default_args?: Record<string, unknown>;
-  example_prompts?: string[];
-}>> = {
+const STATIC_COMPOSIO_FALLBACK: Record<
+  string,
+  Array<{
+    intent: string;
+    tool: string;
+    required_args: string[];
+    arg_hints: Record<string, string>;
+    default_args?: Record<string, unknown>;
+    example_prompts?: string[];
+  }>
+> = {
   gmail: [
     {
       intent: "Read recent emails",
@@ -276,11 +277,19 @@ function humanizeResolverApp(value: string | undefined): string {
     "google-calendar": "Google Calendar",
     linear: "Linear",
   };
-  return labels[normalized]
-    ?? normalized.split("-").map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(" ");
+  return (
+    labels[normalized] ??
+    normalized
+      .split("-")
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(" ")
+  );
 }
 
-function buildComposioActionLink(action: "connect" | "reconnect", app: string | undefined): string | null {
+function buildComposioActionLink(
+  action: "connect" | "reconnect",
+  app: string | undefined,
+): string | null {
   const normalizedApp = normalizeResolverApp(app);
   if (!normalizedApp) {
     return null;
@@ -360,8 +369,9 @@ function extractResolverRequiredArgs(schema: ResolverMcpTool["inputSchema"]): st
   if (!schema || schema.type !== "object" || !Array.isArray(schema.required)) {
     return [];
   }
-  return schema.required.filter((value): value is string =>
-    typeof value === "string" && value.trim().length > 0);
+  return schema.required.filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
 }
 
 function buildResolverArgHints(
@@ -405,10 +415,7 @@ function buildResolverArgHints(
 function buildResolverCandidateFromCatalog(tool: ResolverMcpTool): ResolverToolCandidate {
   return {
     name: tool.name,
-    title:
-      tool.title?.trim() ||
-      tool.annotations?.title?.trim() ||
-      tool.name,
+    title: tool.title?.trim() || tool.annotations?.title?.trim() || tool.name,
     description_short: tool.description?.trim() ?? "",
     required_args: extractResolverRequiredArgs(tool.inputSchema),
     arg_hints: buildResolverArgHints(tool.name, tool.inputSchema),
@@ -421,9 +428,8 @@ function buildFeaturedToolCandidates(
   app: ComposioToolIndexFile["connected_apps"][number],
 ): ResolverToolCandidate[] {
   const out = new Map<string, ResolverToolCandidate>();
-  const staticFallbackRecipes = STATIC_COMPOSIO_FALLBACK[
-    normalizeResolverApp(app.toolkit_slug) ?? app.toolkit_slug
-  ] ?? [];
+  const staticFallbackRecipes =
+    STATIC_COMPOSIO_FALLBACK[normalizeResolverApp(app.toolkit_slug) ?? app.toolkit_slug] ?? [];
   for (const tool of app.tools) {
     out.set(tool.name, {
       ...tool,
@@ -434,8 +440,9 @@ function buildFeaturedToolCandidates(
     if (out.has(toolName)) {
       continue;
     }
-    const fallbackRecipe = staticFallbackRecipes.find((recipe) =>
-      recipe.tool === toolName || recipe.intent === intent);
+    const fallbackRecipe = staticFallbackRecipes.find(
+      (recipe) => recipe.tool === toolName || recipe.intent === intent,
+    );
     out.set(toolName, {
       name: toolName,
       title: intent,
@@ -473,7 +480,9 @@ function mergeResolverCandidates(
       input_schema: tool.input_schema ?? existing.input_schema,
       default_args: tool.default_args ?? existing.default_args,
       example_args: tool.example_args ?? existing.example_args,
-      example_prompts: tool.example_prompts?.length ? tool.example_prompts : existing.example_prompts,
+      example_prompts: tool.example_prompts?.length
+        ? tool.example_prompts
+        : existing.example_prompts,
       source: tool.source,
     });
   }
@@ -527,11 +536,9 @@ function chooseBestTool(
     );
     if (
       score > bestScore ||
-      (
-        score === bestScore &&
+      (score === bestScore &&
         bestTool &&
-        resolverSourcePriority(tool.source) < resolverSourcePriority(bestTool.source)
-      )
+        resolverSourcePriority(tool.source) < resolverSourcePriority(bestTool.source))
     ) {
       bestTool = tool;
       bestScore = score;
@@ -560,9 +567,7 @@ function asRecordArray(value: unknown): UnknownRecord[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .map((item) => asRecord(item))
-    .filter((item): item is UnknownRecord => Boolean(item));
+  return value.map((item) => asRecord(item)).filter((item): item is UnknownRecord => Boolean(item));
 }
 
 function readStringArray(value: unknown): string[] {
@@ -622,12 +627,13 @@ async function postComposioGatewayJson(params: {
       body: JSON.stringify(params.body),
     });
     const text = await response.text();
-    const parsed = text.trim().length > 0 ? JSON.parse(text) as unknown : {};
+    const parsed = text.trim().length > 0 ? (JSON.parse(text) as unknown) : {};
     if (!response.ok) {
       return {
-        error: readString(asRecord(parsed)?.error)
-          ?? readString(asRecord(asRecord(parsed)?.error)?.message)
-          ?? `Gateway request failed with HTTP ${response.status}.`,
+        error:
+          readString(asRecord(parsed)?.error) ??
+          readString(asRecord(asRecord(parsed)?.error)?.message) ??
+          `Gateway request failed with HTTP ${response.status}.`,
       };
     }
     return asRecord(parsed) ?? {};
@@ -694,12 +700,15 @@ async function fetchGatewayLiveToolkitStatuses(params: {
     if (!response.ok) {
       return null;
     }
-    const payload = await response.json() as unknown;
-    const toolkitMap = new Map<string, {
-      toolkit: string;
-      toolkit_name?: string;
-      accounts: UnknownRecord[];
-    }>();
+    const payload = (await response.json()) as unknown;
+    const toolkitMap = new Map<
+      string,
+      {
+        toolkit: string;
+        toolkit_name?: string;
+        accounts: UnknownRecord[];
+      }
+    >();
     for (const connection of readGatewayConnectionItems(payload)) {
       const status = readString(connection.status)?.trim().toUpperCase();
       if (status !== "ACTIVE") {
@@ -719,7 +728,10 @@ async function fetchGatewayLiveToolkitStatuses(params: {
       const account = buildGatewayStatusAccountFromConnection(connection);
       if (account) {
         const accountId = readString(account.id);
-        if (accountId && !entry.accounts.some((existing) => readString(existing.id) === accountId)) {
+        if (
+          accountId &&
+          !entry.accounts.some((existing) => readString(existing.id) === accountId)
+        ) {
           entry.accounts.push(account);
         }
       }
@@ -830,20 +842,22 @@ function deriveArgHintsFromSchema(inputSchema: UnknownRecord | undefined): Recor
     const itemType = readString(asRecord(property.items)?.type);
     const enumValues = Array.isArray(property.enum)
       ? property.enum.filter((item): item is string | number | boolean =>
-        ["string", "number", "boolean"].includes(typeof item))
+          ["string", "number", "boolean"].includes(typeof item),
+        )
       : [];
     const defaultValue = Object.hasOwn(property, "default") ? property.default : undefined;
-    const typeHint = type === "array" && itemType
-      ? `Expected array of ${itemType}.`
-      : type
-        ? `Expected ${type}.`
+    const typeHint =
+      type === "array" && itemType
+        ? `Expected array of ${itemType}.`
+        : type
+          ? `Expected ${type}.`
+          : null;
+    const enumHint =
+      enumValues.length > 0
+        ? `Allowed values: ${enumValues.map((item) => JSON.stringify(item)).join(", ")}.`
         : null;
-    const enumHint = enumValues.length > 0
-      ? `Allowed values: ${enumValues.map((item) => JSON.stringify(item)).join(", ")}.`
-      : null;
-    const defaultHint = defaultValue !== undefined
-      ? `Default: ${JSON.stringify(defaultValue)}.`
-      : null;
+    const defaultHint =
+      defaultValue !== undefined ? `Default: ${JSON.stringify(defaultValue)}.` : null;
     const combined = [description, typeHint, enumHint, defaultHint]
       .filter((item): item is string => Boolean(item))
       .join(" ");
@@ -867,13 +881,13 @@ function mergeToolSummaryFromSchema(params: {
   return {
     name: params.toolName,
     title: localTool?.title ?? humanizeToolName(params.toolName),
-    description_short: localTool?.description_short
-      ?? readString(params.schema.description)
-      ?? `Recommended ${params.toolkitName} tool for this request.`,
+    description_short:
+      localTool?.description_short ??
+      readString(params.schema.description) ??
+      `Recommended ${params.toolkitName} tool for this request.`,
     required_args: localTool?.required_args?.length ? localTool.required_args : requiredArgs,
-    arg_hints: Object.keys(localTool?.arg_hints ?? {}).length > 0
-      ? localTool?.arg_hints ?? {}
-      : argHints,
+    arg_hints:
+      Object.keys(localTool?.arg_hints ?? {}).length > 0 ? (localTool?.arg_hints ?? {}) : argHints,
     source: localTool?.source ?? "catalog",
     default_args: localTool?.default_args,
     example_args: localTool?.example_args,
@@ -927,16 +941,16 @@ function extractToolsFromJsonRpcMessage(payload: unknown): {
   const tools = result?.tools;
   const parsedTools = Array.isArray(tools)
     ? tools
-    .map((item) => asRecord(item))
-    .filter((item): item is UnknownRecord => Boolean(item))
-    .map((tool) => ({
-      name: readString(tool.name) ?? "",
-      description: readString(tool.description),
-      title: readString(tool.title ?? asRecord(tool.annotations)?.title),
-      inputSchema: asRecord(tool.inputSchema) as ResolverMcpTool["inputSchema"],
-      annotations: asRecord(tool.annotations) as ResolverMcpTool["annotations"],
-    }))
-    .filter((tool) => tool.name.length > 0)
+        .map((item) => asRecord(item))
+        .filter((item): item is UnknownRecord => Boolean(item))
+        .map((tool) => ({
+          name: readString(tool.name) ?? "",
+          description: readString(tool.description),
+          title: readString(tool.title ?? asRecord(tool.annotations)?.title),
+          inputSchema: asRecord(tool.inputSchema) as ResolverMcpTool["inputSchema"],
+          annotations: asRecord(tool.annotations) as ResolverMcpTool["annotations"],
+        }))
+        .filter((tool) => tool.name.length > 0)
     : [];
 
   return {
@@ -965,7 +979,9 @@ function parseSseJsonRpcTools(body: string): {
       // Ignore non-JSON SSE frames.
     }
   }
-  return lastPayload === null ? { tools: [], nextCursor: null } : extractToolsFromJsonRpcMessage(lastPayload);
+  return lastPayload === null
+    ? { tools: [], nextCursor: null }
+    : extractToolsFromJsonRpcMessage(lastPayload);
 }
 
 async function parseToolsListResponse(response: Response): Promise<{
@@ -1079,9 +1095,10 @@ function chooseApp(
 ): ComposioToolIndexFile["connected_apps"][number] | null {
   if (requestedApp) {
     const normalized = normalizeResolverApp(requestedApp);
-    const direct = index.connected_apps.find((app) =>
-      normalizeResolverApp(app.toolkit_slug) === normalized
-      || normalizeResolverApp(app.toolkit_name) === normalized,
+    const direct = index.connected_apps.find(
+      (app) =>
+        normalizeResolverApp(app.toolkit_slug) === normalized ||
+        normalizeResolverApp(app.toolkit_name) === normalized,
     );
     if (direct) {
       return direct;
@@ -1125,14 +1142,15 @@ function chooseAccount(
         account.account_name,
         account.account_label,
         account.connected_account_id,
-      ].some((value) => typeof value === "string" && value.toLowerCase() === normalized)
+      ].some((value) => typeof value === "string" && value.toLowerCase() === normalized),
     );
     if (direct) {
       return direct;
     }
     const ignoredTokens = new Set(tokenize(`${app.toolkit_slug} ${app.toolkit_name}`));
-    const queryTokens = tokenize([requestedAccount, queryText].filter(Boolean).join(" "))
-      .filter((token) => !ignoredTokens.has(token));
+    const queryTokens = tokenize([requestedAccount, queryText].filter(Boolean).join(" ")).filter(
+      (token) => !ignoredTokens.has(token),
+    );
     if (queryTokens.length > 0) {
       let best: ComposioManagedAccount | null = null;
       let bestScore = 0;
@@ -1145,7 +1163,9 @@ function chooseAccount(
             account.account_name,
             account.account_label,
             account.connected_account_id,
-          ].filter(Boolean).join(" "),
+          ]
+            .filter(Boolean)
+            .join(" "),
           queryTokens,
         );
         if (score > bestScore) {
@@ -1276,7 +1296,7 @@ function chooseSearchAccountCandidate(
         candidate.account_email,
         candidate.account_name,
         candidate.account_label,
-      ].some((value) => value?.toLowerCase() === normalized)
+      ].some((value) => value?.toLowerCase() === normalized),
     );
     if (direct) {
       return direct;
@@ -1311,16 +1331,19 @@ function buildDispatcherInput(params: {
   selectedAccount?: ComposioSearchPresentationResult["selected_account"];
   accountSelectionRequired?: boolean;
 }) {
-  const token = signComposioSearchContext({
-    version: 1,
-    mode: params.mode,
-    app: params.appSlug,
-    tool_name: params.toolName,
-    ...(params.sessionId ? { session_id: params.sessionId } : {}),
-    ...(params.selectedAccount?.account ? { account: params.selectedAccount.account } : {}),
-    ...(params.accountSelectionRequired ? { account_required: true } : {}),
-    issued_at: new Date().toISOString(),
-  }, params.secret);
+  const token = signComposioSearchContext(
+    {
+      version: 1,
+      mode: params.mode,
+      app: params.appSlug,
+      tool_name: params.toolName,
+      ...(params.sessionId ? { session_id: params.sessionId } : {}),
+      ...(params.selectedAccount?.account ? { account: params.selectedAccount.account } : {}),
+      ...(params.accountSelectionRequired ? { account_required: true } : {}),
+      issued_at: new Date().toISOString(),
+    },
+    params.secret,
+  );
 
   const dispatcherInput = {
     app: params.appSlug,
@@ -1341,9 +1364,11 @@ function findGatewayToolkitStatus(
     return null;
   }
 
-  return statuses.find((status) =>
-    normalizeResolverApp(readString(status.toolkit)) === normalizedToolkit
-  ) ?? null;
+  return (
+    statuses.find(
+      (status) => normalizeResolverApp(readString(status.toolkit)) === normalizedToolkit,
+    ) ?? null
+  );
 }
 
 function buildGatewayAccountCandidates(params: {
@@ -1364,26 +1389,27 @@ function buildGatewayAccountCandidates(params: {
     const userInfo = asRecord(account.user_info);
     const email = readString(userInfo?.email ?? userInfo?.account_email) ?? null;
     const name = readString(userInfo?.name ?? userInfo?.full_name) ?? null;
-    return [{
-      account: id,
-      alias,
-      connected_account_id: id,
-      account_identity: id,
-      display_label: alias ?? name ?? email ?? id,
-      account_email: email,
-      account_name: name,
-      account_label: alias,
-      is_default: account.is_default === true,
-    }];
+    return [
+      {
+        account: id,
+        alias,
+        connected_account_id: id,
+        account_identity: id,
+        display_label: alias ?? name ?? email ?? id,
+        account_email: email,
+        account_name: name,
+        account_label: alias,
+        is_default: account.is_default === true,
+      },
+    ];
   });
 }
 
 function readGatewayToolkitLabel(status: UnknownRecord | null, toolkitSlug: string): string {
-  return readString(
-    status?.toolkit_name
-      ?? status?.toolkit_label
-      ?? status?.label,
-  ) ?? humanizeResolverApp(toolkitSlug);
+  return (
+    readString(status?.toolkit_name ?? status?.toolkit_label ?? status?.label) ??
+    humanizeResolverApp(toolkitSlug)
+  );
 }
 
 function buildGatewayAppEntry(params: {
@@ -1442,7 +1468,10 @@ function buildGatewayPresentationResults(params: {
   const sessionId = readString(asRecord(params.searchPayload.session)?.id);
   const primaryToolSlugs = readStringArray(queryResult.primary_tool_slugs);
   const relatedToolSlugs = readStringArray(queryResult.related_tool_slugs);
-  const orderedToolSlugs = uniqueStrings([...primaryToolSlugs, ...relatedToolSlugs]).slice(0, params.topK);
+  const orderedToolSlugs = uniqueStrings([...primaryToolSlugs, ...relatedToolSlugs]).slice(
+    0,
+    params.topK,
+  );
 
   return orderedToolSlugs.flatMap((toolName) => {
     const schema = toolSchemas[toolName];
@@ -1472,55 +1501,67 @@ function buildGatewayPresentationResults(params: {
       status,
       localApp: undefined,
     });
-    const selectedAccount = chooseSearchAccountCandidate(accountCandidates, params.requestedAccount);
-    const accountSelectionRequired = !selectedAccount
-      && (accountCandidates.length > 1 || Boolean(params.requestedAccount?.trim()));
+    const selectedAccount = chooseSearchAccountCandidate(
+      accountCandidates,
+      params.requestedAccount,
+    );
+    const accountSelectionRequired =
+      !selectedAccount &&
+      (accountCandidates.length > 1 || Boolean(params.requestedAccount?.trim()));
     const app = buildGatewayAppEntry({
       toolkitSlug,
       toolkitName,
       localApp: undefined,
       accountCandidates,
     });
-    return [{
-      app,
-      search: {
-        toolkit_slug: toolkitSlug,
-        toolkit_name: toolkitName,
-        tool,
-        source: "catalog",
-        recipe_intents: [readString(queryResult.use_case) ?? tool.title],
-        score: orderedToolSlugs.length > 0 ? orderedToolSlugs.length - orderedToolSlugs.indexOf(toolName) : 1,
-        why_matched: buildGatewayWhyMatched({
-          useCase: readString(queryResult.use_case) ?? tool.title,
+    return [
+      {
+        app,
+        search: {
+          toolkit_slug: toolkitSlug,
+          toolkit_name: toolkitName,
+          tool,
+          source: "catalog",
+          recipe_intents: [readString(queryResult.use_case) ?? tool.title],
+          score:
+            orderedToolSlugs.length > 0
+              ? orderedToolSlugs.length - orderedToolSlugs.indexOf(toolName)
+              : 1,
+          why_matched: buildGatewayWhyMatched({
+            useCase: readString(queryResult.use_case) ?? tool.title,
+            toolName,
+            toolkitSlug,
+            primaryToolSlugs,
+          }),
+        },
+        account_candidates: accountCandidates,
+        selected_account: selectedAccount,
+        account_selection_required: accountSelectionRequired,
+        dispatcher_input: buildDispatcherInput({
+          appSlug: toolkitSlug,
           toolName,
-          toolkitSlug,
-          primaryToolSlugs,
+          secret: params.searchSecret,
+          mode: "gateway_tool_router",
+          sessionId: sessionId ?? undefined,
+          selectedAccount,
+          accountSelectionRequired,
         }),
+        execution_guidance: readString(queryResult.execution_guidance) ?? null,
+        recommended_plan_steps: readStringArray(queryResult.recommended_plan_steps),
+        known_pitfalls: readStringArray(queryResult.known_pitfalls),
+        difficulty: readString(queryResult.difficulty) ?? null,
+        pagination_input_hints: detectPaginationInputHints(tool.input_schema),
+        search_source: "gateway_tool_router",
+        ...(sessionId ? { search_session_id: sessionId } : {}),
       },
-      account_candidates: accountCandidates,
-      selected_account: selectedAccount,
-      account_selection_required: accountSelectionRequired,
-      dispatcher_input: buildDispatcherInput({
-        appSlug: toolkitSlug,
-        toolName,
-        secret: params.searchSecret,
-        mode: "gateway_tool_router",
-        sessionId: sessionId ?? undefined,
-        selectedAccount,
-        accountSelectionRequired,
-      }),
-      execution_guidance: readString(queryResult.execution_guidance) ?? null,
-      recommended_plan_steps: readStringArray(queryResult.recommended_plan_steps),
-      known_pitfalls: readStringArray(queryResult.known_pitfalls),
-      difficulty: readString(queryResult.difficulty) ?? null,
-      pagination_input_hints: detectPaginationInputHints(tool.input_schema),
-      search_source: "gateway_tool_router",
-      ...(sessionId ? { search_session_id: sessionId } : {}),
-    }];
+    ];
   });
 }
 
-function deriveGatewayTopConfidence(payload: UnknownRecord, results: ComposioSearchPresentationResult[]) {
+function deriveGatewayTopConfidence(
+  payload: UnknownRecord,
+  results: ComposioSearchPresentationResult[],
+) {
   const queryResult = asRecordArray(payload.results)[0];
   const primaryToolSlugs = readStringArray(queryResult?.primary_tool_slugs);
   if (results.length === 0 || primaryToolSlugs.length === 0) {
@@ -1533,7 +1574,7 @@ function deriveGatewayTopConfidence(payload: UnknownRecord, results: ComposioSea
   if (distinctToolkits.size === 1) {
     return "medium" as const;
   }
-  return results.length === 1 ? "medium" as const : "low" as const;
+  return results.length === 1 ? ("medium" as const) : ("low" as const);
 }
 
 async function runGatewayComposioToolSearch(params: {
@@ -1561,9 +1602,7 @@ async function runGatewayComposioToolSearch(params: {
           ...(knownFields.length > 0 ? { known_fields: knownFields.join(", ") } : {}),
         },
       ],
-      session: params.sessionId
-        ? { id: params.sessionId }
-        : { generate_id: true },
+      session: params.sessionId ? { id: params.sessionId } : { generate_id: true },
       ...(params.requestedAccount?.trim() ? { account: params.requestedAccount.trim() } : {}),
       model: "gpt-5.4",
     },
@@ -1572,11 +1611,10 @@ async function runGatewayComposioToolSearch(params: {
     return null;
   }
 
-  const gatewayError = readString(payload.error)
-    ?? readString(asRecord(payload.error)?.message);
+  const gatewayError = readString(payload.error) ?? readString(asRecord(payload.error)?.message);
   const searchStatuses = asRecordArray(payload.toolkit_connection_statuses);
-  const shouldProbeLiveConnections = searchStatuses.some((status) =>
-    readBoolean(status.has_active_connection) === false
+  const shouldProbeLiveConnections = searchStatuses.some(
+    (status) => readBoolean(status.has_active_connection) === false,
   );
   const liveStatuses = shouldProbeLiveConnections
     ? await fetchGatewayLiveToolkitStatuses({ api: params.api })
@@ -1585,12 +1623,13 @@ async function runGatewayComposioToolSearch(params: {
     searchStatuses,
     liveStatuses,
   });
-  const effectivePayload = reconciledStatuses.statuses !== searchStatuses
-    ? {
-        ...payload,
-        toolkit_connection_statuses: reconciledStatuses.statuses,
-      }
-    : payload;
+  const effectivePayload =
+    reconciledStatuses.statuses !== searchStatuses
+      ? {
+          ...payload,
+          toolkit_connection_statuses: reconciledStatuses.statuses,
+        }
+      : payload;
   const results = buildGatewayPresentationResults({
     workspaceDir: params.workspaceDir,
     index: params.index,
@@ -1622,44 +1661,51 @@ function buildSearchPresentationResults(params: {
   searchSecret: string;
 }): ComposioSearchPresentationResult[] {
   return params.searchResults.flatMap((result) => {
-    const app = params.index.connected_apps.find((entry) => entry.toolkit_slug === result.toolkit_slug);
+    const app = params.index.connected_apps.find(
+      (entry) => entry.toolkit_slug === result.toolkit_slug,
+    );
     if (!app) {
       return [];
     }
     const accountCandidates = buildAccountCandidates(app);
-    const selectedAccount = chooseSearchAccountCandidate(accountCandidates, params.requestedAccount)
-      ?? (() => {
+    const selectedAccount =
+      chooseSearchAccountCandidate(accountCandidates, params.requestedAccount) ??
+      (() => {
         const localSelected = chooseAccount(app, params.requestedAccount, params.queryText);
         if (!localSelected) {
           return null;
         }
-        return accountCandidates.find((candidate) =>
-          candidate.connected_account_id === localSelected.connected_account_id
-        ) ?? null;
+        return (
+          accountCandidates.find(
+            (candidate) => candidate.connected_account_id === localSelected.connected_account_id,
+          ) ?? null
+        );
       })();
-    const accountSelectionRequired = !selectedAccount
-      && (app.account_count > 1 || Boolean(params.requestedAccount?.trim()));
-    return [{
-      app,
-      search: result,
-      account_candidates: accountCandidates,
-      selected_account: selectedAccount,
-      account_selection_required: accountSelectionRequired,
-      dispatcher_input: buildDispatcherInput({
-        appSlug: app.toolkit_slug,
-        toolName: result.tool.name,
-        secret: params.searchSecret,
-        mode: "gateway_tool_router",
-        selectedAccount,
-        accountSelectionRequired,
-      }),
-      execution_guidance: null,
-      recommended_plan_steps: [],
-      known_pitfalls: [],
-      difficulty: null,
-      pagination_input_hints: detectPaginationInputHints(result.tool.input_schema),
-      search_source: "gateway_tool_router",
-    }];
+    const accountSelectionRequired =
+      !selectedAccount && (app.account_count > 1 || Boolean(params.requestedAccount?.trim()));
+    return [
+      {
+        app,
+        search: result,
+        account_candidates: accountCandidates,
+        selected_account: selectedAccount,
+        account_selection_required: accountSelectionRequired,
+        dispatcher_input: buildDispatcherInput({
+          appSlug: app.toolkit_slug,
+          toolName: result.tool.name,
+          secret: params.searchSecret,
+          mode: "gateway_tool_router",
+          selectedAccount,
+          accountSelectionRequired,
+        }),
+        execution_guidance: null,
+        recommended_plan_steps: [],
+        known_pitfalls: [],
+        difficulty: null,
+        pagination_input_hints: detectPaginationInputHints(result.tool.input_schema),
+        search_source: "gateway_tool_router",
+      },
+    ];
   });
 }
 
@@ -1752,8 +1798,7 @@ function createDenchSearchIntegrationsTool(api: OpenClawPluginApi): AnyAgentTool
   return {
     name: DENCH_SEARCH_INTEGRATIONS_NAME,
     label: `${DENCH_INTEGRATIONS_DISPLAY_NAME} Search`,
-    description:
-      `Search available ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools through the gateway. Returns tool slugs, descriptions, input schemas, and connection status. Use \`${DENCH_EXECUTE_INTEGRATIONS_NAME}\` to execute a returned tool.`,
+    description: `Search available ${DENCH_INTEGRATION_DISPLAY_NAME.toLowerCase()} tools through the gateway. Returns tool slugs, descriptions, input schemas, and connection status. Use \`${DENCH_EXECUTE_INTEGRATIONS_NAME}\` to execute a returned tool.`,
     parameters: DENCH_SEARCH_INTEGRATIONS_PARAMETERS,
     async execute(_toolCallId: string, input: Record<string, unknown>) {
       const workspaceDir = resolveWorkspaceDir(api);
@@ -1766,7 +1811,9 @@ function createDenchSearchIntegrationsTool(api: OpenClawPluginApi): AnyAgentTool
       const toolkit = readString(payload.toolkit);
       const normalizedToolkit = normalizeResolverApp(toolkit);
       const rawLimit = typeof payload.limit === "number" ? payload.limit : Number(payload.limit);
-      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(Math.trunc(rawLimit), 100)) : 20;
+      const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.trunc(rawLimit), 100))
+        : 20;
 
       const gatewayResult = await postComposioGatewayJson({
         api,
@@ -1790,7 +1837,11 @@ function createDenchSearchIntegrationsTool(api: OpenClawPluginApi): AnyAgentTool
         ? (gatewayResult.connected_toolkits as string[])
         : [];
 
-      if (items.length === 0 && normalizedToolkit && !connectedToolkits.includes(normalizedToolkit)) {
+      if (
+        items.length === 0 &&
+        normalizedToolkit &&
+        !connectedToolkits.includes(normalizedToolkit)
+      ) {
         const actionLink = buildComposioActionLink("connect", normalizedToolkit);
         return jsonResult({
           query,
@@ -1832,7 +1883,8 @@ function createDenchSearchIntegrationsTool(api: OpenClawPluginApi): AnyAgentTool
           },
           input_schema: item.input_parameters ?? item.input_schema,
           is_connected: connStatus?.is_connected === true,
-          account_count: typeof connStatus?.account_count === "number" ? connStatus.account_count : 0,
+          account_count:
+            typeof connStatus?.account_count === "number" ? connStatus.account_count : 0,
           accounts: Array.isArray(connStatus?.accounts) ? connStatus.accounts : [],
         };
       });
@@ -1840,7 +1892,8 @@ function createDenchSearchIntegrationsTool(api: OpenClawPluginApi): AnyAgentTool
       const hasMultiAccountToolkit = results.some((r) => r.account_count > 1);
       let instruction = `Found ${results.length} integration tool(s). Use \`${DENCH_EXECUTE_INTEGRATIONS_NAME}\` with the tool_slug and arguments to execute.`;
       if (hasMultiAccountToolkit) {
-        instruction += " Some toolkits have multiple connected accounts — ask the user which account to use and pass `connected_account_id` to execute.";
+        instruction +=
+          " Some toolkits have multiple connected accounts — ask the user which account to use and pass `connected_account_id` to execute.";
       }
 
       return jsonResult({
@@ -1872,7 +1925,7 @@ function buildComposioDefaultGuidance(composioAppsSkillPath: string): string {
     `- Never use \`gog\`, shell CLIs, curl, or raw gateway HTTP for Gmail/Calendar/Drive/Slack/GitHub/Notion/Linear when ${DENCH_INTEGRATIONS_DISPLAY_NAME} is connected or the user mentions the connected-app layer/rube/map/MCP.`,
     "- **When the integration search response returns `action_link_markdown`, you MUST end the assistant reply with that exact markdown link.** Do not omit it. Do not rephrase it as plain text. The link renders as a clickable button in chat.",
     "- Missing first-time connection example: `[Connect Slack](dench://composio/connect?toolkit=slack&name=Slack)`.",
-    "- If the search returns `availability: \"connect_required\"`, briefly explain the app is not connected and end with the connect link.",
+    '- If the search returns `availability: "connect_required"`, briefly explain the app is not connected and end with the connect link.',
     "- If an integration tool call fails because of argument shape, fix the arguments and retry once before considering any fallback.",
     "- When the user implicitly asks for the full dataset, keep paginating until the tool response no longer advertises more pages.",
     "",
@@ -2016,7 +2069,11 @@ export default function register(api: any) {
   }
 
   const workspaceDir = resolveWorkspaceDir(api);
-  if (workspaceDir && typeof api.registerTool === "function" && shouldRegisterIntegrationTools(workspaceDir)) {
+  if (
+    workspaceDir &&
+    typeof api.registerTool === "function" &&
+    shouldRegisterIntegrationTools(workspaceDir)
+  ) {
     api.registerTool(createDenchSearchIntegrationsTool(api));
   }
 

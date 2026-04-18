@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 import {
   buildDenchCloudConfigPatch,
   fetchDenchCloudCatalog,
@@ -6,12 +7,8 @@ import {
   readConfiguredDenchCloudSettings,
   validateDenchCloudApiKey,
 } from "./dench-cloud.js";
-import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 
-function createJsonResponse(params?: {
-  status?: number;
-  payload?: unknown;
-}): Response {
+function createJsonResponse(params?: { status?: number; payload?: unknown }): Response {
   const status = params?.status ?? 200;
   return {
     status,
@@ -86,7 +83,9 @@ describe("dench-cloud helpers", () => {
   it("rejects invalid Dench Cloud API keys with an actionable message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => createJsonResponse({ status: 401, payload: {} })) as unknown as typeof fetch,
+      vi.fn(async () =>
+        createJsonResponse({ status: 401, payload: {} }),
+      ) as unknown as typeof fetch,
     );
 
     await expect(

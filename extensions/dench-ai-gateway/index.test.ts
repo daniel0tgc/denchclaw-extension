@@ -247,21 +247,23 @@ describe("dench-ai-gateway composio bridge", () => {
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
 
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          error: {
-            code: "composio_account_selection_required",
-            message: "Stripe requires an explicit account selection.",
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "composio_account_selection_required",
+              message: "Stripe requires an explicit account selection.",
+            },
+          }),
+          {
+            status: 400,
+            headers: {
+              "content-type": "application/json",
+            },
           },
-        }),
-        {
-          status: 400,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      )) as typeof fetch;
+        ),
+    ) as typeof fetch;
 
     const { api, tools } = createApi();
     register(api);
@@ -286,21 +288,23 @@ describe("dench-ai-gateway composio bridge", () => {
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
 
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          error: {
-            code: "composio_not_connected",
-            message: "Slack is not connected.",
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "composio_not_connected",
+              message: "Slack is not connected.",
+            },
+          }),
+          {
+            status: 400,
+            headers: {
+              "content-type": "application/json",
+            },
           },
-        }),
-        {
-          status: 400,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      )) as typeof fetch;
+        ),
+    ) as typeof fetch;
 
     const { api, tools } = createApi();
     register(api);

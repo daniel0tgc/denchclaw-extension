@@ -903,8 +903,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const savedMessageIdsRef = useRef<Set<string>>(new Set());
 		// Set when /new or + triggers a new session
 		const newSessionPendingRef = useRef(false);
-		// Whether the next message should include file context
-		const isFirstFileMessageRef = useRef(true);
+		// v3: track the last file context path we injected into a message so that when
+		// the user opens a different file on the right panel and sends a new message,
+		// the agent is re-informed about the current context.
+		const lastAnnouncedFilePathRef = useRef<string | null>(null);
 
 		// File-scoped session list (compact mode only)
 		const [fileSessions, setFileSessions] = useState<
@@ -1292,110 +1294,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			}
 		};
 
+		// v3 three-column refactor: file-scoped sessions were removed.
+		// The center chat keeps its current session regardless of which file is opened on
+		// the right panel. `fileContext` (via `filePath`) only augments the message payload
+		// ("[Context: workspace file 'X']") and the input placeholder — it no longer resets
+		// the panel or swaps to a file-scoped session.
 		useEffect(() => {
-			if (!filePath || isSubagentMode) {
-				return;
-			}
-			let cancelled = false;
+			return;
+		}, [filePath]);
 
-			sessionIdRef.current = null;
-			setCurrentSessionId(null);
-			onActiveSessionChange?.(null);
-			setMessages([]);
-			savedMessageIdsRef.current.clear();
-			isFirstFileMessageRef.current = true;
-
-			void (async () => {
-				const sessions =
-					(await fetchFileSessionsRef.current?.()) ?? [];
-				if (cancelled) {
-					return;
-				}
-				setFileSessions(sessions);
-
-				if (sessions.length > 0) {
-					const target = (initialSessionId
-						? sessions.find((s) => s.id === initialSessionId)
-						: undefined) ?? sessions[0];
-					setCurrentSessionId(target.id);
-					sessionIdRef.current = target.id;
-					onActiveSessionChange?.(target.id);
-					isFirstFileMessageRef.current = false;
-
-					try {
-						const msgRes = await fetch(
-							`/api/web-sessions/${target.id}`,
-						);
-						if (cancelled) {
-							return;
-						}
-						const msgData = await msgRes.json();
-						const sessionMessages: Array<{
-							id: string;
-							role: "user" | "assistant";
-							content: string;
-							parts?: Array<Record<string, unknown>>;
-							html?: string;
-							_streaming?: boolean;
-						}> = msgData.messages || [];
-
-						const hasStreaming = sessionMessages.some(
-							(m) => m._streaming,
-						);
-						const completedMessages = hasStreaming
-							? sessionMessages.filter(
-									(m) => !m._streaming,
-								)
-							: sessionMessages;
-
-						for (const msg of completedMessages) {
-							if (msg.role === "user" && msg.html) {
-								userHtmlMapRef.current.set(msg.id, msg.html);
-							}
-						}
-
-						const uiMessages = completedMessages.map(
-							(msg) => {
-								savedMessageIdsRef.current.add(msg.id);
-								return {
-									id: msg.id,
-									role: msg.role,
-									parts: (msg.parts ?? [
-										{
-											type: "text" as const,
-											text: msg.content,
-										},
-									]) as UIMessage["parts"],
-								};
-							},
-						);
-						if (!cancelled) {
-							setMessages(uiMessages);
-						}
-
-						if (!cancelled) {
-							await attemptReconnect(
-								target.id,
-								uiMessages,
-							);
-						}
-					} catch {
-						// ignore
-					}
-				}
-			})();
-
-			return () => {
-				cancelled = true;
-			};
-			// eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters
-		}, [filePath, attemptReconnect]);
-
-		// ── Non-file panel: auto-restore session on mount or URL change ──
+		// v3: auto-restore session on mount or URL change.
+		// Note: this previously short-circuited when `filePath` was set (file-scoped chat mode);
+		// that mode is gone now, so we always load the provided initialSessionId.
 		const initialSessionHandled = useRef(false);
 		const lastInitialSessionRef = useRef<string | null>(null);
 		useEffect(() => {
-			if (filePath || isSubagentMode || isGatewayMode || !initialSessionId) {
+			if (isSubagentMode || isGatewayMode || !initialSessionId) {
 				return;
 			}
 			if (initialSessionHandled.current && initialSessionId === lastInitialSessionRef.current) {
@@ -1789,10 +1703,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						: prefix;
 				}
 
-				if (fileContext && isFirstFileMessageRef.current) {
+				if (fileContext && lastAnnouncedFilePathRef.current !== fileContext.path) {
 					const label = fileContext.isDirectory ? "directory" : "file";
 					messageText = `[Context: workspace ${label} '${fileContext.path}']\n\n${messageText}`;
-					isFirstFileMessageRef.current = false;
+					lastAnnouncedFilePathRef.current = fileContext.path;
 				}
 
 				// Store HTML for display and pipe to server via transport
@@ -1883,7 +1797,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				sessionIdRef.current = sessionId;
 				onActiveSessionChange?.(sessionId);
 				savedMessageIdsRef.current.clear();
-				isFirstFileMessageRef.current = false;
+				// Force a fresh file-context announcement on the first message of this session.
+				lastAnnouncedFilePathRef.current = null;
 				setQueuedMessages([]);
 
 				try {
@@ -1976,7 +1891,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			setMessages([]);
 			savedMessageIdsRef.current.clear();
 			userHtmlMapRef.current.clear();
-			isFirstFileMessageRef.current = true;
+			lastAnnouncedFilePathRef.current = null;
 			newSessionPendingRef.current = false;
 			setQueuedMessages([]);
 			requestAnimationFrame(() => {
@@ -2157,7 +2072,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		});
 		const showStreamActivity = isStreaming && !!streamActivityLabel;
 
-		const showHeroState = messages.length === 0 && (!compact || !fileContext) && !isSubagentMode && !loadingSession;
+		const showHeroState = messages.length === 0 && !isSubagentMode && !loadingSession;
 
 		// ── Input bar content (shared between hero and bottom positions) ──
 
@@ -2214,7 +2129,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							? "Build a workflow to automate your tasks"
 							: isSubagentMode
 								? (isStreaming ? "Type to queue a message..." : "Type @ to mention files...")
-								: compact && fileContext
+								: fileContext
 									? `Ask about ${fileContext.isDirectory ? "this folder" : fileContext.filename}...`
 									: isStreaming
 										? "Type to queue a message..."
@@ -2394,16 +2309,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				) : (
 					<>
 					<div className="min-w-0 flex-1">
-						{compact && fileContext ? (
-							<h2
-								className="text-xs font-semibold truncate"
-								style={{
-									color: "var(--color-text)",
-								}}
-							>
-								Chat: {fileContext.filename}
-							</h2>
-						) : currentSessionId ? (
+						{currentSessionId ? (
 							<h2
 								className="text-sm font-semibold"
 								style={{
@@ -2450,74 +2356,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								</DropdownMenuContent>
 							</DropdownMenu>
 						)}
-						<button
-								type="button"
-								onClick={() => handleNewSession()}
-								className="p-1.5 rounded-lg"
-								style={{
-									color: "var(--color-text-muted)",
-								}}
-								title="New chat"
-							>
-								<svg
-									width="14"
-									height="14"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-								>
-									<path d="M12 5v14" />
-									<path d="M5 12h14" />
-								</svg>
-							</button>
 					</div>
 					)}
 					</>
 				)}
 				</header>
 
-				{/* File-scoped session tabs (compact mode, not in subagent mode) */}
-				{!isSubagentMode && compact && fileContext && fileSessions.length > 0 && (
-					<div
-						className="px-2 py-1.5 border-b flex shrink-0 gap-1 overflow-x-auto z-20"
-						style={{
-							borderColor: "var(--color-border)",
-							background: "var(--color-bg-glass)",
-						}}
-					>
-						{fileSessions.slice(0, 10).map((s) => (
-							<button
-								key={s.id}
-								type="button"
-								onClick={() =>
-									handleSessionSelect(s.id)
-								}
-								className="px-2.5 py-1 text-[10px] rounded-full whitespace-nowrap shrink-0 font-medium"
-								style={{
-									background:
-										s.id === currentSessionId
-											? "var(--color-accent)"
-											: "var(--color-surface-hover)",
-									color:
-										s.id === currentSessionId
-											? "white"
-											: "var(--color-text-muted)",
-									border:
-										s.id === currentSessionId
-											? "none"
-											: "1px solid var(--color-border)",
-								}}
-							>
-								{s.title.length > 25
-									? s.title.slice(0, 25) + "..."
-									: s.title}
-							</button>
-						))}
-					</div>
-				)}
+				{/* v3: removed legacy file-scoped session tab strip — single chat session is now the source of truth */}
 
 				<div
 					ref={scrollContainerRef}

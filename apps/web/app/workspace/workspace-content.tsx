@@ -2,8 +2,8 @@
 
 import { Suspense, useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { WorkspaceSidebar } from "../components/workspace/workspace-sidebar";
-import { type TreeNode } from "../components/workspace/file-manager-tree";
+import { WorkspaceSidebar, FileSearch } from "../components/workspace/workspace-sidebar";
+import { FileManagerTree, type TreeNode } from "../components/workspace/file-manager-tree";
 import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
 import { ObjectTable, AddEntryModal } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
@@ -55,6 +55,7 @@ import {
 import { UnicodeSpinner } from "../components/unicode-spinner";
 import { ToastProvider } from "../components/workspace/toast";
 import { ChatSessionsSidebar, type SidebarGatewaySession, type SidebarChannelStatus } from "../components/workspace/chat-sessions-sidebar";
+import { RightPanel } from "../components/workspace/right-panel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -219,21 +220,6 @@ export type DenchAppManifest = {
   }>;
 };
 
-type SidebarPreviewContent =
-  | { kind: "document"; data: FileData; title: string }
-  | { kind: "file"; data: FileData; filename: string }
-  | { kind: "code"; data: FileData; filename: string; filePath: string }
-  | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
-  | { kind: "spreadsheet"; url: string; filename: string; filePath: string }
-  | { kind: "database"; dbPath: string; filename: string }
-  | { kind: "directory"; path: string; name: string }
-  | { kind: "richDocument"; html: string; filePath: string; mode: "docx" | "txt" };
-
-type ChatSidebarPreviewState =
-  | { status: "loading"; path: string; filename: string }
-  | { status: "error"; path: string; filename: string; message: string }
-  | { status: "ready"; path: string; filename: string; content: SidebarPreviewContent };
-
 type WebSession = {
   id: string;
   title: string;
@@ -245,16 +231,11 @@ type WebSession = {
 
 const LEFT_SIDEBAR_MIN = 200;
 const LEFT_SIDEBAR_MAX = 480;
-const RIGHT_SIDEBAR_MIN = 260;
-const RIGHT_SIDEBAR_MAX = 900;
-const CHAT_SIDEBAR_MIN = 220;
-const CHAT_SIDEBAR_MAX = 480;
+const RIGHT_PANEL_MIN = 360;
+const RIGHT_PANEL_MAX = 2000;
 const STORAGE_LEFT = "dench-workspace-left-sidebar-width";
-const STORAGE_RIGHT = "dench-workspace-right-sidebar-width";
-const STORAGE_CHAT_SIDEBAR = "dench-workspace-chat-sidebar-width";
-const STORAGE_ENTRY_PANEL = "dench-workspace-entry-panel-width";
-const ENTRY_PANEL_MIN = 360;
-const ENTRY_PANEL_MAX = 720;
+const STORAGE_RIGHT_PANEL = "dench-workspace-right-panel-width";
+const STORAGE_RIGHT_PANEL_COLLAPSED = "dench-workspace-right-panel-collapsed";
 
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
@@ -312,7 +293,7 @@ function ResizeHandle({
       aria-orientation="vertical"
       onMouseDown={onMouseDown}
       className={`cursor-col-resize flex justify-center transition-colors ${showHover ? "bg-blue-600/30" : "hover:bg-blue-600/30"}`}
-      style={{ position: "absolute", [mode === "left" ? "right" : "left"]: -2, top: 0, bottom: 0, width: 4, zIndex: 20 }}
+      style={{ position: "absolute", [mode === "left" ? "right" : "left"]: -2, top: 0, bottom: 0, width: 4, zIndex: 40 }}
     />
   );
 }
@@ -440,8 +421,6 @@ function WorkspacePageInner() {
   const chatRef = useRef<ChatPanelHandle>(null);
   // Mounted main chat panels keyed by tab id so inactive tabs can keep streaming.
   const chatPanelRefs = useRef<Record<string, ChatPanelHandle | null>>({});
-  // Compact (file-scoped) chat panel ref for sidebar drag-and-drop
-  const compactChatRef = useRef<ChatPanelHandle>(null);
   // Root layout ref for resize handle position (handle follows cursor)
   const layoutRef = useRef<HTMLDivElement>(null);
 
@@ -470,13 +449,9 @@ function WorkspacePageInner() {
   const [context, setContext] = useState<WorkspaceContext | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [content, setContent] = useState<ContentState>({ kind: "none" });
-  const [showChatSidebar, setShowChatSidebar] = useState(true);
-  const [chatSidebarPreview, setChatSidebarPreview] = useState<ChatSidebarPreviewState | null>(null);
 
   // Chat session state
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  // File-scoped chat session (compact panel in right sidebar when a file is open)
-  const [fileChatSessionId, setFileChatSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<WebSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
@@ -517,11 +492,14 @@ function WorkspacePageInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Sidebar collapse state (desktop only).
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"files" | "chats">("files");
-  const [chatSidebarOpen, setChatSidebarOpen] = useState(true);
-  const [mobileChatSessionsOpen, setMobileChatSessionsOpen] = useState(false);
-  const [mobileFileChatOpen, setMobileFileChatOpen] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [mobileRightPanelOpen, setMobileRightPanelOpen] = useState(false);
+
+  // v3: independent active tab ids per surface.
+  // - activeChatTabId: which chat tab is visible in the center (always a chat or gateway-chat tab).
+  // - activeContentTabId: which content tab is visible in the right panel, or null for Files home.
+  const [activeChatTabId, setActiveChatTabId] = useState<string | null>(null);
+  const [activeContentTabId, setActiveContentTabId] = useState<string | null>(null);
 
   // Terminal drawer state
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -588,10 +566,10 @@ function WorkspacePageInner() {
     tabStateRef.current = tabState;
   }, [tabState]);
 
+  // v3: chat-switching handlers must NOT touch the right panel's activePath/content.
+  // The right panel's state is independent of which chat is shown in the center.
   const openBlankChatTab = useCallback(() => {
     const tab = createBlankChatTab();
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setTabState((prev) => openTab(prev, tab, { preview: true }));
@@ -600,8 +578,6 @@ function WorkspacePageInner() {
 
   const openPermanentBlankChatTab = useCallback(() => {
     const tab = createBlankChatTab();
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setTabState((prev) => openTab(prev, tab, { preview: false }));
@@ -609,8 +585,6 @@ function WorkspacePageInner() {
   }, []);
 
   const openSessionChatTab = useCallback((sessionId: string, title?: string) => {
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(sessionId);
     setActiveSubagentKey(null);
     setTabState((prev) => openOrFocusParentChatTab(prev, { sessionId, title }, { preview: true }));
@@ -621,16 +595,12 @@ function WorkspacePageInner() {
     parentSessionId: string;
     title?: string;
   }) => {
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(params.parentSessionId);
     setActiveSubagentKey(params.sessionKey);
     setTabState((prev) => openOrFocusSubagentChatTab(prev, params, { preview: true }));
   }, []);
 
   const openGatewayChatTab = useCallback((sessionKey: string, sessionId: string, channel?: string, title?: string) => {
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setActiveGatewaySessionKey(sessionKey);
@@ -659,9 +629,12 @@ function WorkspacePageInner() {
     });
   }, []);
 
+  // v3: the center chat is decoupled from tabState.activeTabId so that opening a file / CRM / cloud
+  // on the right panel never changes which chat is visible in the center.
   const visibleMainChatTabId = useMemo(() => {
-    if (activeTab.type === "chat" || activeTab.type === "gateway-chat") {
-      return activeTab.id;
+    if (activeChatTabId) {
+      const pinned = mainChatTabs.find((tab) => tab.id === activeChatTabId);
+      if (pinned) return pinned.id;
     }
     if (activeGatewaySessionKey) {
       const matchingGwTab = mainChatTabs.find((tab) => tab.type === "gateway-chat" && tab.sessionKey === activeGatewaySessionKey);
@@ -679,12 +652,8 @@ function WorkspacePageInner() {
         return matchingParentTab.id;
       }
     }
-    if (tabState.activeTabId === HOME_TAB_ID) {
-      const blankTab = mainChatTabs.find((tab) => !tab.sessionId && !tab.sessionKey);
-      if (blankTab) return blankTab.id;
-    }
     return mainChatTabs[0]?.id ?? null;
-  }, [activeTab, activeSessionId, activeSubagentKey, activeGatewaySessionKey, mainChatTabs, tabState.activeTabId]);
+  }, [activeChatTabId, activeSessionId, activeSubagentKey, activeGatewaySessionKey, mainChatTabs]);
 
   useEffect(() => {
     if (activeTab.type !== "chat" && activeTab.type !== "gateway-chat") {
@@ -794,43 +763,32 @@ function WorkspacePageInner() {
   // Resizable sidebar widths (desktop only; persisted in localStorage).
   // Use static defaults so server and client match on first render (avoid hydration mismatch).
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(260);
-  const [rightSidebarWidth, setRightSidebarWidth] = useState(320);
-  const [chatSidebarWidth, setChatSidebarWidth] = useState(280);
-  const [entryPanelWidth, setEntryPanelWidth] = useState(420);
+  const [rightPanelWidth, setRightPanelWidth] = useState(520);
   useEffect(() => {
     const left = window.localStorage.getItem(STORAGE_LEFT);
     const nLeft = left ? parseInt(left, 10) : NaN;
     if (Number.isFinite(nLeft)) {
       setLeftSidebarWidth(clamp(nLeft, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX));
     }
-    const right = window.localStorage.getItem(STORAGE_RIGHT);
+    const right = window.localStorage.getItem(STORAGE_RIGHT_PANEL);
     const nRight = right ? parseInt(right, 10) : NaN;
     if (Number.isFinite(nRight)) {
-      setRightSidebarWidth(clamp(nRight, RIGHT_SIDEBAR_MIN, RIGHT_SIDEBAR_MAX));
+      setRightPanelWidth(clamp(nRight, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX));
     }
-    const chat = window.localStorage.getItem(STORAGE_CHAT_SIDEBAR);
-    const nChat = chat ? parseInt(chat, 10) : NaN;
-    if (Number.isFinite(nChat)) {
-      setChatSidebarWidth(clamp(nChat, CHAT_SIDEBAR_MIN, CHAT_SIDEBAR_MAX));
-    }
-    const ep = window.localStorage.getItem(STORAGE_ENTRY_PANEL);
-    const nEp = ep ? parseInt(ep, 10) : NaN;
-    if (Number.isFinite(nEp)) {
-      setEntryPanelWidth(clamp(nEp, ENTRY_PANEL_MIN, ENTRY_PANEL_MAX));
+    const collapsed = window.localStorage.getItem(STORAGE_RIGHT_PANEL_COLLAPSED);
+    if (collapsed === "1") {
+      setRightPanelCollapsed(true);
     }
   }, []);
   useEffect(() => {
     window.localStorage.setItem(STORAGE_LEFT, String(leftSidebarWidth));
   }, [leftSidebarWidth]);
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_RIGHT, String(rightSidebarWidth));
-  }, [rightSidebarWidth]);
+    window.localStorage.setItem(STORAGE_RIGHT_PANEL, String(rightPanelWidth));
+  }, [rightPanelWidth]);
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_CHAT_SIDEBAR, String(chatSidebarWidth));
-  }, [chatSidebarWidth]);
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_ENTRY_PANEL, String(entryPanelWidth));
-  }, [entryPanelWidth]);
+    window.localStorage.setItem(STORAGE_RIGHT_PANEL_COLLAPSED, rightPanelCollapsed ? "1" : "0");
+  }, [rightPanelCollapsed]);
 
   // Keyboard shortcuts: Cmd+B = toggle left sidebar, Cmd+Shift+B = toggle right sidebar, Cmd+J = toggle terminal
   useEffect(() => {
@@ -841,7 +799,7 @@ function WorkspacePageInner() {
       if (mod && key === "b") {
         e.preventDefault();
         if (e.shiftKey) {
-          setRightSidebarCollapsed((v) => !v);
+          setRightPanelCollapsed((v) => !v);
         } else {
           setLeftSidebarCollapsed((v) => !v);
         }
@@ -867,16 +825,30 @@ function WorkspacePageInner() {
   // Derive file context for chat sidebar directly from activePath (stable across loading).
   // Exclude reserved virtual paths (~chats, ~cron, etc.) where file-scoped chat is irrelevant.
   const fileContext = useMemo(() => {
-    if (!activePath) {return undefined;}
-    if (isVirtualPath(activePath)) {return undefined;}
-    const filename = activePath.split("/").pop() || activePath;
-    return { path: activePath, filename, isDirectory: content.kind === "directory" };
+    if (!activePath) { return undefined; }
+    // v3: include virtual paths (~crm/*, ~cloud, ~skills, ~integrations, ~cron, etc.) so
+    // the agent is aware when the user is viewing CRM tables, cloud settings, etc.
+    const filename = (() => {
+      if (activePath.startsWith("~crm/")) {
+        const view = activePath.slice("~crm/".length);
+        return `CRM ${view.charAt(0).toUpperCase()}${view.slice(1)}`;
+      }
+      if (activePath === "~cloud") return "Cloud settings";
+      if (activePath === "~integrations") return "Integrations panel";
+      if (activePath === "~skills") return "Skills store";
+      if (activePath === "~cron") return "Cron dashboard";
+      if (activePath.startsWith("~cron/")) return `Cron job ${activePath.slice("~cron/".length)}`;
+      return activePath.split("/").pop() || activePath;
+    })();
+    const isDirectory =
+      content.kind === "directory" ||
+      isVirtualPath(activePath) ||
+      content.kind === "crm-people" ||
+      content.kind === "crm-companies" ||
+      content.kind === "crm-inbox" ||
+      content.kind === "crm-calendar";
+    return { path: activePath, filename, isDirectory };
   }, [activePath, content.kind]);
-
-  // Clear file-scoped chat session when navigating away from a file
-  useEffect(() => {
-    if (!activePath) setFileChatSessionId(null);
-  }, [activePath]);
 
   // Update content state when the agent edits the file (live reload)
   const handleFileChanged = useCallback((newContent: string) => {
@@ -972,8 +944,6 @@ function WorkspacePageInner() {
       setBrowseDir,
       setActivePath,
       setContent,
-      setChatSidebarPreview,
-      setShowChatSidebar,
       setActiveSessionId,
       setActiveSubagentKey,
       resetMainChat: () => {
@@ -1377,13 +1347,10 @@ function WorkspacePageInner() {
 
   const applyActivatedTab = useCallback((tab: Tab | undefined) => {
     if (!tab || tab.id === HOME_TAB_ID) {
-      setActivePath(null);
-      setContent({ kind: "none" });
       return;
     }
     if (tab.type === "chat" || tab.type === "gateway-chat") {
-      setActivePath(null);
-      setContent({ kind: "none" });
+      // v3: don't touch activePath/content — right panel state is independent of chat tabs.
       const identity = resolveChatIdentityForTab(tab);
       setActiveSessionId(identity.sessionId);
       setActiveSubagentKey(identity.subagentKey);
@@ -1514,76 +1481,6 @@ function WorkspacePageInner() {
     setTabState((prev) => togglePinTab(prev, tabId));
   }, []);
 
-  const loadSidebarPreviewFromNode = useCallback(
-    async (node: TreeNode): Promise<SidebarPreviewContent | null> => {
-      if (node.type === "folder") {
-        return { kind: "directory", path: node.path, name: node.name };
-      }
-      if (node.type === "database") {
-        return { kind: "database", dbPath: node.path, filename: node.name };
-      }
-
-      const mediaType = detectMediaType(node.name);
-      if (mediaType) {
-        return {
-          kind: "media",
-          url: rawFileUrl(node.path),
-          mediaType,
-          filename: node.name,
-          filePath: node.path,
-        };
-      }
-
-      if (isSpreadsheetFile(node.name)) {
-        return {
-          kind: "spreadsheet",
-          url: rawFileUrl(node.path),
-          filename: node.name,
-          filePath: node.path,
-        };
-      }
-
-      // DOCX: binary fetch -> mammoth -> HTML
-      if (isDocxFile(node.name)) {
-        try {
-          const rawRes = await fetch(rawFileUrl(node.path));
-          if (!rawRes.ok) {return null;}
-          const arrayBuffer = await rawRes.arrayBuffer();
-          const mammoth = await import("mammoth");
-          const result = await mammoth.convertToHtml({ arrayBuffer });
-          return { kind: "richDocument", html: result.value, filePath: node.path, mode: "docx" };
-        } catch {
-          return null;
-        }
-      }
-
-      // TXT: text fetch -> wrap in paragraphs
-      if (isTxtFile(node.name)) {
-        const txtRes = await fetch(fileApiUrl(node.path));
-        if (!txtRes.ok) {return null;}
-        const txtData: FileData = await txtRes.json();
-        return { kind: "richDocument", html: textToHtml(txtData.content), filePath: node.path, mode: "txt" };
-      }
-
-      const res = await fetch(fileApiUrl(node.path));
-      if (!res.ok) {return null;}
-      const data: FileData = await res.json();
-
-      if (node.type === "document" || data.type === "markdown") {
-        return {
-          kind: "document",
-          data,
-          title: node.name.replace(/\.mdx?$/, ""),
-        };
-      }
-      if (isCodeFile(node.name)) {
-        return { kind: "code", data, filename: node.name, filePath: node.path };
-      }
-      return { kind: "file", data, filename: node.name };
-    },
-    [],
-  );
-
   // Open inline file-path mentions from chat in a new workspace tab.
   const handleFilePathClickFromChat = useCallback(
     async (rawPath: string) => {
@@ -1655,7 +1552,22 @@ function WorkspacePageInner() {
   // Build the enhanced tree: real tree + workspace management virtual folders
   // (Chat sessions live in the right sidebar, not in the tree.)
   // In browse mode, skip virtual folders (they only apply to workspace mode)
-  const enhancedTree = useMemo(() => tree, [tree]);
+  // Hide CRM-bound object tables from the right panel file tree.
+  // They're accessible via the left sidebar CRM nav (People / Companies / Inbox / Calendar),
+  // so showing them here is redundant and caused a visual flicker when the tree re-fetched.
+  const CRM_HIDDEN_TREE_PATHS = useMemo(() => new Set([
+    "people",
+    "company",
+    "companies",
+    "email_thread",
+    "email_message",
+    "calendar_event",
+    "interaction",
+  ]), []);
+  const enhancedTree = useMemo(
+    () => tree.filter((node) => !CRM_HIDDEN_TREE_PATHS.has(node.path)),
+    [tree, CRM_HIDDEN_TREE_PATHS],
+  );
 
   // Compute the effective parentDir for ".." navigation.
   // In browse mode: use browseParentDir from the API.
@@ -1684,10 +1596,8 @@ function WorkspacePageInner() {
     setBrowseDir(null);
   }, [setBrowseDir]);
 
-  // Navigate to the main chat / home panel
+  // Navigate to the main chat / home panel. v3: does not touch right panel state.
   const handleGoToChat = useCallback(() => {
-    setActivePath(null);
-    setContent({ kind: "none" });
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setActiveGatewaySessionKey(null);
@@ -1706,10 +1616,8 @@ function WorkspacePageInner() {
   }, []);
 
   // Insert a file mention into the chat editor when a sidebar item is dropped on the chat input.
-  // Try the main chat panel first; fall back to the compact (file-scoped) panel.
   const handleSidebarExternalDrop = useCallback((node: TreeNode) => {
-    const target = chatRef.current ?? compactChatRef.current;
-    target?.insertFileMention?.(node.name, node.path);
+    chatRef.current?.insertFileMention?.(node.name, node.path);
   }, []);
 
   // Handle file search selection: navigate sidebar to the file's location and open it
@@ -1767,10 +1675,10 @@ function WorkspacePageInner() {
       activePath,
       activeSessionId,
       activeSubagentKey,
-      fileChatSessionId,
+      fileChatSessionId: null,
       browseDir,
       showHidden,
-      previewPath: chatSidebarPreview?.path ?? null,
+      previewPath: null,
       terminalOpen,
       cronView,
       cronCalMode,
@@ -1788,7 +1696,7 @@ function WorkspacePageInner() {
       router.push(url, { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop; hydrationPhase is a ref gate
-  }, [activePath, activeSessionId, activeSubagentKey, fileChatSessionId, browseDir, showHidden, chatSidebarPreview, router, cronView, cronCalMode, cronDate, cronRunFilter, cronRun]);
+  }, [activePath, activeSessionId, activeSubagentKey, browseDir, showHidden, router, cronView, cronCalMode, cronDate, cronRunFilter, cronRun]);
 
   // Terminal URL sync — independent of workspace hydration so it works app-wide.
   useEffect(() => {
@@ -1904,9 +1812,6 @@ function WorkspacePageInner() {
         openTabForNode(syntheticNode);
         void loadContent(syntheticNode);
       }
-      if (urlState.fileChat) {
-        setFileChatSessionId(urlState.fileChat);
-      }
     } else if (urlState.crm) {
       // Top-level CRM view (People/Companies/Inbox/Calendar) — render a
       // dedicated component in the main panel.
@@ -1963,19 +1868,6 @@ function WorkspacePageInner() {
     if (urlState.hidden) {
       setShowHidden(true);
     }
-    if (urlState.preview) {
-      const previewPath = urlState.preview;
-      const filename = previewPath.split("/").pop() || previewPath;
-      setChatSidebarPreview({ status: "loading", path: previewPath, filename });
-      const node: TreeNode = { name: filename, path: previewPath, type: "file" };
-      void loadSidebarPreviewFromNode(node).then((content) => {
-        if (!content) {
-          setChatSidebarPreview({ status: "error", path: previewPath, filename, message: "Could not load preview" });
-        } else {
-          setChatSidebarPreview({ status: "ready", path: previewPath, filename, content });
-        }
-      });
-    }
     if (urlState.terminal) {
       setTerminalOpen(true);
     }
@@ -1983,7 +1875,7 @@ function WorkspacePageInner() {
     postHydrationRender.current = true;
     hydrationPhase.current = "hydrated";
   // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrationPhase is a ref gate, runs exactly once
-  }, [tree, treeLoading, searchParams, workspaceName, tabState, loadContent, applyActivatedTab, setBrowseDir, setShowHidden, loadSidebarPreviewFromNode]);
+  }, [tree, treeLoading, searchParams, workspaceName, tabState, loadContent, applyActivatedTab, setBrowseDir, setShowHidden]);
 
   // Handle browser back/forward navigation.
   // When the user clicks Back/Forward, the URL changes but the app doesn't
@@ -2047,7 +1939,6 @@ function WorkspacePageInner() {
           openTabForNode(synNode);
           void loadContent(synNode);
         }
-        setFileChatSessionId(urlState.fileChat);
       } else if (urlState.crm) {
         const map = {
           people: { path: "~crm/people", name: "People", kind: "crm-people" as const },
@@ -2121,20 +2012,6 @@ function WorkspacePageInner() {
         setShowHidden(false);
       }
 
-      setChatSidebarPreview(null);
-      if (urlState.preview) {
-        const filename = urlState.preview.split("/").pop() || urlState.preview;
-        setChatSidebarPreview({ status: "loading", path: urlState.preview, filename });
-        const previewNode: TreeNode = { name: filename, path: urlState.preview, type: "file" };
-        void loadSidebarPreviewFromNode(previewNode).then((previewContent) => {
-          if (!previewContent) {
-            setChatSidebarPreview({ status: "error", path: urlState.preview!, filename, message: "Could not load preview" });
-          } else {
-            setChatSidebarPreview({ status: "ready", path: urlState.preview!, filename, content: previewContent });
-          }
-        });
-      }
-
       setTerminalOpen(urlState.terminal);
 
       lastPushedQs.current = qs;
@@ -2142,7 +2019,7 @@ function WorkspacePageInner() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [tree, cronJobs, loadContent, setBrowseDir, setShowHidden, loadSidebarPreviewFromNode]);
+  }, [tree, cronJobs, loadContent, setBrowseDir, setShowHidden]);
 
   // Resolve cron job detail once cronJobs load (they arrive after the main hydration).
   useEffect(() => {
@@ -2166,10 +2043,6 @@ function WorkspacePageInner() {
     params.delete("send");
     const qs = params.toString();
     router.replace(qs ? `/?${qs}` : "/", { scroll: false });
-
-    // Show the main chat (clear any active file/content)
-    setActivePath(null);
-    setContent({ kind: "none" });
 
     const tab = openBlankChatTab();
     sendMessageInChatTab(tab.id, sendParam);
@@ -2320,8 +2193,6 @@ function WorkspacePageInner() {
   }, []);
 
   const handleCronSendCommand = useCallback((message: string) => {
-    setActivePath(null);
-    setContent({ kind: "none" });
     const tab = openBlankChatTab();
     sendMessageInChatTab(tab.id, message);
   }, [openBlankChatTab, sendMessageInChatTab]);
@@ -2454,11 +2325,127 @@ function WorkspacePageInner() {
     }
   }, [stopParentSession, stopSubagentSession, tabState.tabs]);
 
-  // Whether to show the main chat workspace instead of file/object content.
-  const showMainChat = activeTab.type === "chat"
-    || activeTab.type === "gateway-chat"
-    || activeTab.id === HOME_TAB_ID
-    || (!activePath && content.kind === "none");
+  // v3 three-column layout derived values.
+  // - Center always renders the chat panel stack (one session at a time in the center).
+  // - Right panel renders content tabs (files, CRM, cloud, etc.); when no content tab is
+  //   active it shows the Files home view (the file tree).
+  const contentTabs = useMemo(
+    () => tabState.tabs.filter((tab) => tab.id !== HOME_TAB_ID && tab.type !== "chat" && tab.type !== "gateway-chat"),
+    [tabState.tabs],
+  );
+
+  // Split the right-panel content tabs between:
+  // - fileContentTabs: workspace files (opened inside the Files surface as sub-tabs above the viewer)
+  // - pageContentTabs: full-width pages (CRM views, cloud settings, cron, etc.) shown in the outer pill strip
+  const isPageTabPath = (path?: string): boolean => !!path && path.startsWith("~");
+  const fileContentTabs = useMemo(
+    () => contentTabs.filter((tab) => !isPageTabPath(tab.path)),
+    [contentTabs],
+  );
+  const pageContentTabs = useMemo(
+    () => contentTabs.filter((tab) => isPageTabPath(tab.path)),
+    [contentTabs],
+  );
+
+  // The right panel runs in one of two modes:
+  // - File surface: file tree on the left, preview/editor on the right (Files tab or any
+  //   content tab pointing at a filesystem item).
+  // - Full surface: tab content takes the entire right panel (CRM pages, cloud settings,
+  //   cron dashboards, object tables, etc.).
+  const FILE_SURFACE_CONTENT_KINDS = useMemo(() => new Set<ContentState["kind"]>([
+    "none", "loading", "file", "document", "code", "media", "spreadsheet",
+    "html", "database", "report", "directory", "richDocument", "app", "duckdb-missing",
+  ]), []);
+  // Drive the split purely off content.kind so switching into CRM/cloud/cron tabs
+  // immediately hides the file tree, even during the transient moment before the
+  // activeContentTabId tracker settles.
+  const isFileSurface = FILE_SURFACE_CONTENT_KINDS.has(content.kind);
+
+  // Track the last-focused tab per surface so switching between chat and content tabs
+  // preserves each surface's selection independently (user requirement: "chat doesn't split").
+  useEffect(() => {
+    const activeId = tabState.activeTabId;
+    if (!activeId) return;
+    const t = tabState.tabs.find((x) => x.id === activeId);
+    if (!t) return;
+    if (t.type === "chat" || t.type === "gateway-chat") {
+      setActiveChatTabId(t.id);
+    } else if (t.id !== HOME_TAB_ID) {
+      setActiveContentTabId(t.id);
+    }
+  }, [tabState.activeTabId, tabState.tabs]);
+
+  // Clear stale active-content-tab-id if the content tab was closed externally.
+  useEffect(() => {
+    if (activeContentTabId && !contentTabs.some((t) => t.id === activeContentTabId)) {
+      setActiveContentTabId(null);
+    }
+  }, [activeContentTabId, contentTabs]);
+
+  // v3: the center always shows a chat panel. If no chat tab exists (e.g. after
+  // closing the last one), create a fresh blank one so the hero state ("What can
+  // I help with?") renders instead of an empty center.
+  useEffect(() => {
+    if (mainChatTabs.length > 0) return;
+    if (hydrationPhase.current !== "hydrated") return;
+    const tab = createBlankChatTab();
+    setTabState((prev) => openTab(prev, tab, { preview: true }));
+    setActiveChatTabId(tab.id);
+  }, [mainChatTabs.length]);
+
+  // Right-panel content tab handlers.
+  const handleContentTabActivate = useCallback(
+    (tabId: string) => {
+      const tab = tabStateRef.current.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
+      setActiveContentTabId(tabId);
+      setTabState((prev) => activateTab(prev, tabId));
+      applyActivatedTab(tab);
+    },
+    [applyActivatedTab],
+  );
+
+  const handleContentTabClose = useCallback((tabId: string) => {
+    setTabState((prev) => closeTab(prev, tabId));
+  }, []);
+
+  const sidebarCommonProps = {
+    activePath: null,
+    orgName: context?.organization?.name,
+    browseDir,
+    onFileSearchSelect: handleFileSearchSelect,
+    searchFn: searchIndex,
+    workspaceRoot,
+    onGoToChat: handleGoToChat,
+    activeWorkspace: workspaceName,
+    onWorkspaceChanged: handleWorkspaceChanged,
+    chatSessions: sessions,
+    activeChatSessionId: activeSessionId,
+    activeChatSessionTitle: activeSessionTitle,
+    chatStreamingSessionIds: streamingSessionIds,
+    chatSubagents: subagents,
+    chatActiveSubagentKey: activeSubagentKey,
+    chatSessionsLoading: sessionsLoading,
+    onSelectChatSubagent: handleSelectSubagent,
+    onDeleteChatSession: handleDeleteSession,
+    onRenameChatSession: handleRenameSession,
+    chatGatewaySessions: gatewaySessions,
+    chatChannelStatuses: channelStatuses,
+    chatActiveGatewaySessionKey: activeGatewaySessionKey,
+    chatFileScopedSessions: fileScopedSessions,
+    chatHeartbeatInfo: heartbeatInfo,
+    activeCrmTarget: (
+      content.kind === "crm-people" || content.kind === "crm-person"
+        ? "people" as const
+        : content.kind === "crm-companies" || content.kind === "crm-company"
+          ? "companies" as const
+          : content.kind === "crm-inbox"
+            ? "inbox" as const
+            : content.kind === "crm-calendar"
+              ? "calendar" as const
+              : null
+    ),
+  };
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
@@ -2468,36 +2455,21 @@ function WorkspacePageInner() {
       style={{ background: "var(--color-main-bg)" }}
       onClick={handleContainerClick}
     >
-      {/* Left sidebar — static on desktop (resizable), drawer overlay on mobile */}
+      {/* ── Left sidebar ── */}
       {isMobile ? (
         sidebarOpen && (
           <WorkspaceSidebar
+            {...sidebarCommonProps}
             tree={enhancedTree}
-            activePath={activeTab.type === "chat" || activeTab.type === "gateway-chat" ? null : activePath}
             onSelect={(node) => { handleNodeSelect(node); setSidebarOpen(false); }}
             onRefresh={refreshTree}
-            orgName={context?.organization?.name}
             loading={treeLoading}
-            browseDir={browseDir}
             parentDir={effectiveParentDir}
             onNavigateUp={handleNavigateUp}
             onGoHome={handleGoHome}
-            onFileSearchSelect={(item) => { handleFileSearchSelect?.(item); setSidebarOpen(false); }}
-            searchFn={searchIndex}
-            workspaceRoot={workspaceRoot}
-            onGoToChat={() => { handleGoToChat(); setSidebarOpen(false); }}
             onExternalDrop={handleSidebarExternalDrop}
             showHidden={showHidden}
             onToggleHidden={() => setShowHidden((v) => !v)}
-            activeWorkspace={workspaceName}
-            onWorkspaceChanged={handleWorkspaceChanged}
-            chatSessions={sessions}
-            activeChatSessionId={activeSessionId}
-            activeChatSessionTitle={activeSessionTitle}
-            chatStreamingSessionIds={streamingSessionIds}
-            chatSubagents={subagents}
-            chatActiveSubagentKey={activeSubagentKey}
-            chatSessionsLoading={sessionsLoading}
             onSelectChatSession={(sessionId) => {
               const session = sessions.find((entry) => entry.id === sessionId);
               openSessionChatTab(sessionId, session?.title);
@@ -2507,1047 +2479,586 @@ function WorkspacePageInner() {
               openPermanentBlankChatTab();
               setSidebarOpen(false);
             }}
-            onSelectChatSubagent={handleSelectSubagent}
-            onDeleteChatSession={handleDeleteSession}
-            onRenameChatSession={handleRenameSession}
-            chatGatewaySessions={gatewaySessions}
-            chatChannelStatuses={channelStatuses}
-            chatActiveGatewaySessionKey={activeGatewaySessionKey}
             onSelectGatewayChatSession={(sessionKey, sessionId) => {
               const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
               openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
               setSidebarOpen(false);
             }}
-            chatFileScopedSessions={fileScopedSessions}
-            chatHeartbeatInfo={heartbeatInfo}
-            activeTab={sidebarTab}
-            onTabChange={setSidebarTab}
             onNavigate={(target) => { handleNavigate(target); setSidebarOpen(false); }}
             mobile
             onClose={() => setSidebarOpen(false)}
           />
         )
       ) : (
-          <div
-            className={`sidebar-animate flex shrink-0 flex-col relative z-10 ${leftSidebarCollapsed ? "overflow-hidden" : ""}`}
-            style={{
-              width: leftSidebarCollapsed ? 0 : leftSidebarWidth,
-              minWidth: leftSidebarCollapsed ? 0 : leftSidebarWidth,
-              transition: "width 200ms ease, min-width 200ms ease",
-            }}
-          >
-            <div className="flex flex-col h-full relative" style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}>
-              <ResizeHandle
-                mode="left"
-                containerRef={layoutRef}
-                min={LEFT_SIDEBAR_MIN}
-                max={LEFT_SIDEBAR_MAX}
-                onResize={setLeftSidebarWidth}
-              />
-              <WorkspaceSidebar
-                tree={enhancedTree}
-                activePath={activeTab.type === "chat" || activeTab.type === "gateway-chat" ? null : activePath}
-                onSelect={handleNodeSelect}
-                onRefresh={refreshTree}
-                orgName={context?.organization?.name}
-                loading={treeLoading}
-                browseDir={browseDir}
-                parentDir={effectiveParentDir}
-                onNavigateUp={handleNavigateUp}
-                onGoHome={handleGoHome}
-                onFileSearchSelect={handleFileSearchSelect}
-                searchFn={searchIndex}
-                workspaceRoot={workspaceRoot}
-                onGoToChat={handleGoToChat}
-                onExternalDrop={handleSidebarExternalDrop}
-                showHidden={showHidden}
-                onToggleHidden={() => setShowHidden((v) => !v)}
-                width={leftSidebarWidth}
-                onCollapse={() => setLeftSidebarCollapsed(true)}
-                activeWorkspace={workspaceName}
-                onWorkspaceChanged={handleWorkspaceChanged}
-                chatSessions={sessions}
-                activeChatSessionId={activeSessionId}
-                activeChatSessionTitle={activeSessionTitle}
-                chatStreamingSessionIds={streamingSessionIds}
-                chatSubagents={subagents}
-                chatActiveSubagentKey={activeSubagentKey}
-                chatSessionsLoading={sessionsLoading}
-                onSelectChatSession={(sessionId) => {
-                  const session = sessions.find((entry) => entry.id === sessionId);
-                  openSessionChatTab(sessionId, session?.title);
-                }}
-                onNewChatSession={() => {
-                  openPermanentBlankChatTab();
-                }}
-                onSelectChatSubagent={handleSelectSubagent}
-                onDeleteChatSession={handleDeleteSession}
-                onRenameChatSession={handleRenameSession}
-                chatGatewaySessions={gatewaySessions}
-                chatChannelStatuses={channelStatuses}
-                chatActiveGatewaySessionKey={activeGatewaySessionKey}
-                onSelectGatewayChatSession={(sessionKey, sessionId) => {
-                  const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
-                  openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
-                }}
-                chatFileScopedSessions={fileScopedSessions}
-                chatHeartbeatInfo={heartbeatInfo}
-                activeTab={sidebarTab}
-                onTabChange={setSidebarTab}
-                onNavigate={handleNavigate}
-                activeCrmTarget={
-                  content.kind === "crm-people" || content.kind === "crm-person"
-                    ? "people"
-                    : content.kind === "crm-companies" || content.kind === "crm-company"
-                      ? "companies"
-                      : content.kind === "crm-inbox"
-                        ? "inbox"
-                        : content.kind === "crm-calendar"
-                          ? "calendar"
-                          : null
-                }
-              />
-            </div>
+        <div
+          className={`sidebar-animate flex shrink-0 flex-col relative z-10 ${leftSidebarCollapsed ? "overflow-hidden" : ""}`}
+          style={{
+            width: leftSidebarCollapsed ? 0 : leftSidebarWidth,
+            minWidth: leftSidebarCollapsed ? 0 : leftSidebarWidth,
+            transition: "width 200ms ease, min-width 200ms ease",
+          }}
+        >
+          <div className="flex flex-col h-full relative" style={{ width: leftSidebarWidth, minWidth: leftSidebarWidth }}>
+            <ResizeHandle
+              mode="left"
+              containerRef={layoutRef}
+              min={LEFT_SIDEBAR_MIN}
+              max={LEFT_SIDEBAR_MAX}
+              onResize={setLeftSidebarWidth}
+            />
+            <WorkspaceSidebar
+              {...sidebarCommonProps}
+              tree={enhancedTree}
+              onSelect={handleNodeSelect}
+              onRefresh={refreshTree}
+              loading={treeLoading}
+              parentDir={effectiveParentDir}
+              onNavigateUp={handleNavigateUp}
+              onGoHome={handleGoHome}
+              onExternalDrop={handleSidebarExternalDrop}
+              showHidden={showHidden}
+              onToggleHidden={() => setShowHidden((v) => !v)}
+              width={leftSidebarWidth}
+              onCollapse={() => setLeftSidebarCollapsed(true)}
+              onSelectChatSession={(sessionId) => {
+                const session = sessions.find((entry) => entry.id === sessionId);
+                openSessionChatTab(sessionId, session?.title);
+              }}
+              onNewChatSession={() => {
+                openPermanentBlankChatTab();
+              }}
+              onSelectGatewayChatSession={(sessionKey, sessionId) => {
+                const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
+                openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
+              }}
+              onNavigate={handleNavigate}
+            />
           </div>
+        </div>
       )}
 
 
-      {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ background: "var(--color-surface)" }}>
-        <div className="flex flex-1 min-h-0">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Mobile top bar — always visible on mobile */}
-            {isMobile && (
-              <>
-                <div
-                  className="px-2 py-1.5 border-b flex-shrink-0 flex items-center gap-1.5"
-                  style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+      {/* ── Center: chat panel ── */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative" style={{ background: "var(--color-main-bg)" }}>
+        {/* Mobile top bar */}
+        {isMobile && (
+          <div
+            className="px-2 py-1.5 border-b flex-shrink-0 flex items-center gap-1.5"
+            style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+          >
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="p-1.5 rounded-lg flex-shrink-0"
+              style={{ color: "var(--color-text-muted)" }}
+              title="Open sidebar"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />
+              </svg>
+            </button>
+            <div className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: "var(--color-text)" }}>
+              {activeSessionTitle || context?.organization?.name || "Chat"}
+            </div>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setMobileRightPanelOpen(true)}
+                className="p-1.5 rounded-lg flex-shrink-0"
+                style={{ color: "var(--color-text-muted)" }}
+                title="Open files & content"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTerminalOpen((v) => !v)}
+                className="p-1.5 rounded-lg flex-shrink-0"
+                style={{ color: terminalOpen ? "var(--color-text)" : "var(--color-text-muted)", background: terminalOpen ? "var(--color-surface-hover)" : "transparent" }}
+                title="Terminal"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => openPermanentBlankChatTab()}
+                className="p-1.5 rounded-lg flex-shrink-0"
+                style={{ color: "var(--color-text-muted)" }}
+                title="New chat"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14" /><path d="M5 12h14" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Thin top strip, shown only when a sidebar is collapsed, hosts the expand toggles
+            so they never overlap the chat content. */}
+        {!isMobile && (leftSidebarCollapsed || rightPanelCollapsed) && (
+          <div className="h-10 shrink-0 flex items-center justify-between px-2">
+            <div className="flex items-center">
+              {leftSidebarCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => setLeftSidebarCollapsed(false)}
+                  className="p-1.5 rounded-md transition-colors cursor-pointer"
+                  style={{ color: "var(--color-text-muted)" }}
+                  title="Show sidebar (⌘B)"
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => setSidebarOpen(true)}
-                    className="p-1.5 rounded-lg flex-shrink-0"
-                    style={{ color: "var(--color-text-muted)" }}
-                    title="Open sidebar"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" />
-                    </svg>
-                  </button>
-                  <div className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: "var(--color-text)" }}>
-                    {activePath ? activePath.split("/").pop() : (context?.organization?.name || "Workspace")}
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    {activePath && content.kind !== "none" && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActivePath(null);
-                          setContent({ kind: "none" });
-                        }}
-                        className="p-1.5 rounded-lg flex-shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Back to chat"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="m12 19-7-7 7-7" /><path d="M19 12H5" />
-                        </svg>
-                      </button>
-                    )}
-                    {!showMainChat && fileContext && (
-                      <button
-                        type="button"
-                        onClick={() => setMobileFileChatOpen(true)}
-                        className="p-1.5 rounded-lg flex-shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Chat about this file"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        </svg>
-                      </button>
-                    )}
-                    {showMainChat && (
-                      <button
-                        type="button"
-                        onClick={() => setMobileChatSessionsOpen(true)}
-                        className="p-1.5 rounded-lg flex-shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Chat history"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                        </svg>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setTerminalOpen((v) => !v)}
-                      className="p-1.5 rounded-lg flex-shrink-0"
-                      style={{ color: terminalOpen ? "var(--color-text)" : "var(--color-text-muted)", background: terminalOpen ? "var(--color-surface-hover)" : "transparent" }}
-                      title="Terminal"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openPermanentBlankChatTab()}
-                      className="p-1.5 rounded-lg flex-shrink-0"
-                      style={{ color: "var(--color-text-muted)" }}
-                      title="New chat"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 5v14" /><path d="M5 12h14" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                {/* Mobile tab strip */}
-                {tabState.tabs.length > 1 && (
-                  <div
-                    className="flex-shrink-0 flex items-center gap-1 px-2 py-1 overflow-x-auto border-b"
-                    style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-                  >
-                    {tabState.tabs.map((tab) => {
-                      const isActive = tab.id === tabState.activeTabId;
-                      const isLive = liveChatTabIds.has(tab.id);
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => handleTabActivate(tab.id)}
-                          className="px-2.5 py-1 text-[11px] rounded-full whitespace-nowrap shrink-0 font-medium flex items-center gap-1.5"
-                          style={{
-                            background: isActive ? "var(--color-accent)" : "var(--color-surface-hover)",
-                            color: isActive ? "white" : "var(--color-text-muted)",
-                            border: isActive ? "none" : "1px solid var(--color-border)",
-                          }}
-                        >
-                          {isLive && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                          )}
-                          <span
-                            className="truncate max-w-[120px]"
-                            style={{ fontStyle: tab.preview ? "italic" : "normal" }}
-                          >
-                            {tab.title.length > 20 ? tab.title.slice(0, 20) + "..." : tab.title}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Tab bar (desktop only, always visible -- home tab is always present) */}
-            {!isMobile && (
-              <TabBar
-                tabs={tabState.tabs}
-                activeTabId={tabState.activeTabId}
-                onActivate={handleTabActivate}
-                leftContent={leftSidebarCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => setLeftSidebarCollapsed(false)}
-                    className="p-1.5 rounded-md transition-colors hover:bg-black/5 cursor-pointer"
-                    style={{ color: "var(--color-text-muted)" }}
-                    title="Show sidebar (⌘B)"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect width="18" height="18" x="3" y="3" rx="2" />
-                      <path d="M9 3v18" />
-                    </svg>
-                  </button>
-                ) : undefined}
-                onClose={handleTabClose}
-                onCloseOthers={handleTabCloseOthers}
-                onCloseToRight={handleTabCloseToRight}
-                onCloseAll={handleTabCloseAll}
-                onReorder={handleTabReorder}
-                onTogglePin={handleTabTogglePin}
-                onMakePermanent={promoteTabById}
-                liveChatTabIds={liveChatTabIds}
-                onStopTab={handleStopChatTab}
-                onNewTab={openPermanentBlankChatTab}
-                rightContent={showMainChat ? (
-                  <>
-                    {visibleMainChatTabId && liveChatTabIds.has(visibleMainChatTabId) && (
-                      <button
-                        type="button"
-                        onClick={() => handleStopChatTab(visibleMainChatTabId)}
-                        className="p-1.5 rounded-lg cursor-pointer"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Stop active chat"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <rect x="6" y="6" width="12" height="12" rx="2" />
-                        </svg>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setChatSidebarOpen((v) => !v)}
-                      className="p-1.5 rounded-lg cursor-pointer"
-                      style={{
-                        color: chatSidebarOpen ? "var(--color-text)" : "var(--color-text-muted)",
-                        background: chatSidebarOpen ? "var(--color-surface-hover)" : "transparent",
-                      }}
-                      title="Chat history"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                      </svg>
-                    </button>
-                    {activeSessionId && !activeSubagentKey && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          className="p-1.5 rounded-lg cursor-pointer"
-                          style={{ color: "var(--color-text-muted)" }}
-                          title="More options"
-                          aria-label="More options"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="19" cy="12" r="1" />
-                          </svg>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="bottom">
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() => handleDeleteSession(activeSessionId)}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-                            Delete this chat
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </>
-                ) : undefined}
-              />
-            )}
-
-            {/* When a file is selected: show top bar with breadcrumbs (desktop only, mobile has unified top bar) */}
-            {!isMobile && activePath && content.kind !== "none" && (
-              <div
-                className="px-6 border-b flex-shrink-0 flex items-center justify-between"
-                style={{ borderColor: "var(--color-border)" }}
-              >
-                <Breadcrumbs
-                  path={activePath}
-                  onNavigate={handleBreadcrumbNavigate}
-                />
-                <div className="flex items-center gap-1">
-                  {/* Back to chat button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActivePath(null);
-                      setContent({ kind: "none" });
-                    }}
-                    className="p-1.5 rounded-lg flex-shrink-0"
-                    style={{ color: "var(--color-text-muted)" }}
-                    title="Back to chat"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m12 19-7-7 7-7" /><path d="M19 12H5" />
-                    </svg>
-                  </button>
-                  {/* Chat sidebar toggle (hidden for reserved/virtual paths) */}
-                  {fileContext && (
-                    <button
-                      type="button"
-                      onClick={() => setShowChatSidebar((v) => !v)}
-                      className="p-1.5 rounded-lg flex-shrink-0"
-                      style={{
-                        color: showChatSidebar ? "var(--color-text)" : "var(--color-text-muted)",
-                        background: showChatSidebar ? "var(--color-surface-hover)" : "transparent",
-                      }}
-                      title={showChatSidebar ? "Hide chat" : fileContext.isDirectory ? "Chat about this folder" : "Chat about this file"}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Content area */}
-            <div className="flex-1 flex min-h-0">
-              <div
-                className={showMainChat ? "flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" : "hidden"}
-                style={{ background: "var(--color-main-bg)" }}
-              >
-                {mainChatTabs.map((tab) => {
-                  const isGateway = tab.type === "gateway-chat";
-                  const subagent = !isGateway && tab.sessionKey
-                    ? subagents.find((entry) => entry.childSessionKey === tab.sessionKey)
-                    : null;
-                  const isVisible = tab.id === visibleMainChatTabId;
-                  return (
-                    <div
-                      key={tab.id}
-                      className={isVisible ? "flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" : "hidden"}
-                    >
-                      <ChatPanel
-                        ref={(handle) => setMainChatPanelRef(tab.id, handle)}
-                        sessionTitle={tab.title}
-                        initialSessionId={isGateway ? undefined : (tab.sessionKey ? undefined : tab.sessionId ?? undefined)}
-                        onActiveSessionChange={isGateway || tab.sessionKey ? undefined : (id) => handleChatTabSessionChange(tab.id, id)}
-                        onSessionsChange={isGateway ? undefined : refreshSessions}
-                        onConversationActivity={() => promoteTabById(tab.id)}
-                        onSubagentClick={handleSubagentClickFromChat}
-                        onFilePathClick={handleFilePathClickFromChat}
-                        onComposioAction={handleComposioActionFromChat}
-                        onDeleteSession={isGateway || tab.sessionKey ? undefined : handleDeleteSession}
-                        onRenameSession={isGateway || tab.sessionKey ? undefined : handleRenameSession}
-                        compact={isMobile}
-                        sessionKey={isGateway ? undefined : (tab.sessionKey ?? undefined)}
-                        subagentTask={subagent?.task}
-                        subagentLabel={subagent?.label}
-                        onBack={tab.sessionKey && !isGateway ? handleBackFromSubagent : undefined}
-                        hideHeaderActions={!isMobile}
-                        onRuntimeStateChange={(runtime) => handleChatRuntimeStateChange(tab.id, runtime)}
-                        gatewaySessionKey={isGateway ? tab.sessionKey : undefined}
-                        gatewaySessionId={isGateway ? tab.sessionId : undefined}
-                        gatewayChannel={isGateway ? tab.channel : undefined}
-                        visible={isVisible}
-                        searchFn={searchIndex}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-              {!showMainChat && (
-                <div className="flex-1 overflow-y-auto">
-                  <ContentRenderer
-                    content={content}
-                    workspaceExists={workspaceExists}
-                    expectedPath={workspaceRoot}
-                    tree={tree}
-                    activePath={activePath}
-                    browseDir={browseDir}
-                    treeLoading={treeLoading}
-                    members={context?.members}
-                    onNodeSelect={handleNodeSelect}
-                    onNavigateToObject={handleNavigateToObject}
-                    onRefreshObject={refreshCurrentObject}
-                    onRefreshTree={refreshTree}
-                    onNavigate={handleEditorNavigate}
-                    onOpenEntry={handleOpenEntry}
-                    activeEntryId={entryModal?.entryId}
-                    searchFn={searchIndex}
-                    onSelectCronJob={handleSelectCronJob}
-                    onBackToCronDashboard={handleBackToCronDashboard}
-                    cronView={cronView}
-                    onCronViewChange={setCronView}
-                    cronCalMode={cronCalMode}
-                    onCronCalModeChange={setCronCalMode}
-                    cronDate={cronDate}
-                    onCronDateChange={setCronDate}
-                    cronRunFilter={cronRunFilter}
-                    onCronRunFilterChange={setCronRunFilter}
-                    cronRun={cronRun}
-                    onCronRunChange={setCronRun}
-                    onSendCommand={handleCronSendCommand}
-                    onMakeTabPermanent={promoteTabByPath}
-                  />
-                </div>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M9 3v18" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center">
+              {rightPanelCollapsed && (
+                <button
+                  type="button"
+                  onClick={() => setRightPanelCollapsed(false)}
+                  className="p-1.5 rounded-md transition-colors cursor-pointer"
+                  style={{ color: "var(--color-text-muted)" }}
+                  title="Show right panel (⌘⇧B)"
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M15 3v18" />
+                  </svg>
+                </button>
               )}
             </div>
           </div>
+        )}
 
-          {!isMobile && showMainChat && entryModal && (
-            <aside
-              className="sidebar-animate flex-shrink-0 min-h-0 border-l flex flex-col relative overflow-hidden"
-              style={{
-                width: entryPanelWidth,
-                borderColor: "var(--color-border)",
-                background: "var(--color-bg)",
-                transition: "width 200ms ease",
-              }}
-            >
-              <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: entryPanelWidth, minWidth: entryPanelWidth }}>
-                <ResizeHandle
-                  mode="right"
-                  containerRef={layoutRef}
-                  min={ENTRY_PANEL_MIN}
-                  max={ENTRY_PANEL_MAX}
-                  onResize={setEntryPanelWidth}
-                />
-                <EntryDetailPanel
-                  objectName={entryModal.objectName}
-                  entryId={entryModal.entryId}
-                  members={context?.members}
-                  tree={tree}
-                  searchFn={searchIndex}
-                  onClose={handleCloseEntry}
-                  onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
-                  onNavigateObject={(objName) => {
-                    handleCloseEntry();
-                    handleNavigateToObject(objName);
-                  }}
-                  onRefresh={refreshCurrentObject}
-                  onNavigate={handleEditorNavigate}
-                />
-              </div>
-            </aside>
-          )}
-
-          {!isMobile && showMainChat && !entryModal && (
-            <aside
-              className="sidebar-animate flex-shrink-0 min-h-0 border-l flex flex-col relative overflow-hidden"
-              style={{
-                width: chatSidebarOpen ? chatSidebarWidth : 0,
-                borderColor: chatSidebarOpen ? "var(--color-border)" : "transparent",
-                background: "var(--color-bg)",
-                transition: "width 200ms ease",
-              }}
-            >
-              <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: chatSidebarWidth, minWidth: chatSidebarWidth }}>
-                <ResizeHandle
-                  mode="right"
-                  containerRef={layoutRef}
-                  min={CHAT_SIDEBAR_MIN}
-                  max={CHAT_SIDEBAR_MAX}
-                  onResize={setChatSidebarWidth}
-                />
-                <ChatSessionsSidebar
-                  sessions={sessions}
-                  activeSessionId={activeSessionId}
-                  activeSessionTitle={activeSessionTitle}
-                  streamingSessionIds={streamingSessionIds}
-                  subagents={subagents}
-                  activeSubagentKey={activeSubagentKey}
-                  loading={sessionsLoading}
-                  onSelectSession={(sessionId) => {
-                    const session = sessions.find((entry) => entry.id === sessionId);
-                    openSessionChatTab(sessionId, session?.title);
-                  }}
-                  onNewSession={() => {
-                    openPermanentBlankChatTab();
-                  }}
-                  onSelectSubagent={handleSelectSubagent}
-                  onDeleteSession={handleDeleteSession}
-                  onRenameSession={handleRenameSession}
-                  onStopSession={(sessionId) => { void stopParentSession(sessionId); }}
-                  onStopSubagent={(sessionKey) => { void stopSubagentSession(sessionKey); }}
-                  gatewaySessions={gatewaySessions}
-                  channelStatuses={channelStatuses}
-                  activeGatewaySessionKey={activeGatewaySessionKey}
-                  onSelectGatewaySession={(sessionKey, sessionId) => {
-                    const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
-                    openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
-                  }}
-                  fileScopedSessions={fileScopedSessions}
-                  heartbeatInfo={heartbeatInfo}
-                  embedded
-                />
-              </div>
-            </aside>
-          )}
-
-          {!isMobile && !showMainChat && entryModal && (
-            <aside
-              className="sidebar-animate flex-shrink-0 min-h-0 border-l flex flex-col relative overflow-hidden"
-              style={{
-                width: entryPanelWidth,
-                borderColor: "var(--color-border)",
-                background: "var(--color-bg)",
-                transition: "width 200ms ease",
-              }}
-            >
-              <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: entryPanelWidth, minWidth: entryPanelWidth }}>
-                <ResizeHandle
-                  mode="right"
-                  containerRef={layoutRef}
-                  min={ENTRY_PANEL_MIN}
-                  max={ENTRY_PANEL_MAX}
-                  onResize={setEntryPanelWidth}
-                />
-                <EntryDetailPanel
-                  objectName={entryModal.objectName}
-                  entryId={entryModal.entryId}
-                  members={context?.members}
-                  tree={tree}
-                  searchFn={searchIndex}
-                  onClose={handleCloseEntry}
-                  onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
-                  onNavigateObject={(objName) => {
-                    handleCloseEntry();
-                    handleNavigateToObject(objName);
-                  }}
-                  onRefresh={refreshCurrentObject}
-                  onNavigate={handleEditorNavigate}
-                />
-              </div>
-            </aside>
-          )}
-
-          {!isMobile && !showMainChat && !entryModal && fileContext && (
-            <aside
-              className="sidebar-animate flex-shrink-0 min-h-0 border-l flex flex-col relative overflow-hidden"
-              style={{
-                width: showChatSidebar && !rightSidebarCollapsed ? rightSidebarWidth : 0,
-                borderColor: showChatSidebar && !rightSidebarCollapsed ? "var(--color-border)" : "transparent",
-                background: "var(--color-bg)",
-                transition: "width 200ms ease",
-              }}
-            >
-              <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: rightSidebarWidth, minWidth: rightSidebarWidth }}>
-                <ResizeHandle
-                  mode="right"
-                  containerRef={layoutRef}
-                  min={RIGHT_SIDEBAR_MIN}
-                  max={RIGHT_SIDEBAR_MAX}
-                  onResize={setRightSidebarWidth}
-                />
+        {/* Chat panel stack — always visible, never replaced by content */}
+        <div className="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ background: "var(--color-main-bg)" }}>
+          {mainChatTabs.map((tab) => {
+            const isGateway = tab.type === "gateway-chat";
+            const subagent = !isGateway && tab.sessionKey
+              ? subagents.find((entry) => entry.childSessionKey === tab.sessionKey)
+              : null;
+            const isVisible = tab.id === visibleMainChatTabId;
+            return (
+              <div
+                key={tab.id}
+                className={isVisible ? "flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" : "hidden"}
+              >
                 <ChatPanel
-                  ref={compactChatRef}
-                  compact
-                  fileContext={fileContext}
-                  initialSessionId={fileChatSessionId ?? undefined}
-                  onFileChanged={handleFileChanged}
+                  ref={(handle) => setMainChatPanelRef(tab.id, handle)}
+                  sessionTitle={tab.title}
+                  initialSessionId={isGateway ? undefined : (tab.sessionKey ? undefined : tab.sessionId ?? undefined)}
+                  onActiveSessionChange={isGateway || tab.sessionKey ? undefined : (id) => handleChatTabSessionChange(tab.id, id)}
+                  onSessionsChange={isGateway ? undefined : refreshSessions}
+                  onConversationActivity={() => promoteTabById(tab.id)}
+                  onSubagentClick={handleSubagentClickFromChat}
                   onFilePathClick={handleFilePathClickFromChat}
                   onComposioAction={handleComposioActionFromChat}
-                  onActiveSessionChange={setFileChatSessionId}
+                  onDeleteSession={isGateway || tab.sessionKey ? undefined : handleDeleteSession}
+                  onRenameSession={isGateway || tab.sessionKey ? undefined : handleRenameSession}
+                  compact={isMobile}
+                  sessionKey={isGateway ? undefined : (tab.sessionKey ?? undefined)}
+                  subagentTask={subagent?.task}
+                  subagentLabel={subagent?.label}
+                  onBack={tab.sessionKey && !isGateway ? handleBackFromSubagent : undefined}
+                  hideHeaderActions={false}
+                  onRuntimeStateChange={(runtime) => handleChatRuntimeStateChange(tab.id, runtime)}
+                  gatewaySessionKey={isGateway ? tab.sessionKey : undefined}
+                  gatewaySessionId={isGateway ? tab.sessionId : undefined}
+                  gatewayChannel={isGateway ? tab.channel : undefined}
+                  visible={isVisible}
                   searchFn={searchIndex}
-                />
-              </div>
-            </aside>
-          )}
-        </div>
-
-        {/* Mobile chat sessions drawer */}
-        {isMobile && mobileChatSessionsOpen && (
-          <ChatSessionsSidebar
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            activeSessionTitle={activeSessionTitle}
-            streamingSessionIds={streamingSessionIds}
-            subagents={subagents}
-            activeSubagentKey={activeSubagentKey}
-            loading={sessionsLoading}
-            onSelectSession={(sessionId) => {
-              const session = sessions.find((entry) => entry.id === sessionId);
-              openSessionChatTab(sessionId, session?.title);
-              setMobileChatSessionsOpen(false);
-            }}
-            onNewSession={() => {
-              openPermanentBlankChatTab();
-              setMobileChatSessionsOpen(false);
-            }}
-            onSelectSubagent={(key) => {
-              handleSelectSubagent(key);
-              setMobileChatSessionsOpen(false);
-            }}
-            onDeleteSession={handleDeleteSession}
-            onRenameSession={handleRenameSession}
-            onStopSession={(sessionId) => { void stopParentSession(sessionId); }}
-            onStopSubagent={(sessionKey) => { void stopSubagentSession(sessionKey); }}
-            gatewaySessions={gatewaySessions}
-            channelStatuses={channelStatuses}
-            activeGatewaySessionKey={activeGatewaySessionKey}
-            onSelectGatewaySession={(sessionKey, sessionId) => {
-              const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
-              openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
-              setMobileChatSessionsOpen(false);
-            }}
-            fileScopedSessions={fileScopedSessions}
-            heartbeatInfo={heartbeatInfo}
-            mobile
-            width={280}
-            onClose={() => setMobileChatSessionsOpen(false)}
-          />
-        )}
-
-        {/* Mobile file-context chat drawer */}
-        {isMobile && mobileFileChatOpen && fileContext && (
-          <div className="drawer-backdrop" onClick={() => setMobileFileChatOpen(false)}>
-            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-            <div onClick={(e) => e.stopPropagation()} className="fixed inset-y-0 right-0 z-50 drawer-right" style={{ width: "min(85vw, 360px)" }}>
-              <div className="flex flex-col h-full" style={{ background: "var(--color-bg)" }}>
-                <ChatPanel
-                  ref={compactChatRef}
-                  compact
-                  fileContext={fileContext}
-                  initialSessionId={fileChatSessionId ?? undefined}
+                  fileContext={isVisible ? fileContext : undefined}
                   onFileChanged={handleFileChanged}
-                  onFilePathClick={(path) => { handleFilePathClickFromChat(path); setMobileFileChatOpen(false); }}
-                  onComposioAction={(action) => { handleComposioActionFromChat(action); setMobileFileChatOpen(false); }}
-                  onActiveSessionChange={setFileChatSessionId}
-                  searchFn={searchIndex}
                 />
               </div>
-            </div>
-          </div>
-        )}
+            );
+          })}
+        </div>
 
         <ChatComposioModalHost
           request={pendingComposioAction}
           onFallbackToIntegrations={handleComposioFallbackToIntegrations}
         />
 
-        {/* Terminal drawer (Cmd+J) */}
         {terminalOpen && (
           <TerminalDrawer onClose={() => setTerminalOpen(false)} cwd={workspaceRoot ?? undefined} />
         )}
       </main>
 
-      {/* Mobile entry detail panel */}
-      {isMobile && entryModal && (
-        <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--color-bg)" }}>
-          <EntryDetailPanel
-            objectName={entryModal.objectName}
-            entryId={entryModal.entryId}
-            members={context?.members}
-            tree={tree}
-            searchFn={searchIndex}
-            onClose={handleCloseEntry}
-            onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
-            onNavigateObject={(objName) => {
-              handleCloseEntry();
-              handleNavigateToObject(objName);
-            }}
-            onRefresh={refreshCurrentObject}
-            onNavigate={handleEditorNavigate}
-          />
+      {/* ── Right panel ── */}
+      {!isMobile && (
+        <aside
+          className={`sidebar-animate flex-shrink-0 min-h-0 flex flex-col relative ${rightPanelCollapsed ? "overflow-hidden" : "border-l overflow-hidden"}`}
+          style={{
+            width: rightPanelCollapsed ? 0 : rightPanelWidth,
+            minWidth: rightPanelCollapsed ? 0 : rightPanelWidth,
+            borderColor: "var(--color-border)",
+            background: "var(--color-bg)",
+            transition: "width 200ms ease, min-width 200ms ease",
+          }}
+        >
+          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: rightPanelWidth, minWidth: rightPanelWidth }}>
+            <ResizeHandle
+              mode="right"
+              containerRef={layoutRef}
+              min={RIGHT_PANEL_MIN}
+              max={RIGHT_PANEL_MAX}
+              onResize={setRightPanelWidth}
+            />
+            <RightPanel
+              tabs={pageContentTabs}
+              activeTabId={activeContentTabId}
+              onActivate={handleContentTabActivate}
+              onClose={handleContentTabClose}
+              onCloseOthers={handleTabCloseOthers}
+              onCloseToRight={handleTabCloseToRight}
+              onCloseAll={handleTabCloseAll}
+              onReorder={handleTabReorder}
+              onTogglePin={handleTabTogglePin}
+              onMakePermanent={promoteTabById}
+              onCollapse={() => setRightPanelCollapsed(true)}
+              filesTabActive={activeContentTabId === null}
+              onActivateFilesTab={() => {
+                setActiveContentTabId(null);
+                setActivePath(null);
+                setContent({ kind: "none" });
+              }}
+            >
+              {entryModal ? (
+                <div className="h-full min-h-0 overflow-hidden">
+                  <EntryDetailPanel
+                    objectName={entryModal.objectName}
+                    entryId={entryModal.entryId}
+                    members={context?.members}
+                    tree={tree}
+                    searchFn={searchIndex}
+                    onClose={handleCloseEntry}
+                    onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
+                    onNavigateObject={(objName) => {
+                      handleCloseEntry();
+                      handleNavigateToObject(objName);
+                    }}
+                    onRefresh={refreshCurrentObject}
+                    onNavigate={handleEditorNavigate}
+                  />
+                </div>
+              ) : isFileSurface ? (
+                <div className="flex h-full min-h-0 overflow-hidden">
+                  {/* File tree column (always visible in the Files surface) */}
+                  <div
+                    className="flex flex-col min-h-0 shrink-0 border-r overflow-hidden"
+                    style={{ width: 240, minWidth: 240, borderColor: "var(--color-border)" }}
+                  >
+                    {handleFileSearchSelect && (
+                      <div className="px-2 pt-2 pb-1 shrink-0">
+                        <FileSearch onSelect={handleFileSearchSelect} searchFn={searchIndex} />
+                      </div>
+                    )}
+                    {browseDir && (
+                      <div
+                        className="px-3 py-2 border-b flex items-center gap-2 shrink-0"
+                        style={{ borderColor: "var(--color-border)" }}
+                      >
+                        <span className="shrink-0" style={{ color: "var(--color-text-muted)" }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </span>
+                        <span
+                          className="text-[12px] font-medium truncate flex-1 min-w-0"
+                          style={{ color: "var(--color-text)" }}
+                          title={browseDir}
+                        >
+                          {browseDir.split("/").pop() || browseDir}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleGoHome}
+                          className="p-1 rounded-md shrink-0 transition-colors cursor-pointer"
+                          style={{ color: "var(--color-text-muted)" }}
+                          title="Return to workspace"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                            <polyline points="9 22 9 12 15 12 15 22" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex-1 overflow-y-auto px-1 py-2">
+                      <FileManagerTree
+                        tree={enhancedTree}
+                        activePath={activePath}
+                        onSelect={handleNodeSelect}
+                        onRefresh={refreshTree}
+                        parentDir={effectiveParentDir}
+                        onNavigateUp={handleNavigateUp}
+                        browseDir={browseDir}
+                        workspaceRoot={workspaceRoot}
+                        onExternalDrop={handleSidebarExternalDrop}
+                      />
+                    </div>
+                  </div>
+                  {/* File preview / editor area (right) */}
+                  <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                    {fileContentTabs.length > 0 && (
+                      <div
+                        className="flex items-center gap-1 px-2 h-9 shrink-0 border-b overflow-x-auto"
+                        style={{ borderColor: "var(--color-border)" }}
+                      >
+                        {fileContentTabs.map((tab) => {
+                          const isActive = tab.id === activeContentTabId;
+                          return (
+                            <div
+                              key={tab.id}
+                              className="flex items-center rounded-md shrink-0"
+                              style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleContentTabActivate(tab.id)}
+                                className="pl-2.5 pr-1 py-0.5 text-[12px] font-medium transition-colors cursor-pointer"
+                                style={{
+                                  color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
+                                  fontStyle: tab.preview ? "italic" : "normal",
+                                }}
+                                title={tab.title}
+                              >
+                                {tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
+                                className="p-0.5 rounded-md mr-0.5 cursor-pointer"
+                                style={{ color: "var(--color-text-muted)" }}
+                                title="Close tab"
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {activePath && content.kind !== "none" ? (
+                      <>
+                        <div
+                          className="px-4 border-b flex-shrink-0 flex items-center h-10"
+                          style={{ borderColor: "var(--color-border)" }}
+                        >
+                          <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} />
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                          <ContentRenderer
+                            content={content}
+                            workspaceExists={workspaceExists}
+                            expectedPath={workspaceRoot}
+                            tree={tree}
+                            activePath={activePath}
+                            browseDir={browseDir}
+                            treeLoading={treeLoading}
+                            members={context?.members}
+                            onNodeSelect={handleNodeSelect}
+                            onNavigateToObject={handleNavigateToObject}
+                            onRefreshObject={refreshCurrentObject}
+                            onRefreshTree={refreshTree}
+                            onNavigate={handleEditorNavigate}
+                            onOpenEntry={handleOpenEntry}
+                            activeEntryId={undefined}
+                            searchFn={searchIndex}
+                            onSelectCronJob={handleSelectCronJob}
+                            onBackToCronDashboard={handleBackToCronDashboard}
+                            cronView={cronView}
+                            onCronViewChange={setCronView}
+                            cronCalMode={cronCalMode}
+                            onCronCalModeChange={setCronCalMode}
+                            cronDate={cronDate}
+                            onCronDateChange={setCronDate}
+                            cronRunFilter={cronRunFilter}
+                            onCronRunFilterChange={setCronRunFilter}
+                            cronRun={cronRun}
+                            onCronRunChange={setCronRun}
+                            onSendCommand={handleCronSendCommand}
+                            onMakeTabPermanent={promoteTabByPath}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+                          Select a file to view
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col h-full min-h-0 overflow-hidden">
+                  {activePath && content.kind !== "none" && (
+                    <div
+                      className="px-4 border-b flex-shrink-0 flex items-center h-10"
+                      style={{ borderColor: "var(--color-border)" }}
+                    >
+                      <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} />
+                    </div>
+                  )}
+                  <div className="flex-1 overflow-y-auto">
+                    <ContentRenderer
+                      content={content}
+                      workspaceExists={workspaceExists}
+                      expectedPath={workspaceRoot}
+                      tree={tree}
+                      activePath={activePath}
+                      browseDir={browseDir}
+                      treeLoading={treeLoading}
+                      members={context?.members}
+                      onNodeSelect={handleNodeSelect}
+                      onNavigateToObject={handleNavigateToObject}
+                      onRefreshObject={refreshCurrentObject}
+                      onRefreshTree={refreshTree}
+                      onNavigate={handleEditorNavigate}
+                      onOpenEntry={handleOpenEntry}
+                      activeEntryId={undefined}
+                      searchFn={searchIndex}
+                      onSelectCronJob={handleSelectCronJob}
+                      onBackToCronDashboard={handleBackToCronDashboard}
+                      cronView={cronView}
+                      onCronViewChange={setCronView}
+                      cronCalMode={cronCalMode}
+                      onCronCalModeChange={setCronCalMode}
+                      cronDate={cronDate}
+                      onCronDateChange={setCronDate}
+                      cronRunFilter={cronRunFilter}
+                      onCronRunFilterChange={setCronRunFilter}
+                      cronRun={cronRun}
+                      onCronRunChange={setCronRun}
+                      onSendCommand={handleCronSendCommand}
+                      onMakeTabPermanent={promoteTabByPath}
+                    />
+                  </div>
+                </div>
+              )}
+            </RightPanel>
+          </div>
+        </aside>
+      )}
+
+      {/* Mobile right panel drawer */}
+      {isMobile && mobileRightPanelOpen && (
+        <div className="drawer-backdrop" onClick={() => setMobileRightPanelOpen(false)}>
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <div onClick={(e) => e.stopPropagation()} className="fixed inset-y-0 right-0 z-50 drawer-right" style={{ width: "min(90vw, 400px)", background: "var(--color-bg)" }}>
+            <div className="flex flex-col h-full">
+              <RightPanel
+                tabs={pageContentTabs}
+                activeTabId={activeContentTabId}
+                onActivate={(id) => { handleContentTabActivate(id); }}
+                onClose={handleContentTabClose}
+                onCloseOthers={handleTabCloseOthers}
+                onCloseToRight={handleTabCloseToRight}
+                onCloseAll={handleTabCloseAll}
+                onReorder={handleTabReorder}
+                onTogglePin={handleTabTogglePin}
+                onMakePermanent={promoteTabById}
+                onCollapse={() => setMobileRightPanelOpen(false)}
+                filesTabActive={activeContentTabId === null}
+                onActivateFilesTab={() => {
+                  setActiveContentTabId(null);
+                  setActivePath(null);
+                  setContent({ kind: "none" });
+                }}
+              >
+                {activeContentTabId === null ? (
+                  <div className="flex-1 overflow-y-auto px-1 py-2">
+                    <FileManagerTree
+                      tree={enhancedTree}
+                      activePath={null}
+                      onSelect={(node) => { handleNodeSelect(node); }}
+                      onRefresh={refreshTree}
+                      parentDir={effectiveParentDir}
+                      onNavigateUp={handleNavigateUp}
+                      browseDir={browseDir}
+                      workspaceRoot={workspaceRoot}
+                    />
+                  </div>
+                ) : entryModal ? (
+                  <EntryDetailPanel
+                    objectName={entryModal.objectName}
+                    entryId={entryModal.entryId}
+                    members={context?.members}
+                    tree={tree}
+                    searchFn={searchIndex}
+                    onClose={handleCloseEntry}
+                    onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
+                    onNavigateObject={(objName) => {
+                      handleCloseEntry();
+                      handleNavigateToObject(objName);
+                    }}
+                    onRefresh={refreshCurrentObject}
+                    onNavigate={handleEditorNavigate}
+                  />
+                ) : (
+                  <div className="flex-1 overflow-y-auto">
+                    <ContentRenderer
+                      content={content}
+                      workspaceExists={workspaceExists}
+                      expectedPath={workspaceRoot}
+                      tree={tree}
+                      activePath={activePath}
+                      browseDir={browseDir}
+                      treeLoading={treeLoading}
+                      members={context?.members}
+                      onNodeSelect={handleNodeSelect}
+                      onNavigateToObject={handleNavigateToObject}
+                      onRefreshObject={refreshCurrentObject}
+                      onRefreshTree={refreshTree}
+                      onNavigate={handleEditorNavigate}
+                      onOpenEntry={handleOpenEntry}
+                      activeEntryId={undefined}
+                      searchFn={searchIndex}
+                      onSelectCronJob={handleSelectCronJob}
+                      onBackToCronDashboard={handleBackToCronDashboard}
+                      cronView={cronView}
+                      onCronViewChange={setCronView}
+                      cronCalMode={cronCalMode}
+                      onCronCalModeChange={setCronCalMode}
+                      cronDate={cronDate}
+                      onCronDateChange={setCronDate}
+                      cronRunFilter={cronRunFilter}
+                      onCronRunFilterChange={setCronRunFilter}
+                      cronRun={cronRun}
+                      onCronRunChange={setCronRun}
+                      onSendCommand={handleCronSendCommand}
+                      onMakeTabPermanent={promoteTabByPath}
+                    />
+                  </div>
+                )}
+              </RightPanel>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function previewFileTypeBadge(filename: string): { label: string; color: string } {
-  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "pdf") {return { label: "PDF", color: "#ef4444" };}
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "heic", "avif"].includes(ext)) {return { label: "Image", color: "#3b82f6" };}
-  if (["mp4", "webm", "mov", "avi", "mkv"].includes(ext)) {return { label: "Video", color: "#8b5cf6" };}
-  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(ext)) {return { label: "Audio", color: "#f59e0b" };}
-  if (["md", "mdx"].includes(ext)) {return { label: "Markdown", color: "#10b981" };}
-  if (["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "rb", "swift", "kt", "c", "cpp", "h"].includes(ext)) {return { label: ext.toUpperCase(), color: "#3b82f6" };}
-  if (["json", "yaml", "yml", "toml", "xml", "csv"].includes(ext)) {return { label: ext.toUpperCase(), color: "#6b7280" };}
-  if (["duckdb", "sqlite", "sqlite3", "db"].includes(ext)) {return { label: "Database", color: "#6366f1" };}
-  return { label: ext.toUpperCase() || "File", color: "#6b7280" };
-}
-
-function shortenPreviewPath(p: string): string {
-  return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
-}
-
-function ChatSidebarPreview({
-  preview,
-  onClose,
-}: {
-  preview: ChatSidebarPreviewState;
-  onClose: () => void;
-}) {
-  const badge = previewFileTypeBadge(preview.filename);
-
-  const openInFinder = useCallback(async () => {
-    try {
-      await fetch("/api/workspace/open-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: preview.path, reveal: true }),
-      });
-    } catch { /* ignore */ }
-  }, [preview.path]);
-
-  const openWithSystem = useCallback(async () => {
-    try {
-      await fetch("/api/workspace/open-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: preview.path }),
-      });
-    } catch { /* ignore */ }
-  }, [preview.path]);
-
-  const downloadUrl = preview.status === "ready" && preview.content.kind === "media"
-    ? preview.content.url
-    : null;
-
-  let body: React.ReactNode;
-
-  if (preview.status === "loading") {
-    body = (
-      <div className="flex flex-col h-full items-center justify-center gap-3">
-        <UnicodeSpinner
-          name="braille"
-          className="text-2xl"
-          style={{ color: "var(--color-text-muted)" }}
-        />
-        <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-          Loading preview...
-        </p>
-      </div>
-    );
-  } else if (preview.status === "error") {
-    body = (
-      <div className="flex flex-col h-full items-center justify-center gap-4 px-6">
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center"
-          style={{ background: "color-mix(in srgb, var(--color-error) 10%, transparent)" }}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="15" x2="9" y1="9" y2="15" />
-            <line x1="9" x2="15" y1="9" y2="15" />
-          </svg>
-        </div>
-        <div className="text-center">
-          <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-            Preview unavailable
-          </p>
-          <p className="text-xs mt-1" style={{ color: "var(--color-text-muted)" }}>
-            {preview.message}
-          </p>
-        </div>
-      </div>
-    );
-  } else {
-    const c = preview.content;
-    switch (c.kind) {
-      case "media":
-        if (c.mediaType === "pdf") {
-          // Hide the browser's built-in PDF toolbar for a cleaner look
-          const pdfUrl = c.url + (c.url.includes("#") ? "&" : "#") + "toolbar=0&navpanes=0&scrollbar=1";
-          body = (
-            <iframe
-              src={pdfUrl}
-              className="w-full h-full"
-              style={{ border: "none", colorScheme: "light" }}
-              title={`Preview: ${c.filename}`}
-            />
-          );
-        } else if (c.mediaType === "image") {
-          body = (
-            <div className="flex items-center justify-center h-full p-4 overflow-auto" style={{ background: "var(--color-bg)" }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={c.url}
-                alt={c.filename}
-                className="max-w-full max-h-full object-contain rounded-lg"
-                style={{ boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}
-                draggable={false}
-              />
-            </div>
-          );
-        } else if (c.mediaType === "video") {
-          body = (
-            <div className="flex items-center justify-center h-full p-4" style={{ background: "#000" }}>
-              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-              <video src={c.url} controls className="max-w-full max-h-full rounded-lg" />
-            </div>
-          );
-        } else if (c.mediaType === "audio") {
-          body = (
-            <div className="flex flex-col items-center justify-center h-full gap-6 px-6">
-              <div
-                className="w-20 h-20 rounded-2xl flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg, #f59e0b20, #f59e0b08)" }}
-              >
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
-                </svg>
-              </div>
-              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-              <audio src={c.url} controls className="w-full" />
-            </div>
-          );
-        }
-        break;
-      case "document":
-        body = (
-          <div className="p-5 overflow-auto h-full">
-            <div className="workspace-prose text-sm">
-              <DocumentView
-                content={c.data.content}
-                title={c.title}
-              />
-            </div>
-          </div>
-        );
-        break;
-      case "code":
-        body = (
-          <div className="h-full">
-            <MonacoCodeEditor content={c.data.content} filename={c.filename} filePath={c.filePath} />
-          </div>
-        );
-        break;
-      case "file":
-        body = (
-          <div className="overflow-auto h-full">
-            <FileViewer content={c.data.content} filename={c.filename} type={c.data.type === "yaml" ? "yaml" : "text"} />
-          </div>
-        );
-        break;
-      case "spreadsheet":
-        body = (
-          <div className="h-full">
-            <SpreadsheetEditor
-              url={c.url}
-              filename={c.filename}
-              filePath={c.filePath}
-              compact
-            />
-          </div>
-        );
-        break;
-      case "database":
-        body = (
-          <div className="overflow-auto h-full">
-            <DatabaseViewer dbPath={c.dbPath} filename={c.filename} />
-          </div>
-        );
-        break;
-      case "richDocument":
-        body = (
-          <div className="h-full">
-            <RichDocumentEditor
-              mode={c.mode}
-              initialHtml={c.html}
-              filePath={c.filePath}
-              compact
-            />
-          </div>
-        );
-        break;
-      case "directory":
-        body = (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
-            <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center"
-              style={{ background: "color-mix(in srgb, var(--color-accent) 10%, transparent)" }}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-              </svg>
-            </div>
-            <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-              {c.name}
-            </p>
-          </div>
-        );
-        break;
-      default:
-        body = null;
-    }
-  }
-
-  return (
-    <aside
-      className="h-full border-l flex flex-col"
-      style={{
-        borderColor: "var(--color-border)",
-        background: "var(--color-bg)",
-      }}
-    >
-      {/* Header: close + filename + badge + actions */}
-      <div
-        className="px-3 py-2.5 flex items-center gap-2 flex-shrink-0"
-        style={{ borderBottom: "1px solid var(--color-border)" }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1 rounded-md transition-colors flex-shrink-0"
-          style={{ color: "var(--color-text-muted)" }}
-          title="Close preview"
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-          </svg>
-        </button>
-
-        <span className="text-[13px] font-medium truncate min-w-0" style={{ color: "var(--color-text)" }}>
-          {preview.filename}
-        </span>
-
-        <span
-          className="text-[10px] font-medium px-1.5 py-[1px] rounded flex-shrink-0"
-          style={{
-            background: `${badge.color}14`,
-            color: badge.color,
-          }}
-        >
-          {badge.label}
-        </span>
-
-        <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
-          <button
-            type="button"
-            onClick={openWithSystem}
-            className="p-1.5 rounded-md transition-colors"
-            style={{ color: "var(--color-text-muted)" }}
-            title="Open with default app"
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            </svg>
-          </button>
-          {downloadUrl && (
-            <a
-              href={downloadUrl}
-              download={preview.filename}
-              className="p-1.5 rounded-md transition-colors"
-              style={{ color: "var(--color-text-muted)" }}
-              title="Download"
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" />
-              </svg>
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={openInFinder}
-            className="p-1.5 rounded-md transition-colors"
-            style={{ color: "var(--color-text-muted)" }}
-            title="Reveal in Finder"
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Preview body */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {body}
-      </div>
-
-      {/* Footer path */}
-      <div
-        className="px-3 py-1.5 border-t flex-shrink-0"
-        style={{ borderColor: "var(--color-border)" }}
-      >
-        <p
-          className="text-[10px] truncate"
-          style={{ color: "var(--color-text-muted)", fontFamily: "'SF Mono', 'Fira Code', monospace" }}
-          title={preview.path}
-        >
-          {shortenPreviewPath(preview.path)}
-        </p>
-      </div>
-    </aside>
-  );
-}
+// NOTE: legacy ChatSidebarPreview helpers were removed in v3 three-column refactor.
+// Non-chat content is rendered by ContentRenderer inside the right panel now.
 
 // --- Content Renderer ---
 

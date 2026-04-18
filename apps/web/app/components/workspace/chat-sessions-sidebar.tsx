@@ -815,7 +815,6 @@ export function ChatSessionsSidebar({
 			style={{
 				borderColor: embedded ? undefined : "var(--color-border)",
 				background: "color-mix(in srgb, var(--color-bg) 80%, transparent)",
-				boxShadow: embedded ? "inset 0 -1px 0 0 var(--color-border)" : undefined,
 			}}
 			>
 				<div className="flex items-center justify-between px-4" style={{ height: headerHeight }}>
@@ -829,15 +828,18 @@ export function ChatSessionsSidebar({
 								</svg>
 							</button>
 						)}
-						<span className="text-xs font-medium truncate block" style={{ color: "var(--color-text)" }}>
+						<span
+							className={embedded ? "text-[10px] font-semibold uppercase tracking-[0.14em] truncate block" : "text-xs font-medium truncate block"}
+							style={{ color: embedded ? "var(--color-text-muted)" : "var(--color-text)" }}
+						>
 							Chats
 						</span>
 					</div>
 					<button type="button" onClick={onNewSession}
-						className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer shrink-0 ml-1.5 ${embedded ? "hover:bg-neutral-400/15" : ""}`}
+						className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer shrink-0 ml-1.5 ${embedded ? "bg-stone-200 text-stone-700 hover:bg-stone-300 dark:bg-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-600" : ""}`}
 						style={{
-							color: embedded ? "var(--color-text)" : "var(--color-chat-sidebar-active-text)",
-							background: embedded ? "transparent" : "var(--color-chat-sidebar-active-bg)",
+							color: embedded ? undefined : "var(--color-chat-sidebar-active-text)",
+							background: embedded ? undefined : "var(--color-chat-sidebar-active-bg)",
 						}}
 						title="New chat">
 						<PlusIcon />

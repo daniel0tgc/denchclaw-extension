@@ -16,15 +16,15 @@ import {
 import { GoTools } from "react-icons/go";
 import { RiApps2AiLine } from "react-icons/ri";
 import { useTheme } from "next-themes";
-import { FileManagerTree, type TreeNode } from "./file-manager-tree";
+import { type TreeNode } from "./file-manager-tree";
 import { ProfileSwitcher } from "./profile-switcher";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
-import { UnicodeSpinner } from "../unicode-spinner";
-import { type WebSession, type SidebarSubagentInfo, type SidebarGatewaySession, type SidebarChannelStatus } from "./chat-sessions-sidebar";
+import { ChatSessionsSidebar } from "./chat-sessions-sidebar";
+import type { WebSession, SidebarSubagentInfo, SidebarGatewaySession, SidebarChannelStatus } from "./chat-sessions-sidebar";
 import type { SearchIndexItem } from "@/lib/search-index";
 
 /** Shape returned by /api/workspace/suggest-files */
-type SuggestItem = {
+export type SuggestItem = {
 	name: string;
 	path: string;
 	type: "folder" | "file" | "document" | "database";
@@ -41,27 +41,21 @@ function indexItemToSuggestItem(item: SearchIndexItem): SuggestItem {
 }
 
 type WorkspaceSidebarProps = {
-	tree: TreeNode[];
-	activePath: string | null;
-	onSelect: (node: TreeNode) => void;
-	onRefresh: () => void;
+	// NOTE: v3 three-column refactor — file tree lives in the right panel now.
+	// `tree`, `activePath`, `onSelect`, etc. are accepted for API compatibility but unused here.
+	tree?: TreeNode[];
+	activePath?: string | null;
+	onSelect?: (node: TreeNode) => void;
+	onRefresh?: () => void;
 	orgName?: string;
 	loading?: boolean;
-	/** Current browse directory (absolute path), or null when in workspace mode. */
 	browseDir?: string | null;
-	/** Parent directory for ".." navigation. Null at filesystem root or when browsing is unavailable. */
 	parentDir?: string | null;
-	/** Navigate up one directory. */
 	onNavigateUp?: () => void;
-	/** Return to workspace mode from browse mode. */
 	onGoHome?: () => void;
-	/** Called when a file/folder is selected from the search dropdown. */
 	onFileSearchSelect?: (item: SuggestItem) => void;
-	/** Absolute path of the workspace root folder, used to render it as a special entry in browse mode. */
 	workspaceRoot?: string | null;
-	/** Navigate to the main chat / home panel. */
 	onGoToChat?: () => void;
-	/** Called when a tree node is dragged and dropped onto an external target (e.g. chat input). */
 	onExternalDrop?: (node: TreeNode) => void;
 	/** When true, renders as a mobile overlay drawer instead of a static sidebar. */
 	mobile?: boolean;
@@ -69,9 +63,7 @@ type WorkspaceSidebarProps = {
 	onClose?: () => void;
 	/** Fixed width in px when not mobile (overrides default 260). */
 	width?: number;
-	/** Whether hidden (dot) files/folders are currently shown. */
 	showHidden?: boolean;
-	/** Toggle hidden files visibility. */
 	onToggleHidden?: () => void;
 	/** Called when the user clicks the collapse/hide sidebar button. */
 	onCollapse?: () => void;
@@ -79,7 +71,7 @@ type WorkspaceSidebarProps = {
   activeWorkspace?: string | null;
   /** Called after workspace switches or workspace creation so parent can refresh state. */
   onWorkspaceChanged?: () => void;
-  /** Chat sessions for the Chats tab. */
+  /** Chat sessions embedded in the sidebar's flex-1 middle area (v3). */
   chatSessions?: WebSession[];
   activeChatSessionId?: string | null;
   activeChatSessionTitle?: string;
@@ -92,15 +84,14 @@ type WorkspaceSidebarProps = {
   onSelectChatSubagent?: (sessionKey: string) => void;
   onDeleteChatSession?: (sessionId: string) => void;
   onRenameChatSession?: (sessionId: string, newTitle: string) => void;
+  onStopChatSession?: (sessionId: string) => void;
+  onStopChatSubagent?: (sessionKey: string) => void;
   chatGatewaySessions?: SidebarGatewaySession[];
   chatChannelStatuses?: SidebarChannelStatus[];
   chatActiveGatewaySessionKey?: string | null;
   onSelectGatewayChatSession?: (sessionKey: string, sessionId: string) => void;
   chatFileScopedSessions?: WebSession[];
   chatHeartbeatInfo?: { intervalMs: number; nextDueEstimateMs: number | null } | null;
-  /** Which tab is active. Controlled from parent if provided. */
-  activeTab?: "files" | "chats";
-  onTabChange?: (tab: "files" | "chats") => void;
   /** Navigate to a sidebar section (cloud, integrations, skills, cron). */
   onNavigate?: (
     target:
@@ -118,27 +109,6 @@ type WorkspaceSidebarProps = {
   /** Client-side search function from useSearchIndex for instant results. */
   searchFn?: (query: string, limit?: number) => SearchIndexItem[];
 };
-
-function HomeIcon() {
-	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-			<polyline points="9 22 9 12 15 12 15 22" />
-		</svg>
-	);
-}
-
-function FolderOpenIcon() {
-	return (
-		<img src="/icons/folder-open.png" alt="" width={20} height={20} draggable={false} style={{ flexShrink: 0 }} />
-	);
-}
-
-/** Extract the directory name from an absolute path for display. */
-function dirDisplayName(dir: string): string {
-	if (dir === "/") {return "/";}
-	return dir.split("/").pop() || dir;
-}
 
 function ThemeToggle() {
 	const { resolvedTheme, setTheme } = useTheme();
@@ -200,7 +170,7 @@ function SuggestTypeIcon({ type }: { type: string }) {
 
 /* ─── File search (base-ui Combobox) ─── */
 
-function FileSearch({ onSelect, searchFn }: { onSelect: (item: SuggestItem) => void; searchFn?: (query: string, limit?: number) => SearchIndexItem[] }) {
+export function FileSearch({ onSelect, searchFn }: { onSelect: (item: SuggestItem) => void; searchFn?: (query: string, limit?: number) => SearchIndexItem[] }) {
 	const [results, setResults] = useState<SuggestItem[]>([]);
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
@@ -305,19 +275,8 @@ function FileSearch({ onSelect, searchFn }: { onSelect: (item: SuggestItem) => v
 }
 
 export function WorkspaceSidebar({
-	tree,
-	activePath,
-	onSelect,
-	onRefresh,
 	orgName,
-	loading,
-	browseDir,
-	parentDir,
-	onNavigateUp,
-	onGoHome,
 	onFileSearchSelect,
-	workspaceRoot,
-	onExternalDrop,
 	mobile,
 	onClose,
 	showHidden,
@@ -329,8 +288,27 @@ export function WorkspaceSidebar({
   onNavigate,
   activeCrmTarget = null,
   searchFn,
+  chatSessions,
+  activeChatSessionId,
+  activeChatSessionTitle,
+  chatStreamingSessionIds,
+  chatSubagents,
+  chatActiveSubagentKey,
+  chatSessionsLoading,
+  onSelectChatSession,
+  onNewChatSession,
+  onSelectChatSubagent,
+  onDeleteChatSession,
+  onRenameChatSession,
+  onStopChatSession,
+  onStopChatSubagent,
+  chatGatewaySessions,
+  chatChannelStatuses,
+  chatActiveGatewaySessionKey,
+  onSelectGatewayChatSession,
+  chatFileScopedSessions,
+  chatHeartbeatInfo,
 }: WorkspaceSidebarProps) {
-	const isBrowsing = browseDir != null;
 	const width = mobile ? "280px" : (widthProp ?? 260);
 	const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
 
@@ -344,69 +322,39 @@ export function WorkspaceSidebar({
 				borderColor: "var(--color-border)",
 			}}
 		>
-			{/* Header */}
+			{/* Header — workspace switcher always visible; browse-mode controls moved to the right panel's Files view */}
 			<div
 				className="flex items-center gap-2 px-3 h-[52px] shrink-0"
 			>
-				{isBrowsing ? (
-					<>
-						<div className="flex-1 min-w-0 flex items-center gap-1.5">
-							<span className="shrink-0" style={{ color: "var(--color-text-muted)" }}>
-								<FolderOpenIcon />
-							</span>
-							<span
-								className="text-[13px] font-semibold truncate"
-								style={{ color: "var(--color-text)" }}
-								title={browseDir}
-							>
-								{dirDisplayName(browseDir)}
-							</span>
-						</div>
-						{onGoHome && (
+				<div className="flex-1 min-w-0">
+					<ProfileSwitcher
+						activeWorkspaceHint={activeWorkspace ?? null}
+						onWorkspaceSwitch={() => { onWorkspaceChanged?.(); }}
+						onWorkspaceDelete={() => { onWorkspaceChanged?.(); }}
+						onCreateWorkspace={() => { setCreateWorkspaceOpen(true); }}
+						trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
 							<button
 								type="button"
-								onClick={onGoHome}
-								className="p-1.5 rounded-lg shrink-0 transition-colors"
-								style={{ color: "var(--color-text-muted)" }}
+								onClick={onClick}
+								disabled={switching}
+								className="group/ws text-[13px] flex items-center gap-2 truncate w-full transition-colors font-semibold rounded-xl px-2 py-1.5"
+								style={{ color: "var(--color-text)" }}
 								onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
 								onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-								title="Return to workspace"
+								title="Switch workspace"
 							>
-								<HomeIcon />
+								<span className="truncate">{orgName || "Workspace"}</span>
+								<span className="flex-1" />
+								<span className="px-2 py-0.5 rounded-lg text-[10px] leading-tight shrink-0 bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300">
+									{workspaceName || "-"}
+								</span>
+								<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" style={{ color: "var(--color-text-muted)" }}>
+									<path d="m6 9 6 6 6-6" />
+								</svg>
 							</button>
 						)}
-					</>
-				) : (
-					<div className="flex-1 min-w-0">
-						<ProfileSwitcher
-							activeWorkspaceHint={activeWorkspace ?? null}
-							onWorkspaceSwitch={() => { onWorkspaceChanged?.(); }}
-							onWorkspaceDelete={() => { onWorkspaceChanged?.(); }}
-							onCreateWorkspace={() => { setCreateWorkspaceOpen(true); }}
-							trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
-								<button
-									type="button"
-									onClick={onClick}
-									disabled={switching}
-									className="group/ws text-[13px] flex items-center gap-2 truncate w-full transition-colors font-semibold rounded-xl px-2 py-1.5"
-									style={{ color: "var(--color-text)" }}
-									onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-									onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-									title="Switch workspace"
-								>
-									<span className="truncate">{orgName || "Workspace"}</span>
-									<span className="flex-1" />
-									<span className="px-2 py-0.5 rounded-lg text-[10px] leading-tight shrink-0 bg-stone-200 text-stone-600 dark:bg-stone-700 dark:text-stone-300">
-										{workspaceName || "-"}
-									</span>
-									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" style={{ color: "var(--color-text-muted)" }}>
-										<path d="m6 9 6 6 6-6" />
-									</svg>
-								</button>
-							)}
-						/>
-					</div>
-				)}
+					/>
+				</div>
 				{onCollapse && (
 					<button
 						type="button"
@@ -425,17 +373,8 @@ export function WorkspaceSidebar({
 				)}
 			</div>
 
-		{onFileSearchSelect && (
-			<div className="px-3">
-				<FileSearch onSelect={onFileSearchSelect} searchFn={searchFn} />
-			</div>
-		)}
-
-		{onNavigate && !isBrowsing && (
-			<div
-				className="px-2 pt-2 pb-1 space-y-0.5 border-b"
-				style={{ borderColor: "var(--color-border)" }}
-			>
+		{onNavigate && (
+			<div className="px-2 pt-2 pb-1 space-y-0.5">
 				<div
 					className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
 					style={{ color: "var(--color-text-muted)" }}
@@ -508,35 +447,38 @@ export function WorkspaceSidebar({
 			</div>
 		)}
 
-			<div className="flex-1 overflow-y-auto px-1">
-				{loading ? (
-					<div className="flex items-center justify-center py-12">
-						<UnicodeSpinner
-							name="braille"
-							className="text-2xl"
-							style={{ color: "var(--color-text-muted)" }}
-						/>
-					</div>
-				) : (
-					<FileManagerTree
-						tree={tree}
-						activePath={activePath}
-						onSelect={onSelect}
-						onRefresh={onRefresh}
-						parentDir={parentDir}
-						onNavigateUp={onNavigateUp}
-						browseDir={browseDir}
-						workspaceRoot={workspaceRoot}
-						onExternalDrop={onExternalDrop}
+			{/* v3: chat history takes the flex-1 middle section.
+			    File tree lives in the right panel now. */}
+			<div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+				{onSelectChatSession ? (
+					<ChatSessionsSidebar
+						sessions={chatSessions ?? []}
+						activeSessionId={activeChatSessionId ?? null}
+						activeSessionTitle={activeChatSessionTitle}
+						streamingSessionIds={chatStreamingSessionIds ?? new Set()}
+						subagents={chatSubagents ?? []}
+						activeSubagentKey={chatActiveSubagentKey ?? null}
+						loading={chatSessionsLoading ?? false}
+						onSelectSession={onSelectChatSession}
+						onNewSession={onNewChatSession ?? (() => {})}
+						onSelectSubagent={onSelectChatSubagent ?? (() => {})}
+						onDeleteSession={onDeleteChatSession}
+						onRenameSession={onRenameChatSession}
+						onStopSession={onStopChatSession}
+						onStopSubagent={onStopChatSubagent}
+						gatewaySessions={chatGatewaySessions ?? []}
+						channelStatuses={chatChannelStatuses ?? []}
+						activeGatewaySessionKey={chatActiveGatewaySessionKey ?? null}
+						onSelectGatewaySession={onSelectGatewayChatSession}
+						fileScopedSessions={chatFileScopedSessions ?? []}
+						heartbeatInfo={chatHeartbeatInfo ?? null}
+						embedded
 					/>
-				)}
+				) : null}
 			</div>
 
 		{onNavigate && (
-			<div
-				className="px-2 py-1.5 border-t space-y-0.5"
-				style={{ borderColor: "var(--color-border)" }}
-			>
+			<div className="px-2 py-1.5 space-y-0.5">
 				{([
 					{ id: "cloud" as const, label: "Cloud", icon: (
 						<svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

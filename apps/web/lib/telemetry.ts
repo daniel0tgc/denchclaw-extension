@@ -67,6 +67,52 @@ export function getOrCreateAnonymousId(): string {
 }
 
 /**
+ * Persist a partial PersonInfo into ~/.openclaw-dench/telemetry.json,
+ * merging with the existing record. Mirrors `writeTelemetryConfig` in the
+ * CLI's `src/telemetry/config.ts` so onboarding-collected name/email shows
+ * up in PostHog the same way CLI-collected fields would.
+ */
+export function writePersonInfo(person: Partial<PersonInfo>): PersonInfo | null {
+  try {
+    const stateDir = join(process.env.HOME || homedir(), ".openclaw-dench");
+    const configPath = join(stateDir, "telemetry.json");
+
+    let raw: Record<string, unknown> = {};
+    if (existsSync(configPath)) {
+      try {
+        raw = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+      } catch {
+        raw = {};
+      }
+    }
+
+    if (typeof person.name === "string" && person.name.trim()) {
+      raw.name = person.name.trim();
+    }
+    if (typeof person.email === "string" && person.email.trim()) {
+      raw.email = person.email.trim();
+    }
+    if (typeof person.avatar === "string" && person.avatar.trim()) {
+      raw.avatar = person.avatar.trim();
+    }
+    if (typeof person.denchOrgId === "string" && person.denchOrgId.trim()) {
+      raw.denchOrgId = person.denchOrgId.trim();
+    }
+
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+  } catch {
+    // Non-fatal: telemetry write failure should not break onboarding.
+  }
+  // Invalidate the read cache so a follow-up `readPersonInfo()` returns the
+  // fresh values (the layout reads it on every request thanks to
+  // `dynamic = "force-dynamic"`, but cached server modules can outlive a
+  // single request).
+  _cachedPersonInfo = undefined;
+  return readPersonInfo();
+}
+
+/**
  * Read optional person identity fields from telemetry.json.
  * Returns null when no identity fields are set.
  */

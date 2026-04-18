@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { access, readdir as readdirAsync } from "node:fs/promises";
-import { execSync, exec } from "node:child_process";
+import { execSync, exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve, normalize, relative, isAbsolute as isNodeAbsolute } from "node:path";
 import { homedir } from "node:os";
@@ -605,6 +605,33 @@ export function resolveWebChatDir(): string {
   return join(resolveWorkspaceDir(DEFAULT_WORKSPACE_NAME), ".openclaw", "web-chat");
 }
 
+/**
+ * Resolve the per-workspace `.denchclaw/` directory used as the source of
+ * truth for onboarding state, Composio connection metadata, sync cursors,
+ * and the user-extended personal-email blocklist. Mirrors `resolveWebChatDir`
+ * for fallbacks so first-run flows still produce a valid path.
+ */
+export function resolveDenchClawDir(workspaceName?: string | null): string {
+  if (workspaceName) {
+    const normalized = normalizeWorkspaceName(workspaceName);
+    if (normalized) {
+      return join(resolveWorkspaceDir(normalized), ".denchclaw");
+    }
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot();
+  if (workspaceRoot) {
+    return join(workspaceRoot, ".denchclaw");
+  }
+
+  const activeWorkspace = getActiveWorkspaceName();
+  if (activeWorkspace) {
+    return join(resolveWorkspaceDir(activeWorkspace), ".denchclaw");
+  }
+
+  return join(resolveWorkspaceDir(DEFAULT_WORKSPACE_NAME), ".denchclaw");
+}
+
 /** @deprecated Use `resolveWorkspaceRoot` instead. */
 export const resolveDenchRoot = resolveWorkspaceRoot;
 
@@ -824,6 +851,11 @@ export function duckdbQuery<T = Record<string, unknown>>(
  * Async version of duckdbQuery — does not block the event loop.
  * Always prefer this in Next.js route handlers (especially the standalone build
  * which is single-threaded; a blocking execSync freezes the entire server).
+ *
+ * Retries on DuckDB exclusive-lock conflicts (250ms → 4s, up to 8 tries).
+ * Without retry, concurrent queries silently return `[]` and downstream
+ * code (e.g. field-id maps in the Gmail sync pipeline) breaks because
+ * "no rows" looks indistinguishable from "lookup failed".
  */
 export async function duckdbQueryAsync<T = Record<string, unknown>>(
   sql: string,
@@ -834,21 +866,43 @@ export async function duckdbQueryAsync<T = Record<string, unknown>>(
   const bin = resolveDuckdbBin();
   if (!bin) {return [];}
 
-  try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
-      encoding: "utf-8",
-      timeout: 10_000,
-      maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
-    });
-
-    const trimmed = stdout.trim();
-    if (!trimmed || trimmed === "[]") {return [];}
-    return JSON.parse(trimmed) as T[];
-  } catch {
-    return [];
+  const MAX_RETRIES = 8;
+  let attempt = 0;
+  let lastErr = "";
+  while (attempt < MAX_RETRIES) {
+    try {
+      const escapedSql = sql.replace(/'/g, "'\\''");
+      const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+        encoding: "utf-8",
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+        shell: "/bin/sh",
+      });
+      const trimmed = stdout.trim();
+      if (!trimmed || trimmed === "[]") {return [];}
+      return JSON.parse(trimmed) as T[];
+    } catch (err) {
+      const stderr = (err as { stderr?: string | Buffer }).stderr;
+      const stderrText =
+        typeof stderr === "string"
+          ? stderr
+          : Buffer.isBuffer(stderr)
+            ? stderr.toString("utf-8")
+            : (err as Error).message ?? "";
+      lastErr = stderrText.slice(0, 600);
+      const lockConflict =
+        stderrText.includes("Conflicting lock") ||
+        stderrText.includes("Could not set lock");
+      if (!lockConflict) {
+        return [];
+      }
+      const delay = Math.min(4000, 250 * 2 ** attempt) + Math.floor(Math.random() * 100);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      attempt += 1;
+    }
   }
+  console.error(`[duckdb] query gave up after ${MAX_RETRIES} retries: ${lastErr}`);
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,22 +1097,106 @@ export function duckdbExecOnFile(dbFilePath: string, sql: string): boolean {
   }
 }
 
-/** Async version of duckdbExecOnFile — does not block the event loop. */
+type DuckdbExecAttemptResult = {
+  ok: true;
+} | {
+  ok: false;
+  retriable: boolean;
+  errorMessage: string;
+};
+
+async function duckdbExecOnFileOnce(
+  bin: string,
+  dbFilePath: string,
+  sql: string,
+): Promise<DuckdbExecAttemptResult> {
+  return new Promise<DuckdbExecAttemptResult>((resolve) => {
+    const proc = spawn(bin, [dbFilePath], { stdio: ["pipe", "pipe", "pipe"] });
+    let stderrBuf = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGTERM");
+    }, 60_000);
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderrBuf += chunk.toString("utf-8");
+    });
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, retriable: false, errorMessage: `spawn failed: ${err.message}` });
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        resolve({
+          ok: false,
+          retriable: true,
+          errorMessage: "exec timed out after 60s",
+        });
+        return;
+      }
+      if (code !== 0) {
+        const errText = stderrBuf.trim();
+        // DuckDB acquires an exclusive file lock for writes; concurrent
+        // CLI processes (the workspace tree/search-index routes also
+        // query DuckDB) collide here. Treat lock conflicts as retriable
+        // so an ingestion page commit eventually wins instead of silently
+        // dropping all writes.
+        const lockConflict =
+          errText.includes("Conflicting lock") ||
+          errText.includes("Could not set lock");
+        resolve({
+          ok: false,
+          retriable: lockConflict,
+          errorMessage: errText.slice(0, 800) || `exit code ${code}`,
+        });
+        return;
+      }
+      resolve({ ok: true });
+    });
+
+    // EPIPE arises when duckdb exits before we finish writing stdin
+    // (e.g. it errored on the first statement). Swallow it — the close
+    // handler will still fire with the real error code/message.
+    proc.stdin.on("error", () => {});
+    proc.stdin.write(sql);
+    proc.stdin.end();
+  });
+}
+
+/**
+ * Async version of duckdbExecOnFile — does not block the event loop, and
+ * pipes SQL via stdin so it isn't constrained by the OS arg-length cap
+ * (~128KB on macOS). Sync ingestion writes can easily exceed that for
+ * a single page commit (each message generates ~10–20 statements,
+ * sometimes multi-KB body inserts).
+ *
+ * Retries on lock-conflict errors with exponential backoff (250ms → 4s,
+ * up to 8 tries). Other errors are surfaced to stderr and return false
+ * so the caller can decide whether to abort or continue.
+ */
 export async function duckdbExecOnFileAsync(dbFilePath: string, sql: string): Promise<boolean> {
   const bin = resolveDuckdbBin();
   if (!bin) {return false;}
 
-  try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    await execAsync(`'${bin}' '${dbFilePath}' '${escapedSql}'`, {
-      encoding: "utf-8",
-      timeout: 10_000,
-      shell: "/bin/sh",
-    });
-    return true;
-  } catch {
-    return false;
+  const MAX_RETRIES = 8;
+  let attempt = 0;
+  let lastErr = "";
+  while (attempt < MAX_RETRIES) {
+    const result = await duckdbExecOnFileOnce(bin, dbFilePath, sql);
+    if (result.ok) {return true;}
+    lastErr = result.errorMessage;
+    if (!result.retriable) {
+      console.error(`[duckdb] exec failed on ${dbFilePath}: ${lastErr}`);
+      return false;
+    }
+    const delay = Math.min(4000, 250 * 2 ** attempt) + Math.floor(Math.random() * 100);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    attempt += 1;
   }
+  console.error(`[duckdb] exec gave up after ${MAX_RETRIES} retries on ${dbFilePath}: ${lastErr}`);
+  return false;
 }
 
 /**

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS objects (
   sort_order INTEGER DEFAULT 0,
   source_app VARCHAR,
   immutable BOOLEAN DEFAULT false,
+  hidden_in_sidebar BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(name)
@@ -286,3 +287,208 @@ PIVOT (
   JOIN fields f ON f.id = ef.field_id
   WHERE e.object_id = 'seed_obj_task_000000000000000'
 ) ON field_name IN ('Title', 'Description', 'Status', 'Priority', 'Due Date', 'Notes') USING first(value);
+
+-- ── Onboarding additions: extend people + company, add email/calendar/interaction objects ──
+-- The web `workspace-schema-migrations.ts` runs the same DDL idempotently for
+-- workspaces created before this seed shipped. Keep the two in sync.
+
+-- people: Source, Strength Score, Last Interaction At, Job Title, LinkedIn URL, Avatar URL
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_people_source_00000000', 'seed_obj_people_00000000000000', 'Source', 'enum', false,
+   '["Manual","Gmail","Calendar"]'::JSON, '["#94a3b8","#ef4444","#3b82f6"]'::JSON, 10);
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_people_strength_000000', 'seed_obj_people_00000000000000', 'Strength Score', 'number', false, 11),
+  ('seed_fld_people_lastinter_00000', 'seed_obj_people_00000000000000', 'Last Interaction At', 'date', false, 12),
+  ('seed_fld_people_jobtitle_000000', 'seed_obj_people_00000000000000', 'Job Title', 'text', false, 13),
+  ('seed_fld_people_linkedin_000000', 'seed_obj_people_00000000000000', 'LinkedIn URL', 'url', false, 14),
+  ('seed_fld_people_avatar_url_0000', 'seed_obj_people_00000000000000', 'Avatar URL', 'url', false, 15);
+
+-- Mark all seeded people as Manual so the onboarding sync's `Source = Gmail`
+-- filter doesn't accidentally show fixture rows as imported.
+INSERT INTO entry_fields (entry_id, field_id, value) VALUES
+  ('seed_ent_people_sarah_000000000', 'seed_fld_people_source_00000000', 'Manual'),
+  ('seed_ent_people_james_000000000', 'seed_fld_people_source_00000000', 'Manual'),
+  ('seed_ent_people_maria_000000000', 'seed_fld_people_source_00000000', 'Manual'),
+  ('seed_ent_people_alex_0000000000', 'seed_fld_people_source_00000000', 'Manual'),
+  ('seed_ent_people_priya_000000000', 'seed_fld_people_source_00000000', 'Manual');
+
+CREATE OR REPLACE VIEW v_people AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_people_00000000000000'
+) ON field_name IN (
+  'Full Name', 'Email Address', 'Phone Number', 'Company', 'Status', 'Notes',
+  'Source', 'Strength Score', 'Last Interaction At', 'Job Title', 'LinkedIn URL', 'Avatar URL'
+) USING first(value);
+
+-- company: Source, Domain, Strength Score, Last Interaction At
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_company_source_0000000', 'seed_obj_company_0000000000000', 'Source', 'enum', false,
+   '["Manual","Gmail","Calendar"]'::JSON, '["#94a3b8","#ef4444","#3b82f6"]'::JSON, 10);
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_company_domain_0000000', 'seed_obj_company_0000000000000', 'Domain', 'text', false, 11),
+  ('seed_fld_company_strength_00000', 'seed_obj_company_0000000000000', 'Strength Score', 'number', false, 12),
+  ('seed_fld_company_lastinter_0000', 'seed_obj_company_0000000000000', 'Last Interaction At', 'date', false, 13);
+
+INSERT INTO entry_fields (entry_id, field_id, value) VALUES
+  ('seed_ent_company_acme_000000000', 'seed_fld_company_source_0000000', 'Manual'),
+  ('seed_ent_company_tech_000000000', 'seed_fld_company_source_0000000', 'Manual'),
+  ('seed_ent_company_innov_00000000', 'seed_fld_company_source_0000000', 'Manual');
+
+CREATE OR REPLACE VIEW v_company AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_company_0000000000000'
+) ON field_name IN (
+  'Company Name', 'Industry', 'Website', 'Type', 'Notes',
+  'Source', 'Domain', 'Strength Score', 'Last Interaction At'
+) USING first(value);
+
+-- ── New object: email_thread ──
+INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
+VALUES ('seed_obj_email_thread_000000000', 'email_thread', 'Email thread synced from Gmail', 'messages-square', 'table', true, 10);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_emthread_subject_0000', 'seed_obj_email_thread_000000000', 'Subject', 'text', true, 0),
+  ('seed_fld_emthread_lastat_00000', 'seed_obj_email_thread_000000000', 'Last Message At', 'date', false, 1),
+  ('seed_fld_emthread_count_000000', 'seed_obj_email_thread_000000000', 'Message Count', 'number', false, 2);
+
+INSERT INTO fields (id, object_id, name, type, required, related_object_id, relationship_type, sort_order) VALUES
+  ('seed_fld_emthread_people_00000', 'seed_obj_email_thread_000000000', 'Participants', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_many', 3),
+  ('seed_fld_emthread_company_0000', 'seed_obj_email_thread_000000000', 'Companies', 'relation', false, 'seed_obj_company_0000000000000', 'many_to_many', 4);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_emthread_threadid_000', 'seed_obj_email_thread_000000000', 'Gmail Thread ID', 'text', true, 5);
+
+CREATE OR REPLACE VIEW v_email_thread AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_email_thread_000000000'
+) ON field_name IN (
+  'Subject', 'Last Message At', 'Message Count', 'Participants', 'Companies', 'Gmail Thread ID'
+) USING first(value);
+
+-- ── New object: email_message ──
+INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
+VALUES ('seed_obj_email_message_00000000', 'email_message', 'Single email message synced from Gmail', 'mail', 'table', true, 11);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_emmsg_subject_0000000', 'seed_obj_email_message_00000000', 'Subject', 'text', false, 0),
+  ('seed_fld_emmsg_sentat_000000000', 'seed_obj_email_message_00000000', 'Sent At', 'date', false, 1);
+
+INSERT INTO fields (id, object_id, name, type, required, related_object_id, relationship_type, sort_order) VALUES
+  ('seed_fld_emmsg_from_00000000000', 'seed_obj_email_message_00000000', 'From', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_one', 2),
+  ('seed_fld_emmsg_to_0000000000000', 'seed_obj_email_message_00000000', 'To', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_many', 3),
+  ('seed_fld_emmsg_cc_0000000000000', 'seed_obj_email_message_00000000', 'Cc', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_many', 4),
+  ('seed_fld_emmsg_thread_000000000', 'seed_obj_email_message_00000000', 'Thread', 'relation', false, 'seed_obj_email_thread_000000000', 'many_to_one', 5);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_emmsg_preview_00000000', 'seed_obj_email_message_00000000', 'Body Preview', 'text', false, 6),
+  ('seed_fld_emmsg_body_00000000000', 'seed_obj_email_message_00000000', 'Body', 'richtext', false, 7),
+  ('seed_fld_emmsg_attach_0000000000', 'seed_obj_email_message_00000000', 'Has Attachments', 'boolean', false, 8),
+  ('seed_fld_emmsg_msgid_0000000000', 'seed_obj_email_message_00000000', 'Gmail Message ID', 'text', true, 9);
+
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_emmsg_sndtype_00000000', 'seed_obj_email_message_00000000', 'Sender Type', 'enum', false,
+   '["Person","Marketing","Transactional","Notification","Mailing List","Automated"]'::JSON,
+   '["#22c55e","#ef4444","#3b82f6","#f59e0b","#8b5cf6","#94a3b8"]'::JSON, 10);
+
+CREATE OR REPLACE VIEW v_email_message AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_email_message_00000000'
+) ON field_name IN (
+  'Subject', 'Sent At', 'From', 'To', 'Cc', 'Thread',
+  'Body Preview', 'Body', 'Has Attachments', 'Gmail Message ID', 'Sender Type'
+) USING first(value);
+
+-- ── New object: calendar_event ──
+INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
+VALUES ('seed_obj_calendar_event_0000000', 'calendar_event', 'Calendar event synced from Google Calendar', 'calendar', 'calendar', true, 12);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_calev_title_0000000000', 'seed_obj_calendar_event_0000000', 'Title', 'text', true, 0),
+  ('seed_fld_calev_start_0000000000', 'seed_obj_calendar_event_0000000', 'Start At', 'date', true, 1),
+  ('seed_fld_calev_end_000000000000', 'seed_obj_calendar_event_0000000', 'End At', 'date', false, 2);
+
+INSERT INTO fields (id, object_id, name, type, required, related_object_id, relationship_type, sort_order) VALUES
+  ('seed_fld_calev_organ_0000000000', 'seed_obj_calendar_event_0000000', 'Organizer', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_one', 3),
+  ('seed_fld_calev_attend_000000000', 'seed_obj_calendar_event_0000000', 'Attendees', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_many', 4),
+  ('seed_fld_calev_company_00000000', 'seed_obj_calendar_event_0000000', 'Companies', 'relation', false, 'seed_obj_company_0000000000000', 'many_to_many', 5);
+
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_calev_meettype_0000000', 'seed_obj_calendar_event_0000000', 'Meeting Type', 'enum', false,
+   '["One on One","Small Group","Large Group"]'::JSON, '["#22c55e","#3b82f6","#94a3b8"]'::JSON, 6);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_calev_eventid_00000000', 'seed_obj_calendar_event_0000000', 'Google Event ID', 'text', true, 7);
+
+CREATE OR REPLACE VIEW v_calendar_event AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_calendar_event_0000000'
+) ON field_name IN (
+  'Title', 'Start At', 'End At', 'Organizer', 'Attendees', 'Companies', 'Meeting Type', 'Google Event ID'
+) USING first(value);
+
+-- ── New object: interaction ──
+INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
+VALUES ('seed_obj_interaction_00000000000', 'interaction', 'Email or meeting between you and a contact (used for ranking)', 'activity', 'timeline', true, 13);
+
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_inter_type_00000000000', 'seed_obj_interaction_00000000000', 'Type', 'enum', false,
+   '["Email","Meeting"]'::JSON, '["#3b82f6","#22c55e"]'::JSON, 0);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_inter_occurred_0000000', 'seed_obj_interaction_00000000000', 'Occurred At', 'date', true, 1);
+
+INSERT INTO fields (id, object_id, name, type, required, related_object_id, relationship_type, sort_order) VALUES
+  ('seed_fld_inter_person_000000000', 'seed_obj_interaction_00000000000', 'Person', 'relation', false, 'seed_obj_people_00000000000000', 'many_to_one', 2),
+  ('seed_fld_inter_company_00000000', 'seed_obj_interaction_00000000000', 'Company', 'relation', false, 'seed_obj_company_0000000000000', 'many_to_one', 3),
+  ('seed_fld_inter_email_0000000000', 'seed_obj_interaction_00000000000', 'Email', 'relation', false, 'seed_obj_email_message_00000000', 'many_to_one', 4),
+  ('seed_fld_inter_event_0000000000', 'seed_obj_interaction_00000000000', 'Event', 'relation', false, 'seed_obj_calendar_event_0000000', 'many_to_one', 5);
+
+INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
+  ('seed_fld_inter_direction_000000', 'seed_obj_interaction_00000000000', 'Direction', 'enum', false,
+   '["Sent","Received","Internal"]'::JSON, '["#22c55e","#3b82f6","#94a3b8"]'::JSON, 6);
+
+INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
+  ('seed_fld_inter_score_0000000000', 'seed_obj_interaction_00000000000', 'Score Contribution', 'number', false, 7);
+
+CREATE OR REPLACE VIEW v_interaction AS
+PIVOT (
+  SELECT e.id as entry_id, e.created_at, e.updated_at,
+         f.name as field_name, ef.value
+  FROM entries e
+  JOIN entry_fields ef ON ef.entry_id = e.id
+  JOIN fields f ON f.id = ef.field_id
+  WHERE e.object_id = 'seed_obj_interaction_00000000000'
+) ON field_name IN (
+  'Type', 'Occurred At', 'Person', 'Company', 'Email', 'Event', 'Direction', 'Score Contribution'
+) USING first(value);
+
+-- Hide CRM-only objects from the workspace tree. They have dedicated UI
+-- (people-list-view / inbox-view / calendar-view / person-profile / etc.)
+-- and shouldn't clutter the file-system sidebar.
+UPDATE objects SET hidden_in_sidebar = true
+WHERE name IN ('email_thread', 'email_message', 'calendar_event', 'interaction');

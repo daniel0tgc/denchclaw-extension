@@ -1,0 +1,442 @@
+/**
+ * Sync orchestrator — drives Gmail + Calendar backfill once, then arms a
+ * 5-minute incremental poll loop. The whole module is process-singleton:
+ * exactly one backfill or poll runs at a time per Next.js process, no
+ * matter how many SSE clients connect.
+ *
+ * Public surface:
+ *
+ *   startBackfill()   → kicks off the initial backfill (idempotent — calling
+ *                       again while one is already in progress is a no-op
+ *                       and just returns the in-flight handle).
+ *   subscribeProgress(listener) → SSE-friendly progress event subscription.
+ *   armIncrementalPoller()      → starts the 5-min interval (also called
+ *                                 automatically once backfill completes).
+ *   stop()                       → tears down the poller (used in tests).
+ */
+
+import { Mutex } from "async-mutex";
+import {
+  readConnections,
+  readSyncCursors,
+  writeSyncCursors,
+} from "./denchclaw-state";
+import { runGmailBackfill, runGmailIncremental, type GmailSyncProgress } from "./gmail-sync";
+import {
+  runCalendarBackfill,
+  runCalendarIncremental,
+  type CalendarSyncProgress,
+} from "./calendar-sync";
+import { recomputeAllScores } from "./strength-score";
+import { ComposioToolNoConnectionError } from "./composio-execute";
+import { ensureLatestSchema } from "./workspace-schema-migrations";
+import { ensureOnboardingObjectDirs, installDefaultViews } from "./onboarding-views";
+
+// ---------------------------------------------------------------------------
+// Public progress event
+// ---------------------------------------------------------------------------
+
+export type SyncProgressEvent = {
+  phase:
+    | "starting"
+    | "gmail"
+    | "calendar"
+    | "scoring"
+    | "complete"
+    | "error"
+    | "polling";
+  message: string;
+  messagesProcessed: number;
+  peopleProcessed: number;
+  companiesProcessed: number;
+  threadsProcessed: number;
+  eventsProcessed: number;
+  error?: string;
+};
+
+type ProgressListener = (event: SyncProgressEvent) => void;
+
+// ---------------------------------------------------------------------------
+// Module-singleton state
+// ---------------------------------------------------------------------------
+
+const mutex = new Mutex();
+const listeners = new Set<ProgressListener>();
+let lastEvent: SyncProgressEvent | null = null;
+let backfillRunning = false;
+let backfillPromise: Promise<void> | null = null;
+let pollerHandle: ReturnType<typeof setInterval> | null = null;
+
+const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Progress emission
+// ---------------------------------------------------------------------------
+
+function emit(event: SyncProgressEvent): void {
+  lastEvent = event;
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch {
+      // Listener errors should never break the runner.
+    }
+  }
+}
+
+export function subscribeProgress(listener: ProgressListener): () => void {
+  listeners.add(listener);
+  if (lastEvent) {
+    try {
+      listener(lastEvent);
+    } catch {
+      // ignore
+    }
+  }
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getLastProgressEvent(): SyncProgressEvent | null {
+  return lastEvent;
+}
+
+// ---------------------------------------------------------------------------
+// Backfill
+// ---------------------------------------------------------------------------
+
+export type StartBackfillOptions = {
+  signal?: AbortSignal;
+};
+
+export type StartBackfillResult = {
+  started: boolean;
+  alreadyRunning: boolean;
+  reason?: string;
+};
+
+/**
+ * Kick off the full backfill. Returns immediately; subscribe to progress
+ * via `subscribeProgress`. If a backfill is already in flight, returns
+ * `{ started: false, alreadyRunning: true }`.
+ */
+export function startBackfill(options: StartBackfillOptions = {}): StartBackfillResult {
+  if (backfillRunning) {
+    return { started: false, alreadyRunning: true };
+  }
+  const connections = readConnections();
+  if (!connections.gmail) {
+    return {
+      started: false,
+      alreadyRunning: false,
+      reason: "No Gmail connection. Connect Gmail before starting the sync.",
+    };
+  }
+  backfillRunning = true;
+  backfillPromise = runBackfillInner(options).finally(() => {
+    backfillRunning = false;
+    backfillPromise = null;
+  });
+  return { started: true, alreadyRunning: false };
+}
+
+export function isBackfillRunning(): boolean {
+  return backfillRunning;
+}
+
+export function awaitBackfillCompletion(): Promise<void> {
+  return backfillPromise ?? Promise.resolve();
+}
+
+async function runBackfillInner(options: StartBackfillOptions): Promise<void> {
+  const release = await mutex.acquire();
+  try {
+    emit({
+      phase: "starting",
+      message: "Preparing workspace…",
+      messagesProcessed: 0,
+      peopleProcessed: 0,
+      companiesProcessed: 0,
+      threadsProcessed: 0,
+      eventsProcessed: 0,
+    });
+
+    // Make sure the schema additions and per-object directories exist
+    // before we start writing rows — safer to run unconditionally than to
+    // assume the workspace init route already did it for this workspace.
+    try {
+      await ensureLatestSchema();
+    } catch {
+      // Non-fatal — most rows still write fine; surfaced via per-tool errors.
+    }
+    try {
+      ensureOnboardingObjectDirs();
+    } catch {
+      // ignore
+    }
+
+    const connections = readConnections();
+    let totalMessages = 0;
+    let totalPeople = 0;
+    let totalCompanies = 0;
+    let totalThreads = 0;
+    let totalEvents = 0;
+    let selfEmail: string | null = null;
+
+    // ----- Gmail -----
+    if (connections.gmail) {
+      try {
+        const summary = await runGmailBackfill({
+          connectionId: connections.gmail.connectionId,
+          signal: options.signal,
+          onProgress: (event: GmailSyncProgress) => {
+            emit({
+              phase: event.phase === "starting" ? "starting" : "gmail",
+              message: event.message,
+              messagesProcessed: event.messagesProcessed,
+              peopleProcessed: event.peopleProcessed,
+              companiesProcessed: event.companiesProcessed,
+              threadsProcessed: event.threadsProcessed,
+              eventsProcessed: totalEvents,
+              ...(event.error ? { error: event.error } : {}),
+            });
+          },
+        });
+        totalMessages = summary.messagesProcessed;
+        totalPeople = summary.peopleProcessed;
+        totalCompanies = summary.companiesProcessed;
+        totalThreads = summary.threadsProcessed;
+        selfEmail = summary.selfEmail ?? null;
+      } catch (err) {
+        // Surface the full stack to stderr so dev-mode terminal shows
+        // exactly where the failure happened — the SSE only carries the
+        // message, which is often not enough to tell e.g. "the field map
+        // came back empty" from "the Composio call returned a 4xx".
+        console.error("[sync-runner] Gmail backfill failed:", err);
+        emit({
+          phase: "error",
+          message: `Gmail sync failed: ${(err as Error).message}`,
+          messagesProcessed: totalMessages,
+          peopleProcessed: totalPeople,
+          companiesProcessed: totalCompanies,
+          threadsProcessed: totalThreads,
+          eventsProcessed: totalEvents,
+          error: (err as Error).message,
+        });
+        if (err instanceof ComposioToolNoConnectionError) {
+          // Don't proceed to calendar if Gmail is broken — likely both
+          // need a re-OAuth and the user gets a clearer error this way.
+          return;
+        }
+      }
+    }
+
+    // ----- Calendar -----
+    if (connections.calendar) {
+      try {
+        const summary = await runCalendarBackfill({
+          connectionId: connections.calendar.connectionId,
+          selfEmail,
+          signal: options.signal,
+          onProgress: (event: CalendarSyncProgress) => {
+            emit({
+              phase: event.phase === "starting" ? "starting" : "calendar",
+              message: event.message,
+              messagesProcessed: totalMessages,
+              peopleProcessed: totalPeople,
+              companiesProcessed: totalCompanies,
+              threadsProcessed: totalThreads,
+              eventsProcessed: event.eventsProcessed,
+            });
+          },
+        });
+        totalEvents = summary.eventsProcessed;
+        totalPeople += summary.peopleProcessed;
+      } catch (err) {
+        console.error("[sync-runner] Calendar backfill failed:", err);
+        emit({
+          phase: "error",
+          message: `Calendar sync failed: ${(err as Error).message}`,
+          messagesProcessed: totalMessages,
+          peopleProcessed: totalPeople,
+          companiesProcessed: totalCompanies,
+          threadsProcessed: totalThreads,
+          eventsProcessed: totalEvents,
+          error: (err as Error).message,
+        });
+        // Calendar failure is non-fatal — keep going to scoring + poller.
+      }
+    }
+
+    // ----- Score recompute -----
+    emit({
+      phase: "scoring",
+      message: "Computing Strongest Connection scores…",
+      messagesProcessed: totalMessages,
+      peopleProcessed: totalPeople,
+      companiesProcessed: totalCompanies,
+      threadsProcessed: totalThreads,
+      eventsProcessed: totalEvents,
+    });
+    try {
+      await recomputeAllScores();
+    } catch {
+      // Non-fatal: scoring is recoverable on next poll tick.
+    }
+
+    // Install the Strongest / Going Cold / By Strength / Recent threads views.
+    try {
+      installDefaultViews();
+    } catch {
+      // Non-fatal: views are user-curatable; failure here just leaves the
+      // workspace with the user's pre-existing views.
+    }
+
+    emit({
+      phase: "complete",
+      message: "All set — opening your workspace.",
+      messagesProcessed: totalMessages,
+      peopleProcessed: totalPeople,
+      companiesProcessed: totalCompanies,
+      threadsProcessed: totalThreads,
+      eventsProcessed: totalEvents,
+    });
+
+    // Arm the poller for ongoing freshness.
+    armIncrementalPoller();
+  } finally {
+    release();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Incremental poller
+// ---------------------------------------------------------------------------
+
+export function armIncrementalPoller(intervalMs?: number): void {
+  if (pollerHandle) {return;}
+  const cursors = readSyncCursors();
+  const period = intervalMs ?? cursors.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  pollerHandle = setInterval(() => {
+    void tickPoller().catch(() => {
+      // Errors swallowed; emit() inside tickPoller already surfaces them.
+    });
+  }, period);
+}
+
+export function stopIncrementalPoller(): void {
+  if (pollerHandle) {
+    clearInterval(pollerHandle);
+    pollerHandle = null;
+  }
+}
+
+async function tickPoller(): Promise<void> {
+  if (mutex.isLocked()) {return;}
+  const release = await mutex.acquire();
+  try {
+    const connections = readConnections();
+    const cursors = readSyncCursors();
+    let didWork = false;
+
+    if (connections.gmail && cursors.gmail?.historyId) {
+      try {
+        const summary = await runGmailIncremental({
+          connectionId: connections.gmail.connectionId,
+          startHistoryId: cursors.gmail.historyId,
+        });
+        if (summary.messagesProcessed > 0) {
+          didWork = true;
+          emit({
+            phase: "polling",
+            message: `Synced ${summary.messagesProcessed} new email${
+              summary.messagesProcessed === 1 ? "" : "s"
+            }.`,
+            messagesProcessed: summary.messagesProcessed,
+            peopleProcessed: summary.peopleProcessed,
+            companiesProcessed: summary.companiesProcessed,
+            threadsProcessed: summary.threadsProcessed,
+            eventsProcessed: 0,
+          });
+        }
+      } catch (err) {
+        if (err instanceof ComposioToolNoConnectionError) {
+          // Surface the error but don't break the poller; user fixes by reconnecting.
+          emit({
+            phase: "error",
+            message: "Gmail connection expired. Reconnect from Integrations.",
+            messagesProcessed: 0,
+            peopleProcessed: 0,
+            companiesProcessed: 0,
+            threadsProcessed: 0,
+            eventsProcessed: 0,
+            error: err.message,
+          });
+        }
+      }
+    }
+
+    if (connections.calendar && cursors.calendar?.syncToken) {
+      try {
+        const summary = await runCalendarIncremental({
+          connectionId: connections.calendar.connectionId,
+          syncToken: cursors.calendar.syncToken,
+          selfEmail: connections.gmail?.accountEmail ?? null,
+        });
+        if (summary.eventsProcessed > 0) {
+          didWork = true;
+          emit({
+            phase: "polling",
+            message: `Synced ${summary.eventsProcessed} new event${
+              summary.eventsProcessed === 1 ? "" : "s"
+            }.`,
+            messagesProcessed: 0,
+            peopleProcessed: summary.peopleProcessed,
+            companiesProcessed: 0,
+            threadsProcessed: 0,
+            eventsProcessed: summary.eventsProcessed,
+          });
+        }
+      } catch (err) {
+        if (err instanceof ComposioToolNoConnectionError) {
+          emit({
+            phase: "error",
+            message: "Calendar connection expired. Reconnect from Integrations.",
+            messagesProcessed: 0,
+            peopleProcessed: 0,
+            companiesProcessed: 0,
+            threadsProcessed: 0,
+            eventsProcessed: 0,
+            error: err.message,
+          });
+        }
+      }
+    }
+
+    if (didWork) {
+      // Lightweight rescore — runs in foreground so the next render has it.
+      try {
+        await recomputeAllScores();
+      } catch {
+        // ignore
+      }
+    }
+
+    writeSyncCursors({}); // touch updatedAt
+  } finally {
+    release();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test-only resets
+// ---------------------------------------------------------------------------
+
+export function _resetSyncRunnerForTests(): void {
+  stopIncrementalPoller();
+  listeners.clear();
+  lastEvent = null;
+  backfillRunning = false;
+  backfillPromise = null;
+}

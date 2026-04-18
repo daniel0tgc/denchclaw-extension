@@ -340,14 +340,25 @@ describe("Workspace Tree & Browse API", () => {
   // ─── GET /api/workspace/search-index ─────────────────────────────
 
   describe("GET /api/workspace/search-index", () => {
-    it("returns empty items when no workspace", async () => {
+    it("returns only the CRM nav shortcuts when no workspace", async () => {
       const { resolveWorkspaceRoot } = await import("@/lib/workspace");
       vi.mocked(resolveWorkspaceRoot).mockReturnValue(null);
 
       const { GET } = await import("./search-index/route.js");
       const res = await GET();
       const json = await res.json();
-      expect(json.items).toEqual([]);
+      // The 4 CRM shortcuts (People / Companies / Inbox / Calendar) are
+      // always present so cmd-K can navigate to them even before the
+      // user has a workspace. Anything else here would imply a real DB
+      // hit, which the mock prevents.
+      expect(json.items.length).toBe(4);
+      expect(json.items.every((it: { sublabel: string }) => it.sublabel === "CRM")).toBe(true);
+      expect(json.items.map((it: { id: string }) => it.id)).toEqual([
+        "~crm/people",
+        "~crm/companies",
+        "~crm/inbox",
+        "~crm/calendar",
+      ]);
     });
 
     it("returns file items from workspace tree", async () => {

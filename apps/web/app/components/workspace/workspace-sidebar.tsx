@@ -102,7 +102,19 @@ type WorkspaceSidebarProps = {
   activeTab?: "files" | "chats";
   onTabChange?: (tab: "files" | "chats") => void;
   /** Navigate to a sidebar section (cloud, integrations, skills, cron). */
-  onNavigate?: (target: "cloud" | "integrations" | "skills" | "cron") => void;
+  onNavigate?: (
+    target:
+      | "cloud"
+      | "integrations"
+      | "skills"
+      | "cron"
+      | "crm-people"
+      | "crm-companies"
+      | "crm-inbox"
+      | "crm-calendar",
+  ) => void;
+  /** Currently-active CRM nav item, used to highlight the row. */
+  activeCrmTarget?: "people" | "companies" | "inbox" | "calendar" | null;
   /** Client-side search function from useSearchIndex for instant results. */
   searchFn?: (query: string, limit?: number) => SearchIndexItem[];
 };
@@ -315,6 +327,7 @@ export function WorkspaceSidebar({
   activeWorkspace,
   onWorkspaceChanged,
   onNavigate,
+  activeCrmTarget = null,
   searchFn,
 }: WorkspaceSidebarProps) {
 	const isBrowsing = browseDir != null;
@@ -415,6 +428,83 @@ export function WorkspaceSidebar({
 		{onFileSearchSelect && (
 			<div className="px-3">
 				<FileSearch onSelect={onFileSearchSelect} searchFn={searchFn} />
+			</div>
+		)}
+
+		{onNavigate && !isBrowsing && (
+			<div
+				className="px-2 pt-2 pb-1 space-y-0.5 border-b"
+				style={{ borderColor: "var(--color-border)" }}
+			>
+				<div
+					className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
+					style={{ color: "var(--color-text-muted)" }}
+				>
+					CRM
+				</div>
+				{(
+					[
+						{ id: "crm-people" as const, label: "People", target: "people" as const, icon: (
+							<svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+								<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+								<circle cx="9" cy="7" r="4" />
+								<path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+								<path d="M16 3.13a4 4 0 0 1 0 7.75" />
+							</svg>
+						) },
+						{ id: "crm-companies" as const, label: "Companies", target: "companies" as const, icon: (
+							<svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+								<path d="M3 21h18" />
+								<path d="M5 21V7l8-4v18" />
+								<path d="M19 21V11l-6-4" />
+								<path d="M9 9h0" />
+								<path d="M9 13h0" />
+								<path d="M9 17h0" />
+							</svg>
+						) },
+						{ id: "crm-inbox" as const, label: "Inbox", target: "inbox" as const, icon: (
+							<svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+								<polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+								<path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
+							</svg>
+						) },
+						{ id: "crm-calendar" as const, label: "Calendar", target: "calendar" as const, icon: (
+							<svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+								<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+								<line x1="16" y1="2" x2="16" y2="6" />
+								<line x1="8" y1="2" x2="8" y2="6" />
+								<line x1="3" y1="10" x2="21" y2="10" />
+							</svg>
+						) },
+					]
+				).map((item) => {
+					const active = activeCrmTarget === item.target;
+					return (
+						<button
+							key={item.id}
+							type="button"
+							onClick={() => onNavigate(item.id)}
+							className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-sm font-medium transition-colors"
+							style={{
+								color: active ? "var(--color-text)" : "var(--color-text-muted)",
+								background: active ? "var(--color-surface-hover)" : "transparent",
+							}}
+							onMouseEnter={(e) => {
+								if (active) return;
+								(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+							}}
+							onMouseLeave={(e) => {
+								if (active) return;
+								(e.currentTarget as HTMLElement).style.background = "transparent";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
+							}}
+						>
+							<span className="shrink-0">{item.icon}</span>
+							{item.label}
+						</button>
+					);
+				})}
 			</div>
 		)}
 

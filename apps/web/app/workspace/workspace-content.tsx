@@ -298,6 +298,18 @@ function ResizeHandle({
   );
 }
 
+/**
+ * v3 invariant: at least one chat tab must exist so the center never goes blank.
+ * Wrap any setTabState that could remove the last chat tab with this helper.
+ */
+function ensureChatTabPresent(state: TabState): TabState {
+  const hasChat = state.tabs.some(
+    (tab) => tab.id !== HOME_TAB_ID && (tab.type === "chat" || tab.type === "gateway-chat"),
+  );
+  if (hasChat) return state;
+  return openTab(state, createBlankChatTab(), { preview: true });
+}
+
 /** Find a node in the tree by exact path. */
 function findNode(
   tree: TreeNode[],
@@ -518,12 +530,9 @@ function WorkspacePageInner() {
     if (tabLoadedForWorkspace.current === key) return;
     tabLoadedForWorkspace.current = key;
     const loaded = loadTabs(key);
-    const hasNonHomeTabs = loaded.tabs.some((t) => t.id !== HOME_TAB_ID);
-    if (!hasNonHomeTabs) {
-      setTabState(openTab(loaded, createBlankChatTab()));
-    } else {
-      setTabState(loaded);
-    }
+    // v3: ensure restored tab state always has at least one chat tab so the
+    // center is never blank — even when localStorage only stored file/CRM tabs.
+    setTabState(ensureChatTabPresent(loaded));
     setChatRuntimeSnapshots({});
   }, [workspaceName]);
 
@@ -976,9 +985,11 @@ function WorkspacePageInner() {
       );
       setTabState((prev) => {
         let next = closeChatTabsForSession(prev, sessionId);
-        const hasNonHomeTabs = next.tabs.some((tab) => tab.id !== HOME_TAB_ID);
-        if (!hasNonHomeTabs) {
-          next = openTab(next, createBlankChatTab());
+        const hasChatTab = next.tabs.some(
+          (tab) => tab.id !== HOME_TAB_ID && (tab.type === "chat" || tab.type === "gateway-chat"),
+        );
+        if (!hasChatTab) {
+          next = openTab(next, createBlankChatTab(), { preview: true });
         }
         return next;
       });
@@ -1417,16 +1428,8 @@ function WorkspacePageInner() {
   const handleTabClose = useCallback((tabId: string) => {
     const prev = tabState;
     let next = closeTab(prev, tabId);
-    const hasNonHomeTabs = next.tabs.some((t) => t.id !== HOME_TAB_ID);
-    if (!hasNonHomeTabs) {
-      next = openTab(next, createBlankChatTab());
-      setTabState(next);
-      setActivePath(null);
-      setContent({ kind: "none" });
-      setActiveSessionId(null);
-      setActiveSubagentKey(null);
-      return;
-    }
+    // v3: a chat tab must always exist so the center never goes blank.
+    next = ensureChatTabPresent(next);
     setTabState(next);
     if (next.activeTabId !== prev.activeTabId) {
       const newActive = next.tabs.find((t) => t.id === next.activeTabId);
@@ -1451,13 +1454,13 @@ function WorkspacePageInner() {
   }, [tabState.activeTabId, handleTabClose]);
 
   const handleTabCloseOthers = useCallback((tabId: string) => {
-    const next = closeOtherTabs(tabState, tabId);
+    const next = ensureChatTabPresent(closeOtherTabs(tabState, tabId));
     setTabState(next);
     applyActivatedTab(next.tabs.find((tab) => tab.id === next.activeTabId));
   }, [applyActivatedTab, tabState]);
 
   const handleTabCloseToRight = useCallback((tabId: string) => {
-    const next = closeTabsToRight(tabState, tabId);
+    const next = ensureChatTabPresent(closeTabsToRight(tabState, tabId));
     setTabState(next);
     applyActivatedTab(next.tabs.find((tab) => tab.id === next.activeTabId));
   }, [applyActivatedTab, tabState]);

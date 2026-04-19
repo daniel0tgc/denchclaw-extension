@@ -224,9 +224,9 @@ function CompanyHeader({
             {company.type && <span>{company.type}</span>}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        {/* <div className="flex shrink-0 items-center gap-2">
           <EnrichButton type="company" id={company.id} />
-        </div>
+        </div> */}
       </div>
       <div className="mt-5 flex items-center gap-4 -mb-px">
         {TABS.map((t) => {

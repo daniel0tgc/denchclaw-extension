@@ -301,14 +301,20 @@ function ensurePersonForCalendar(params: {
   batch: StatementBatch;
   domainOverrides: { add: string[]; remove: string[] };
   selfEmails: Set<string>;
-}): { entryId: string; isSelf: boolean } | null {
+}): { entryId: string; isSelf: boolean; companyId?: string } | null {
   const parsed = parseEmailAddress(params.attendee.email ?? null);
   if (!parsed) {return null;}
   const key = normalizeEmailKey(parsed.address);
   if (!key) {return null;}
   const isSelf = params.attendee.self === true || params.selfEmails.has(key);
+  // Resolve the company once up-front so cached-person paths can still
+  // surface the companyId to the interaction emitter.
+  const domain = rootDomainFromEmail(parsed.address, params.domainOverrides);
   const cachedId = params.cache.peopleByEmail.get(key);
-  if (cachedId) {return { entryId: cachedId, isSelf };}
+  if (cachedId) {
+    const cachedCompanyId = domain ? params.cache.companyByDomain.get(domain) : undefined;
+    return { entryId: cachedId, isSelf, companyId: cachedCompanyId };
+  }
   if (isSelf) {return { entryId: "", isSelf };}
 
   const entryId = randomUUID();
@@ -338,7 +344,7 @@ function ensurePersonForCalendar(params: {
     });
   }
 
-  const domain = rootDomainFromEmail(parsed.address, params.domainOverrides);
+  let resolvedCompanyId: string | undefined;
   if (domain) {
     let companyId = params.cache.companyByDomain.get(domain);
     if (!companyId) {
@@ -370,16 +376,19 @@ function ensurePersonForCalendar(params: {
         });
       }
     }
+    resolvedCompanyId = companyId;
+    // people.Company is now a many_to_one relation to company; write the
+    // company entry id (not the derived name).
     if (params.fieldMaps.people["Company"]) {
       emitInsertField(params.batch, {
         entryId,
         fieldId: params.fieldMaps.people["Company"],
-        value: deriveCompanyNameFromDomain(domain),
+        value: companyId,
       });
     }
   }
 
-  return { entryId, isSelf };
+  return { entryId, isSelf, companyId: resolvedCompanyId };
 }
 
 function processEvent(params: {
@@ -429,7 +438,7 @@ function processEvent(params: {
     }))
     .filter((r) => r.info !== null) as Array<{
     attendee: Attendee;
-    info: { entryId: string; isSelf: boolean };
+    info: { entryId: string; isSelf: boolean; companyId?: string };
   }>;
 
   const nonSelf = resolved.filter((r) => !r.info.isSelf && r.info.entryId);
@@ -542,6 +551,13 @@ function processEvent(params: {
         entryId: interactionId,
         fieldId: fieldMaps.interaction["Person"],
         value: r.info.entryId,
+      });
+    }
+    if (r.info.companyId && fieldMaps.interaction["Company"]) {
+      emitInsertField(batch, {
+        entryId: interactionId,
+        fieldId: fieldMaps.interaction["Company"],
+        value: r.info.companyId,
       });
     }
     if (fieldMaps.interaction["Event"]) {

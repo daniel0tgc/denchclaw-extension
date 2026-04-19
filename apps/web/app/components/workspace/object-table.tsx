@@ -105,11 +105,15 @@ function safeString(val: unknown): string {
 function parseRelationValue(value: string | null | undefined): string[] {
 	if (!value) {return [];}
 	const trimmed = value.trim();
-	if (!trimmed) {return [];}
+	if (!trimmed || trimmed === "null" || trimmed === "undefined") {return [];}
 	if (trimmed.startsWith("[")) {
 		try {
 			const parsed = JSON.parse(trimmed);
-			if (Array.isArray(parsed)) {return parsed.map(String).filter(Boolean);}
+			if (Array.isArray(parsed)) {
+				return parsed
+					.map(String)
+					.filter((id) => id && id !== "null" && id !== "undefined");
+			}
 		} catch { /* not JSON */ }
 	}
 	return [trimmed];
@@ -228,7 +232,7 @@ function RelationCell({
 	onNavigateEntry?: (objectName: string, entryId: string) => void;
 }) {
 	const fieldLabels = relationLabels?.[field.name];
-	const ids = parseRelationValue(String(value));
+	const ids = value == null ? [] : parseRelationValue(String(value));
 	if (ids.length === 0) {return <span style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>--</span>;}
 	return (
 		<span className="flex items-center gap-1 flex-wrap">

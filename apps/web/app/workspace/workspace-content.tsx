@@ -13,6 +13,7 @@ import { ObjectGallery } from "../components/workspace/object-gallery";
 import { ObjectList } from "../components/workspace/object-list";
 import { ViewTypeSwitcher } from "../components/workspace/view-type-switcher";
 import { ViewSettingsPopover } from "../components/workspace/view-settings-popover";
+import { IconPicker } from "../components/workspace/icon-picker";
 import { DocumentView } from "../components/workspace/document-view";
 import { FileViewer, isSpreadsheetFile } from "../components/workspace/file-viewer";
 import { SpreadsheetEditor } from "../components/workspace/spreadsheet-editor";
@@ -25,8 +26,6 @@ import { RichDocumentEditor, isDocxFile, isTxtFile, textToHtml } from "../compon
 import { Breadcrumbs } from "../components/workspace/breadcrumbs";
 import { EmptyState } from "../components/workspace/empty-state";
 import { ReportViewer } from "../components/charts/report-viewer";
-import { PeopleListView } from "../components/crm/people-list-view";
-import { CompaniesListView } from "../components/crm/companies-list-view";
 import { InboxView } from "../components/crm/inbox-view";
 import { CalendarView } from "../components/crm/calendar-view";
 import { PersonProfile } from "../components/crm/person-profile";
@@ -55,7 +54,7 @@ import {
 } from "@/lib/object-filters";
 import { UnicodeSpinner } from "../components/unicode-spinner";
 import { ToastProvider } from "../components/workspace/toast";
-import { ChatSessionsSidebar, type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
+import { type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
 import { RightPanel } from "../components/workspace/right-panel";
 import {
   DropdownMenu,
@@ -192,8 +191,6 @@ type ContentState =
   | { kind: "duckdb-missing" }
   | { kind: "richDocument"; html: string; filePath: string; mode: "docx" | "txt" }
   | { kind: "app"; appPath: string; manifest: DenchAppManifest; filename: string }
-  | { kind: "crm-people" }
-  | { kind: "crm-companies" }
   | { kind: "crm-inbox" }
   | { kind: "crm-calendar" }
   | { kind: "crm-person"; entryId: string }
@@ -322,8 +319,16 @@ function TabIcon({ tab }: { tab: Tab }) {
     | "cloud" | "skills" | "integrations" | "cron"
     | "app" | "object" | "folder" | "file";
   const kind: IconKind = (() => {
-    if (path === "~crm/people") return "people";
-    if (path === "~crm/companies") return "company";
+    // People / Companies render through the standard object pipeline now,
+    // so the canonical paths are `people` and `company`. The `~crm/*`
+    // checks remain for back-compat with bookmarked legacy URLs.
+    if (tab.type === "object" && (path === "people" || path === "~crm/people")) return "people";
+    if (
+      tab.type === "object" &&
+      (path === "company" || path === "companies" || path === "~crm/companies")
+    ) {
+      return "company";
+    }
     if (path === "~crm/inbox") return "inbox";
     if (path === "~crm/calendar") return "calendar";
     if (path.startsWith("~cloud")) return "cloud";
@@ -476,6 +481,42 @@ function objectNameFromPath(path: string): string {
 }
 
 /**
+ * Locate a workspace object node by its raw object name (e.g. `"people"`,
+ * `"company"`, `"vc_lead"`). Walks the raw tree, including nodes that the
+ * right-panel file tree hides (CRM_HIDDEN_TREE_PATHS only filters the visible
+ * tree, not the underlying data). Returns `null` if no matching node exists.
+ */
+function findCrmObjectNode(nodes: TreeNode[], objectName: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.type === "object" && objectNameFromPath(node.path) === objectName) {
+      return node;
+    }
+    if (node.children) {
+      const found = findCrmObjectNode(node.children, objectName);
+      if (found) {return found;}
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the `people` or `company` workspace object node, falling back to a
+ * synthetic `{ name, path, type: "object" }` node when the tree fetch hasn't
+ * surfaced it yet (or when the user is hitting the URL before the workspace
+ * is fully populated). The synthetic path matches the seed schema's raw
+ * object name so `loadContent` resolves it via `/api/workspace/objects/<name>`.
+ */
+function resolveCrmObjectNode(tree: TreeNode[], objectName: "people" | "company"): TreeNode {
+  return (
+    findCrmObjectNode(tree, objectName) ?? {
+      name: objectName,
+      path: objectName,
+      type: "object",
+    }
+  );
+}
+
+/**
  * Walk the workspace tree and collect every object node that should appear in
  * the sidebar's CRM section. Excludes `people` / `company` / `companies` since
  * those already have dedicated rows in the hard-coded CRM nav. Hidden CRM-only
@@ -483,6 +524,31 @@ function objectNameFromPath(path: string): string {
  * are filtered out upstream by the tree API and never appear here.
  */
 const CRM_NAV_EXCLUDED_OBJECT_NAMES: ReadonlySet<string> = new Set([
+  "people",
+  "company",
+  "companies",
+]);
+
+/**
+ * Object names whose reverse-relation columns are considered noise on the
+ * People and Companies tables. These are system-managed CRM tables
+ * (`email_thread`, `email_message`, `calendar_event`, `interaction`) that
+ * the Gmail/Calendar sync auto-populates; their reverse chips on a People
+ * or Company row aren't actionable for the user, so we default-hide them.
+ *
+ * Custom CRM objects' reverse columns are unaffected — only People and
+ * Companies have the hiding applied. Surfacing these as opt-in toggles in
+ * the column picker is future work.
+ */
+const NOISY_CRM_REVERSE_SOURCES: ReadonlySet<string> = new Set([
+  "email_thread",
+  "email_message",
+  "calendar_event",
+  "interaction",
+]);
+
+/** Object names that get noisy reverse columns hidden by default. */
+const HIDE_NOISY_REVERSE_FOR_OBJECT_NAMES: ReadonlySet<string> = new Set([
   "people",
   "company",
   "companies",
@@ -1075,8 +1141,6 @@ function WorkspacePageInner() {
     const isDirectory =
       content.kind === "directory" ||
       isVirtualPath(activePath) ||
-      content.kind === "crm-people" ||
-      content.kind === "crm-companies" ||
       content.kind === "crm-inbox" ||
       content.kind === "crm-calendar";
     return { path: activePath, filename, isDirectory };
@@ -1159,29 +1223,51 @@ function WorkspacePageInner() {
   }, [fetchGatewaySessions]);
 
   const handleWorkspaceChanged = useCallback(() => {
-    resetWorkspaceStateOnSwitch({
-      setBrowseDir,
-      setActivePath,
-      setContent,
-      setActiveSessionId,
-      setActiveSubagentKey,
-      resetMainChat: () => {
-        chatPanelRefs.current = {};
-        setChatRuntimeSnapshots({});
-        setChatRunsSnapshot(createChatRunsSnapshot({ parentRuns: [], subagents: [] }));
-        setStreamingSessionIds(new Set());
-        setSubagents([]);
-        setTabState({ tabs: [HOME_TAB], activeTabId: HOME_TAB_ID });
-      },
-      replaceUrlToRoot: () => {
-        // URL sync effect will write the correct URL after state is cleared
-      },
-      reconnectWorkspaceWatcher,
-      refreshSessions,
-      refreshContext: () => {
-        void refreshContext();
-      },
-    });
+    // The newly-active workspace may not be onboarded yet (e.g. a fresh
+    // workspace someone just created, or one they hadn't finished setting
+    // up). The home page server component only checks onboarding on its
+    // initial render, so a soft in-place reset would strand the user on `/`
+    // looking at a half-empty UI. Probe `/api/onboarding/state` first and
+    // hard-navigate to `/onboarding` when the new workspace still needs it;
+    // otherwise fall through to the smooth in-memory reset.
+    void (async () => {
+      try {
+        const res = await fetch("/api/onboarding/state", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as { currentStep?: string };
+          if (data.currentStep && data.currentStep !== "complete") {
+            window.location.assign("/onboarding");
+            return;
+          }
+        }
+      } catch {
+        // Network/parse failure: fall through to soft reset rather than
+        // trapping the user — the next refresh will surface onboarding.
+      }
+      resetWorkspaceStateOnSwitch({
+        setBrowseDir,
+        setActivePath,
+        setContent,
+        setActiveSessionId,
+        setActiveSubagentKey,
+        resetMainChat: () => {
+          chatPanelRefs.current = {};
+          setChatRuntimeSnapshots({});
+          setChatRunsSnapshot(createChatRunsSnapshot({ parentRuns: [], subagents: [] }));
+          setStreamingSessionIds(new Set());
+          setSubagents([]);
+          setTabState({ tabs: [HOME_TAB], activeTabId: HOME_TAB_ID });
+        },
+        replaceUrlToRoot: () => {
+          // URL sync effect will write the correct URL after state is cleared
+        },
+        reconnectWorkspaceWatcher,
+        refreshSessions,
+        refreshContext: () => {
+          void refreshContext();
+        },
+      });
+    })();
   }, [reconnectWorkspaceWatcher, refreshContext, refreshSessions, router, setBrowseDir]);
 
   const handleDeleteSession = useCallback(
@@ -1448,13 +1534,22 @@ function WorkspacePageInner() {
         | "crm-inbox"
         | "crm-calendar",
     ) => {
+      // People / Companies render through the standard ObjectView pipeline
+      // (same path as `?path=<custom-object>`), so the toolbar, table, saved
+      // views, and column controls match every other CRM object.
+      if (target === "crm-people" || target === "crm-companies") {
+        const objectName = target === "crm-people" ? "people" : "company";
+        const node = resolveCrmObjectNode(tree, objectName);
+        openTabForNode(node);
+        void loadContent(node);
+        return;
+      }
+
       const config = {
         cloud: { path: "~cloud", name: "Cloud", kind: "cloud" as const },
         integrations: { path: "~integrations", name: "Integrations", kind: "integrations" as const },
         skills: { path: "~skills", name: "Skills", kind: "skill-store" as const },
         cron: { path: "~cron", name: "Cron", kind: "cron-dashboard" as const },
-        "crm-people": { path: "~crm/people", name: "People", kind: "crm-people" as const },
-        "crm-companies": { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
         "crm-inbox": { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
         "crm-calendar": { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
       }[target];
@@ -1462,7 +1557,7 @@ function WorkspacePageInner() {
       setActivePath(config.path);
       setContent({ kind: config.kind });
     },
-    [openTabForNode],
+    [openTabForNode, tree, loadContent],
   );
 
   const handleComposioActionFromChat = useCallback((action: ComposioChatAction) => {
@@ -1931,16 +2026,20 @@ function WorkspacePageInner() {
       // People + Company entries swap the MAIN panel for an Attio-style
       // profile (mirroring dench-2025's base-object-vs-generic-object
       // pattern). All other objects keep the existing side-panel modal.
+      // The parent tab points at the resolved workspace object so the
+      // back-to-list affordance lands on the unified ObjectView.
       const isPersonProfile = objectName === "people";
       const isCompanyProfile = objectName === "company" || objectName === "companies";
       if (isPersonProfile) {
-        openTabForNode({ path: "~crm/people", name: "People", type: "folder" });
-        setActivePath("~crm/people");
+        const node = resolveCrmObjectNode(tree, "people");
+        openTabForNode(node);
+        setActivePath(node.path);
         setContent({ kind: "crm-person", entryId });
         setEntryModal(null);
       } else if (isCompanyProfile) {
-        openTabForNode({ path: "~crm/companies", name: "Companies", type: "folder" });
-        setActivePath("~crm/companies");
+        const node = resolveCrmObjectNode(tree, "company");
+        openTabForNode(node);
+        setActivePath(node.path);
         setContent({ kind: "crm-company", entryId });
         setEntryModal(null);
       } else {
@@ -1950,7 +2049,7 @@ function WorkspacePageInner() {
       params.set("entry", `${objectName}:${entryId}`);
       router.push(`/?${params.toString()}`, { scroll: false });
     },
-    [searchParams, router, openTabForNode],
+    [searchParams, router, openTabForNode, tree],
   );
 
   // Close entry modal handler
@@ -2006,17 +2105,23 @@ function WorkspacePageInner() {
         setContent({ kind: "cloud" });
       } else if (urlState.path.startsWith("~crm/")) {
         const view = urlState.path.slice("~crm/".length).split("/")[0];
-        const map: Record<string, { name: string; kind: "crm-people" | "crm-companies" | "crm-inbox" | "crm-calendar" } | undefined> = {
-          people: { name: "People", kind: "crm-people" },
-          companies: { name: "Companies", kind: "crm-companies" },
-          inbox: { name: "Inbox", kind: "crm-inbox" },
-          calendar: { name: "Calendar", kind: "crm-calendar" },
-        };
-        const entry = map[view];
-        if (entry) {
-          openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
-          setActivePath(urlState.path);
-          setContent({ kind: entry.kind });
+        // People / Companies legacy URLs (`?path=~crm/people`) now resolve
+        // the underlying workspace object so the standard ObjectView renders.
+        if (view === "people" || view === "companies") {
+          const node = resolveCrmObjectNode(tree, view === "people" ? "people" : "company");
+          openTabForNode(node);
+          void loadContent(node);
+        } else {
+          const map: Record<string, { name: string; kind: "crm-inbox" | "crm-calendar" } | undefined> = {
+            inbox: { name: "Inbox", kind: "crm-inbox" },
+            calendar: { name: "Calendar", kind: "crm-calendar" },
+          };
+          const entry = map[view];
+          if (entry) {
+            openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
+            setActivePath(urlState.path);
+            setContent({ kind: entry.kind });
+          }
         }
       } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
         const name = urlState.path.split("/").pop() || urlState.path;
@@ -2025,17 +2130,21 @@ function WorkspacePageInner() {
         void loadContent(syntheticNode);
       }
     } else if (urlState.crm) {
-      // Top-level CRM view (People/Companies/Inbox/Calendar) — render a
-      // dedicated component in the main panel.
-      const map = {
-        people: { path: "~crm/people", name: "People", kind: "crm-people" as const },
-        companies: { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
-        inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
-        calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
-      }[urlState.crm];
-      openTabForNode({ path: map.path, name: map.name, type: "folder" });
-      setActivePath(map.path);
-      setContent({ kind: map.kind });
+      // Top-level CRM view. People / Companies route through the standard
+      // ObjectView; Inbox / Calendar keep their dedicated content kinds.
+      if (urlState.crm === "people" || urlState.crm === "companies") {
+        const node = resolveCrmObjectNode(tree, urlState.crm === "people" ? "people" : "company");
+        openTabForNode(node);
+        void loadContent(node);
+      } else {
+        const map = {
+          inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
+          calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+        }[urlState.crm];
+        openTabForNode({ path: map.path, name: map.name, type: "folder" });
+        setActivePath(map.path);
+        setContent({ kind: map.kind });
+      }
     } else if (urlState.chat) {
       if (urlState.subagent) {
         openSubagentChatTab({
@@ -2056,19 +2165,21 @@ function WorkspacePageInner() {
     if (urlState.entry) {
       // People + Company entries get the dedicated profile UI in the main
       // panel (mirrors dench-2025's "base object full screen" pattern).
-      // Other objects keep the existing side-panel entry modal flow.
+      // Other objects keep the existing side-panel entry modal flow. The
+      // parent tab points at the resolved workspace object so navigating
+      // back lands on the unified ObjectView.
       if (urlState.entry.objectName === "people") {
-        const map = { path: "~crm/people", name: "People", type: "folder" as const };
-        openTabForNode(map);
-        setActivePath(map.path);
+        const node = resolveCrmObjectNode(tree, "people");
+        openTabForNode(node);
+        setActivePath(node.path);
         setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
       } else if (
         urlState.entry.objectName === "company" ||
         urlState.entry.objectName === "companies"
       ) {
-        const map = { path: "~crm/companies", name: "Companies", type: "folder" as const };
-        openTabForNode(map);
-        setActivePath(map.path);
+        const node = resolveCrmObjectNode(tree, "company");
+        openTabForNode(node);
+        setActivePath(node.path);
         setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
       } else {
         setEntryModal(urlState.entry);
@@ -2133,17 +2244,21 @@ function WorkspacePageInner() {
           setContent({ kind: "cloud" });
         } else if (urlState.path.startsWith("~crm/")) {
           const view = urlState.path.slice("~crm/".length).split("/")[0];
-          const map: Record<string, { name: string; kind: "crm-people" | "crm-companies" | "crm-inbox" | "crm-calendar" } | undefined> = {
-            people: { name: "People", kind: "crm-people" },
-            companies: { name: "Companies", kind: "crm-companies" },
-            inbox: { name: "Inbox", kind: "crm-inbox" },
-            calendar: { name: "Calendar", kind: "crm-calendar" },
-          };
-          const entry = map[view];
-          if (entry) {
-            openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
-            setActivePath(urlState.path);
-            setContent({ kind: entry.kind });
+          if (view === "people" || view === "companies") {
+            const node = resolveCrmObjectNode(tree, view === "people" ? "people" : "company");
+            openTabForNode(node);
+            void loadContent(node);
+          } else {
+            const map: Record<string, { name: string; kind: "crm-inbox" | "crm-calendar" } | undefined> = {
+              inbox: { name: "Inbox", kind: "crm-inbox" },
+              calendar: { name: "Calendar", kind: "crm-calendar" },
+            };
+            const entry = map[view];
+            if (entry) {
+              openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
+              setActivePath(urlState.path);
+              setContent({ kind: entry.kind });
+            }
           }
         } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
           const name = urlState.path.split("/").pop() || urlState.path;
@@ -2152,15 +2267,19 @@ function WorkspacePageInner() {
           void loadContent(synNode);
         }
       } else if (urlState.crm) {
-        const map = {
-          people: { path: "~crm/people", name: "People", kind: "crm-people" as const },
-          companies: { path: "~crm/companies", name: "Companies", kind: "crm-companies" as const },
-          inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
-          calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
-        }[urlState.crm];
-        openTabForNode({ path: map.path, name: map.name, type: "folder" });
-        setActivePath(map.path);
-        setContent({ kind: map.kind });
+        if (urlState.crm === "people" || urlState.crm === "companies") {
+          const node = resolveCrmObjectNode(tree, urlState.crm === "people" ? "people" : "company");
+          openTabForNode(node);
+          void loadContent(node);
+        } else {
+          const map = {
+            inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
+            calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+          }[urlState.crm];
+          openTabForNode({ path: map.path, name: map.name, type: "folder" });
+          setActivePath(map.path);
+          setContent({ kind: map.kind });
+        }
       } else if (urlState.chat) {
         if (urlState.subagent) {
           openSubagentChatTab({
@@ -2193,16 +2312,18 @@ function WorkspacePageInner() {
 
       if (urlState.entry) {
         if (urlState.entry.objectName === "people") {
-          openTabForNode({ path: "~crm/people", name: "People", type: "folder" });
-          setActivePath("~crm/people");
+          const node = resolveCrmObjectNode(tree, "people");
+          openTabForNode(node);
+          setActivePath(node.path);
           setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
           setEntryModal(null);
         } else if (
           urlState.entry.objectName === "company" ||
           urlState.entry.objectName === "companies"
         ) {
-          openTabForNode({ path: "~crm/companies", name: "Companies", type: "folder" });
-          setActivePath("~crm/companies");
+          const node = resolveCrmObjectNode(tree, "company");
+          openTabForNode(node);
+          setActivePath(node.path);
           setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
           setEntryModal(null);
         } else {
@@ -2651,22 +2772,13 @@ function WorkspacePageInner() {
     onGoToChat: handleGoToChat,
     activeWorkspace: workspaceName,
     onWorkspaceChanged: handleWorkspaceChanged,
-    chatSessions: sessions,
-    activeChatSessionId: activeSessionId,
-    activeChatSessionTitle: activeSessionTitle,
-    chatStreamingSessionIds: streamingSessionIds,
-    chatSubagents: subagents,
-    chatActiveSubagentKey: activeSubagentKey,
-    chatSessionsLoading: sessionsLoading,
-    onSelectChatSubagent: handleSelectSubagent,
-    onDeleteChatSession: handleDeleteSession,
-    onRenameChatSession: handleRenameSession,
-    chatGatewaySessions: gatewaySessions,
-    chatActiveGatewaySessionKey: activeGatewaySessionKey,
     activeCrmTarget: (
-      content.kind === "crm-people" || content.kind === "crm-person"
+      content.kind === "crm-person" ||
+      (content.kind === "object" && content.data.object.name === "people")
         ? "people" as const
-        : content.kind === "crm-companies" || content.kind === "crm-company"
+        : content.kind === "crm-company" ||
+          (content.kind === "object" &&
+            (content.data.object.name === "company" || content.data.object.name === "companies"))
           ? "companies" as const
           : content.kind === "crm-inbox"
             ? "inbox" as const
@@ -2677,6 +2789,32 @@ function WorkspacePageInner() {
     customCrmObjects,
     activeCrmObjectName: content.kind === "object" ? content.data.object.name : null,
     onNavigateToCrmObject: handleNavigateToObject,
+  };
+
+  // Shared props for the chat-panel header history dropdown.
+  // Defined here so all open ChatPanel tabs see the same up-to-date data.
+  const chatHistoryPanelProps = {
+    historySessions: sessions,
+    historyStreamingSessionIds: streamingSessionIds,
+    historySubagents: subagents,
+    historyActiveSubagentKey: activeSubagentKey,
+    historyLoading: sessionsLoading,
+    historyGatewaySessions: gatewaySessions,
+    historyActiveGatewaySessionKey: activeGatewaySessionKey,
+    onSelectHistorySession: (sessionId: string) => {
+      const session = sessions.find((entry) => entry.id === sessionId);
+      openSessionChatTab(sessionId, session?.title);
+    },
+    onNewChatSession: () => {
+      openPermanentBlankChatTab();
+    },
+    onSelectHistorySubagent: handleSelectSubagent,
+    onSelectHistoryGatewaySession: (sessionKey: string, sessionId: string) => {
+      const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
+      openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
+    },
+    onRenameHistorySession: handleRenameSession,
+    onDeleteHistorySession: handleDeleteSession,
   };
 
   return (
@@ -2702,20 +2840,6 @@ function WorkspacePageInner() {
             onExternalDrop={handleSidebarExternalDrop}
             showHidden={showHidden}
             onToggleHidden={() => setShowHidden((v) => !v)}
-            onSelectChatSession={(sessionId) => {
-              const session = sessions.find((entry) => entry.id === sessionId);
-              openSessionChatTab(sessionId, session?.title);
-              setSidebarOpen(false);
-            }}
-            onNewChatSession={() => {
-              openPermanentBlankChatTab();
-              setSidebarOpen(false);
-            }}
-            onSelectGatewayChatSession={(sessionKey, sessionId) => {
-              const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
-              openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
-              setSidebarOpen(false);
-            }}
             onNavigate={(target) => { handleNavigate(target); setSidebarOpen(false); }}
             mobile
             onClose={() => setSidebarOpen(false)}
@@ -2754,17 +2878,6 @@ function WorkspacePageInner() {
               compact={isLeftSidebarCompact}
               onToggleCompact={toggleLeftSidebarCompact}
               onCollapse={() => setLeftSidebarCollapsed(true)}
-              onSelectChatSession={(sessionId) => {
-                const session = sessions.find((entry) => entry.id === sessionId);
-                openSessionChatTab(sessionId, session?.title);
-              }}
-              onNewChatSession={() => {
-                openPermanentBlankChatTab();
-              }}
-              onSelectGatewayChatSession={(sessionKey, sessionId) => {
-                const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
-                openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
-              }}
               onNavigate={handleNavigate}
             />
           </div>
@@ -2914,6 +3027,7 @@ function WorkspacePageInner() {
                   searchFn={searchIndex}
                   fileContext={isVisible ? fileContext : undefined}
                   onFileChanged={handleFileChanged}
+                  {...chatHistoryPanelProps}
                 />
               </div>
             );
@@ -3124,14 +3238,14 @@ function WorkspacePageInner() {
                     </div>
                   ) : activePath && content.kind !== "none" ? (
                     <>
-                      {!activePath.startsWith("~") && (
+                      {/* {!activePath.startsWith("~") && (
                         <div
                           className="px-4 border-b flex-shrink-0 flex items-center h-10"
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
                         </div>
-                      )}
+                      )} */}
                       <div className="flex-1 overflow-y-auto">
                         <ContentRenderer
                           content={content}
@@ -3317,14 +3431,14 @@ function WorkspacePageInner() {
                       </div>
                     ) : activePath && content.kind !== "none" ? (
                       <>
-                        {!activePath.startsWith("~") && (
+                        {/* {!activePath.startsWith("~") && (
                           <div
                             className="px-4 border-b flex-shrink-0 flex items-center h-10"
                             style={{ borderColor: "var(--color-border)" }}
                           >
                             <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
                           </div>
-                        )}
+                        )} */}
                         <div className="flex-1 overflow-y-auto">
                           <ContentRenderer
                             content={content}
@@ -3461,6 +3575,7 @@ function ContentRenderer({
           members={members}
           onNavigateToObject={onNavigateToObject}
           onRefreshObject={onRefreshObject}
+          onRefreshTree={onRefreshTree}
           onOpenEntry={onOpenEntry}
           activeEntryId={activeEntryId}
         />
@@ -3657,12 +3772,6 @@ function ContentRenderer({
         />
       );
 
-    case "crm-people":
-      return <PeopleListView onOpenPerson={(id) => onOpenEntry("people", id)} />;
-
-    case "crm-companies":
-      return <CompaniesListView onOpenCompany={(id) => onOpenEntry("company", id)} />;
-
     case "crm-inbox":
       return <InboxView onOpenPerson={(id) => onOpenEntry("people", id)} />;
 
@@ -3680,7 +3789,7 @@ function ContentRenderer({
           personId={content.entryId}
           onOpenPerson={(id) => onOpenEntry("people", id)}
           onOpenCompany={(id) => onOpenEntry("company", id)}
-          onBackToList={() => onNavigate("/?crm=people")}
+          onBackToList={() => onNavigateToObject("people")}
         />
       );
 
@@ -3690,7 +3799,7 @@ function ContentRenderer({
           companyId={content.entryId}
           onOpenPerson={(id) => onOpenEntry("people", id)}
           onOpenCompany={(id) => onOpenEntry("company", id)}
-          onBackToList={() => onNavigate("/?crm=companies")}
+          onBackToList={() => onNavigateToObject("company")}
         />
       );
 
@@ -3710,6 +3819,7 @@ function ObjectView({
   members,
   onNavigateToObject,
   onRefreshObject,
+  onRefreshTree,
   onOpenEntry,
   activeEntryId,
 }: {
@@ -3717,6 +3827,7 @@ function ObjectView({
   members?: Array<{ id: string; name: string; email: string; role: string }>;
   onNavigateToObject: (objectName: string) => void;
   onRefreshObject: () => void;
+  onRefreshTree?: () => void;
   onOpenEntry?: (objectName: string, entryId: string) => void;
   activeEntryId?: string;
 }) {
@@ -3808,18 +3919,31 @@ function ObjectView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentViewType, activeViewName, filters, serverSearch, sortRules, serverPage, serverPageSize, viewColumns]);
 
-  // Convert field-name-based columns list to TanStack VisibilityState keyed by field ID
+  // Convert field-name-based columns list to TanStack VisibilityState keyed by field ID.
+  // On People/Companies we also force-hide the noisy system-table reverse
+  // columns (email_thread, email_message, calendar_event, interaction) even
+  // when the user has no saved view, so the table starts clean.
   const columnVisibility = useMemo(() => {
-    if (!viewColumns || viewColumns.length === 0) {return undefined;}
     const vis: Record<string, boolean> = {};
-    for (const field of data.fields) {
-      vis[field.id] = viewColumns.includes(field.name);
+    if (viewColumns && viewColumns.length > 0) {
+      for (const field of data.fields) {
+        vis[field.id] = viewColumns.includes(field.name);
+      }
+      vis["created_at"] = viewColumns.includes("created_at");
+      vis["updated_at"] = viewColumns.includes("updated_at");
     }
-    // Synthetic timestamp columns — keyed by their column ID, matched by name
-    vis["created_at"] = viewColumns.includes("created_at");
-    vis["updated_at"] = viewColumns.includes("updated_at");
-    return vis;
-  }, [viewColumns, data.fields]);
+    if (
+      HIDE_NOISY_REVERSE_FOR_OBJECT_NAMES.has(data.object.name) &&
+      data.reverseRelations
+    ) {
+      for (const rr of data.reverseRelations) {
+        if (NOISY_CRM_REVERSE_SOURCES.has(rr.sourceObjectName)) {
+          vis[`rev_${rr.sourceObjectName}_${rr.fieldName}`] = false;
+        }
+      }
+    }
+    return Object.keys(vis).length === 0 ? undefined : vis;
+  }, [viewColumns, data.fields, data.reverseRelations, data.object.name]);
 
   // Callback for column visibility changes from the DataTable.
   // Converts TanStack VisibilityState (field IDs) back to field-name-based viewColumns.
@@ -4232,13 +4356,38 @@ function ObjectView({
 
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
-      {/* Unified toolbar — title + count, view switcher, search, filter, views, settings, refresh, +Add */}
+      {/* Unified toolbar — title + count, view switcher, search, filter, views, settings, refresh, +Add.
+          Do NOT add `overflow-hidden` here: the title's `truncate` plus
+          `flex-shrink-0` on the right cluster already contain horizontal
+          overflow, and clipping this row would also clip every dropdown
+          anchored inside it (icon picker, views, filter, settings). */}
       <div
-        className="px-4 py-1.5 flex items-center gap-3 flex-shrink-0 min-w-0 overflow-hidden"
+        className="px-4 py-1.5 flex items-center gap-3 flex-shrink-0 min-w-0"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
-        {/* Left: title + count (shrinks first when space is tight) */}
-        <div className="flex items-center gap-2 min-w-0 flex-shrink">
+        {/* Left: icon picker + title + count (shrinks first when space is tight) */}
+        <div className="flex items-center gap-1.5 min-w-0 flex-shrink">
+          <IconPicker
+            value={data.object.icon ?? null}
+            onChange={async (next) => {
+              try {
+                const res = await fetch(
+                  `/api/workspace/objects/${encodeURIComponent(data.object.name)}/icon`,
+                  {
+                    method: "PATCH",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ icon: next }),
+                  },
+                );
+                if (!res.ok) return;
+              } catch {
+                return;
+              }
+              onRefreshObject();
+              onRefreshTree?.();
+            }}
+            title={`Change icon for ${displayObjectName(data.object.name)}`}
+          />
           <h1
             className="text-sm font-semibold truncate"
             style={{ color: "var(--color-text)" }}

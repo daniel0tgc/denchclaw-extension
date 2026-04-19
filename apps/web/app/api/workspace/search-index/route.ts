@@ -8,6 +8,7 @@ import {
   duckdbQueryOnFileAsync,
   isDatabaseFile,
   pivotViewIdentifier,
+  readObjectYamlIcon,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,6 @@ type ObjectRow = {
   id: string;
   name: string;
   description?: string;
-  icon?: string;
   default_view?: string;
   display_field?: string;
 };
@@ -137,7 +137,7 @@ function flattenTree(
           label: entry.name,
           sublabel: relPath,
           kind: "object",
-          icon: icon ?? dbObj?.icon,
+          icon,
           path: relPath,
           nodeType: undefined,
           defaultView: (dbObj?.default_view === "kanban" ? "kanban" : "table") as "table" | "kanban",
@@ -203,6 +203,8 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
     const previewFields = fields
       .filter((f) => !["relation", "richtext"].includes(f.type))
       .slice(0, 4);
+    // Icon comes from .object.yaml — DuckDB no longer stores it.
+    const objIcon = readObjectYamlIcon(obj.name);
 
     // Try PIVOT view first, then raw EAV (on the same DB).
     // Use pivotViewIdentifier so object names with hyphens (e.g. "ai-agent")
@@ -254,7 +256,7 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
         label: displayValue || `(${obj.name} entry)`,
         sublabel: obj.name,
         kind: "entry",
-        icon: obj.icon,
+        icon: objIcon,
         objectName: obj.name,
         entryId,
         fields: Object.keys(fieldPreview).length > 0 ? fieldPreview : undefined,

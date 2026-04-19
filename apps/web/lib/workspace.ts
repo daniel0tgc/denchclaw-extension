@@ -1523,6 +1523,21 @@ export function readObjectYaml(objectDir: string): ObjectYamlConfig | null {
 }
 
 /**
+ * Read just the `icon:` field from an object's .object.yaml. Returns undefined
+ * if the object directory is not found, the yaml is missing, or the file lacks
+ * an `icon:` key. This is the canonical way to look up an object's icon —
+ * `.object.yaml` is the single source of truth (the legacy DuckDB
+ * `objects.icon` column has been retired).
+ */
+export function readObjectYamlIcon(objectName: string): string | undefined {
+  const dir = findObjectDir(objectName);
+  if (!dir) {return undefined;}
+  const cfg = readObjectYaml(dir);
+  const icon = cfg?.icon;
+  return typeof icon === "string" && icon.trim() !== "" ? icon : undefined;
+}
+
+/**
  * Write a .object.yaml file, merging view config with existing top-level keys.
  */
 export function writeObjectYaml(objectDir: string, config: ObjectYamlConfig): void {

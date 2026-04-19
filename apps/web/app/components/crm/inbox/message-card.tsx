@@ -58,11 +58,24 @@ export function MessageCard({
         transition: "border-color 160ms ease-out, box-shadow 160ms ease-out",
       }}
     >
-      {/* Header row — always visible */}
-      <button
-        type="button"
+      {/* Header row — always visible. Rendered as a div+role="button"
+         instead of a real <button> because the expanded state shows
+         clickable To/Cc person chips inside this region, and nesting
+         buttons is invalid HTML (causes a hydration error in React 19
+         / Next 15). We keep keyboard parity with native button via
+         tabIndex + Enter/Space handling. */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
+        className="w-full flex items-start gap-3 px-4 py-3 text-left cursor-pointer transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       >
         <PersonAvatar
           src={sender?.avatar_url}
@@ -156,7 +169,7 @@ export function MessageCard({
             </p>
           )}
         </div>
-      </button>
+      </div>
 
       {/* Body — animates open via grid-rows trick (height-without-jank) */}
       <div

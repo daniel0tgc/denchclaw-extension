@@ -2,17 +2,10 @@
 
 import { type ChangeEvent, type RefObject, forwardRef } from "react";
 import { Input } from "../../ui/input";
-import type { SenderFilter } from "./types";
-
-const FILTERS: ReadonlyArray<{ id: SenderFilter; label: string; hint: string }> = [
-  { id: "person", label: "People", hint: "Real human-from-human mail" },
-  { id: "automated", label: "Automated", hint: "Newsletters, receipts, notifications" },
-  { id: "all", label: "All", hint: "Everything in your inbox" },
-];
 
 /**
- * Top-of-pane toolbar above the thread list. Search, sender filter
- * pills, and the bulk-select strip when one or more rows are checked.
+ * Top-of-pane toolbar above the thread list. Search and the
+ * bulk-select strip when one or more rows are checked.
  *
  * The bulk actions (Mark read / Star / Archive) are intentionally
  * mocked — they fire a toast pointing at the two-way Gmail sync
@@ -24,8 +17,6 @@ export const InboxToolbar = forwardRef<
   {
     search: string;
     onSearchChange: (value: string) => void;
-    senderFilter: SenderFilter;
-    onSenderFilterChange: (value: SenderFilter) => void;
     selectedCount: number;
     onClearSelection: () => void;
     onBulkAction: (action: "read" | "star" | "archive") => void;
@@ -35,8 +26,6 @@ export const InboxToolbar = forwardRef<
   {
     search,
     onSearchChange,
-    senderFilter,
-    onSenderFilterChange,
     selectedCount,
     onClearSelection,
     onBulkAction,
@@ -67,29 +56,6 @@ export const InboxToolbar = forwardRef<
         >
           <KbdIcon />
         </button>
-      </div>
-
-      {/* Filter pills */}
-      <div className="flex flex-wrap items-center gap-1 px-4 pb-2">
-        {FILTERS.map((f) => {
-          const active = senderFilter === f.id;
-          return (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => onSenderFilterChange(f.id)}
-              title={f.hint}
-              className="rounded-full px-3 py-1 text-[12px] font-medium transition-colors"
-              style={{
-                background: active ? "var(--color-text)" : "transparent",
-                color: active ? "var(--color-bg)" : "var(--color-text-muted)",
-                border: active ? "1px solid var(--color-text)" : "1px solid var(--color-border)",
-              }}
-            >
-              {f.label}
-            </button>
-          );
-        })}
       </div>
 
       {/* Bulk action strip — only when one or more rows are checked */}

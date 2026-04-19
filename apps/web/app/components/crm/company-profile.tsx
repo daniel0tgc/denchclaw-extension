@@ -6,8 +6,10 @@ import { CompanyFavicon } from "./company-favicon";
 import { PersonAvatar } from "./person-avatar";
 import { ConnectionStrengthChip } from "./connection-strength-chip";
 import { CrmEmptyState, CrmLoadingState } from "./crm-list-shell";
-import { formatAbsoluteDate, formatDayLabel, formatRelativeDate } from "./format-relative-date";
+import { formatDayLabel, formatRelativeDate } from "./format-relative-date";
 import { EnrichButton } from "./enrich-button";
+import { ProfileThreadList } from "./inbox/profile-thread-list";
+import { EventListItem } from "./event-list-item";
 
 // ---------------------------------------------------------------------------
 // API response shape (mirrors apps/web/app/api/crm/companies/[id]/route.ts)
@@ -47,6 +49,12 @@ type CompanyResponse = {
     last_message_at: string | null;
     message_count: number | null;
     gmail_thread_id: string | null;
+    snippet: string | null;
+    primary_sender_type: string | null;
+    primary_sender_id: string | null;
+    primary_sender_name: string | null;
+    primary_sender_email: string | null;
+    primary_sender_avatar_url: string | null;
   }>;
   events: Array<{
     id: string;
@@ -154,8 +162,8 @@ export function CompanyProfile({
         <div className="mx-auto w-full max-w-4xl px-6 py-6">
           {tab === "overview" && <OverviewTab data={data} />}
           {tab === "team" && <TeamTab data={data} onOpenPerson={onOpenPerson} />}
-          {tab === "emails" && <EmailsTab data={data} />}
-          {tab === "meetings" && <MeetingsTab data={data} />}
+          {tab === "emails" && <EmailsTab data={data} onOpenPerson={onOpenPerson} />}
+          {tab === "meetings" && <MeetingsTab data={data} onOpenPerson={onOpenPerson} />}
         </div>
       </div>
     </div>
@@ -350,53 +358,30 @@ function TeamTab({
   );
 }
 
-function EmailsTab({ data }: { data: CompanyResponse }) {
+function EmailsTab({
+  data,
+  onOpenPerson,
+}: {
+  data: CompanyResponse;
+  onOpenPerson?: (id: string) => void;
+}) {
   if (data.threads.length === 0) {
     return <CrmEmptyState title="No threads yet" />;
   }
-  return (
-    <ul className="divide-y" style={{ borderTop: "1px solid var(--color-border)", borderBottom: "1px solid var(--color-border)" }}>
-      {data.threads.map((thread) => {
-        const linkHref = thread.gmail_thread_id
-          ? `https://mail.google.com/mail/u/0/#all/${thread.gmail_thread_id}`
-          : undefined;
-        const Inner = (
-          <div className="flex items-start gap-4 px-4 py-3 hover:bg-[var(--color-surface-hover)]">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-medium" style={{ color: "var(--color-text)" }}>
-                {thread.subject?.trim() || "(no subject)"}
-              </p>
-              <p className="mt-0.5 text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-                {thread.message_count ?? 0}{" "}
-                {(thread.message_count ?? 0) === 1 ? "message" : "messages"}
-              </p>
-            </div>
-            <span className="text-right text-[12px] shrink-0" style={{ color: "var(--color-text-muted)" }}>
-              {thread.last_message_at && (
-                <span title={formatAbsoluteDate(thread.last_message_at)}>
-                  {formatRelativeDate(thread.last_message_at)}
-                </span>
-              )}
-            </span>
-          </div>
-        );
-        return (
-          <li key={thread.id}>
-            {linkHref ? (
-              <a href={linkHref} target="_blank" rel="noreferrer" className="block">
-                {Inner}
-              </a>
-            ) : (
-              Inner
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
+  // Same Inbox-style thread list + inline conversation reader as the
+  // Person profile uses.
+  return <ProfileThreadList threads={data.threads} onOpenPerson={onOpenPerson} />;
 }
 
-function MeetingsTab({ data }: { data: CompanyResponse }) {
+function MeetingsTab({
+  data,
+  onOpenPerson,
+}: {
+  data: CompanyResponse;
+  onOpenPerson?: (id: string) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (data.events.length === 0) {
     return <CrmEmptyState title="No meetings with this company yet" />;
   }
@@ -418,28 +403,15 @@ function MeetingsTab({ data }: { data: CompanyResponse }) {
           </h3>
           <ul className="space-y-2">
             {events.map((event) => (
-              <li
+              <EventListItem
                 key={event.id}
-                className="rounded-xl border px-4 py-3"
-                style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <p className="text-[14px] font-medium truncate" style={{ color: "var(--color-text)" }}>
-                    {event.title?.trim() || "(no title)"}
-                  </p>
-                  {event.meeting_type && (
-                    <span
-                      className="text-[11px] rounded-full px-2 py-0.5"
-                      style={{ background: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}
-                    >
-                      {event.meeting_type}
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-                  {event.start_at && formatAbsoluteDate(event.start_at)}
-                </p>
-              </li>
+                event={event}
+                expanded={expandedId === event.id}
+                onToggle={() =>
+                  setExpandedId((prev) => (prev === event.id ? null : event.id))
+                }
+                onOpenPerson={onOpenPerson}
+              />
             ))}
           </ul>
         </section>

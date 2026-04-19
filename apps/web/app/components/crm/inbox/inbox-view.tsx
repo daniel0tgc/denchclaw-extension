@@ -29,7 +29,6 @@ const DEFAULT_LIMIT = 100;
  *   - Server fetch (debounced on search)
  *   - Selection/star/read state via the localStorage hooks
  *   - Keyboard navigation (j/k/o/Enter/Esc/x/s/e/?/“/”)
- *   - Focus mode toggle (hides list pane)
  */
 export function InboxView({
   onOpenPerson,
@@ -49,10 +48,9 @@ export function InboxView({
       : "person";
 
   const [search, setSearch] = useState(initialSearch);
-  const [senderFilter, setSenderFilter] = useState<SenderFilter>(initialSender);
+  const [senderFilter] = useState<SenderFilter>(initialSender);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(initialThread);
   const [focusedIndex, setFocusedIndex] = useState<number>(0);
-  const [focusMode, setFocusMode] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -204,10 +202,6 @@ export function InboxView({
           setHelpOpen(false);
           return;
         }
-        if (focusMode) {
-          setFocusMode(false);
-          return;
-        }
         setSelectedThreadId(null);
       },
       focusSearch: () => {
@@ -243,7 +237,6 @@ export function InboxView({
     <>
       <InboxLayout
         hasSelection={!!selectedThread}
-        focusMode={focusMode}
         list={
           <div
             className="flex h-full min-h-0 flex-col"
@@ -253,8 +246,6 @@ export function InboxView({
               ref={searchInputRef}
               search={search}
               onSearchChange={setSearch}
-              senderFilter={senderFilter}
-              onSenderFilterChange={setSenderFilter}
               selectedCount={selection.set.size}
               onClearSelection={selection.clear}
               onBulkAction={handleBulkAction}
@@ -300,8 +291,6 @@ export function InboxView({
             }}
             onOpenPerson={onOpenPerson}
             onClose={handleClose}
-            onToggleFocus={() => setFocusMode((v) => !v)}
-            focusMode={focusMode}
           />
         }
       />

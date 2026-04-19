@@ -6,7 +6,7 @@ import { ThreadMessages } from "./thread-messages";
 import type { Thread } from "./types";
 
 /**
- * Right pane (or full-pane on mobile / focus-mode) of the Inbox.
+ * Right pane (or full-pane on mobile) of the Inbox.
  *
  * This is now a thin shell: sticky `ConversationHeader` on top, the
  * reusable `ThreadMessages` block in the scroller below. The actual
@@ -24,8 +24,6 @@ export function ConversationPane({
   onToggleStar,
   onOpenPerson,
   onClose,
-  onToggleFocus,
-  focusMode,
 }: {
   selectedThread: Thread | null;
   starred: boolean;
@@ -33,8 +31,6 @@ export function ConversationPane({
   onOpenPerson?: (id: string) => void;
   /** Single-pane drilldown back-to-list. */
   onClose?: () => void;
-  onToggleFocus?: () => void;
-  focusMode?: boolean;
 }) {
   const handleClose = useCallback(() => {
     onClose?.();
@@ -93,8 +89,6 @@ export function ConversationPane({
         starred={starred}
         onToggleStar={onToggleStar}
         onOpenPerson={onOpenPerson}
-        onToggleFocus={onToggleFocus}
-        focusMode={focusMode}
         onClose={handleClose}
       />
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">

@@ -3,6 +3,8 @@ import {
 } from "@/lib/workspace-schema-migrations";
 import {
   buildEntryProjection,
+  buildLatestMessagePerThreadCte,
+  hydratePeopleByIds,
   loadCrmFieldMaps,
   safeQuery,
   sqlString,
@@ -93,12 +95,24 @@ export async function GET(
         { name: "Avatar URL", alias: "avatar_url" },
       ],
     });
+    // Defense-in-depth dedupe: even with `mergeDuplicatePeople` running on
+    // every sync, brand-new duplicates could appear briefly between an
+    // incremental Gmail/Calendar write and the next merge tick. Picking
+    // DISTINCT ON the lowercased email keeps the Team tab clean. Rows
+    // without an email get their own bucket via COALESCE(entry_id) so we
+    // don't accidentally collapse two anonymous people into one.
     const sql = `
-      SELECT * FROM (${peopleProjection}) sub
-      WHERE LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) = '${safeDomain}'
-         OR LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) LIKE '%.${safeDomain}'
-      ORDER BY TRY_CAST(sub.strength_score AS DOUBLE) DESC NULLS LAST,
-               sub.last_interaction_at DESC NULLS LAST
+      SELECT * FROM (
+        SELECT DISTINCT ON (COALESCE(LOWER(TRIM(sub.email)), sub.entry_id)) sub.*
+        FROM (${peopleProjection}) sub
+        WHERE LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) = '${safeDomain}'
+           OR LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) LIKE '%.${safeDomain}'
+        ORDER BY COALESCE(LOWER(TRIM(sub.email)), sub.entry_id),
+                 TRY_CAST(sub.strength_score AS DOUBLE) DESC NULLS LAST,
+                 sub.last_interaction_at DESC NULLS LAST
+      ) deduped
+      ORDER BY TRY_CAST(deduped.strength_score AS DOUBLE) DESC NULLS LAST,
+               deduped.last_interaction_at DESC NULLS LAST
       LIMIT 100;
     `;
     const peopleRows = await safeQuery<PersonRow>(sql);
@@ -120,6 +134,8 @@ export async function GET(
   }
 
   // ─── 3. Email threads where Company is in Companies relation ─────────
+  // Returns the same enriched Thread shape as Person profile + Inbox, so
+  // ProfileThreadList can render the inline conversation reader.
   const threadCompaniesFieldId = fieldMaps.email_thread["Companies"];
   let threads: Array<{
     id: string;
@@ -127,6 +143,12 @@ export async function GET(
     last_message_at: string | null;
     message_count: number | null;
     gmail_thread_id: string | null;
+    snippet: string | null;
+    primary_sender_type: string | null;
+    primary_sender_id: string | null;
+    primary_sender_name: string | null;
+    primary_sender_email: string | null;
+    primary_sender_avatar_url: string | null;
   }> = [];
   if (threadCompaniesFieldId) {
     const threadProjection = buildEntryProjection({
@@ -139,26 +161,68 @@ export async function GET(
         { name: "Gmail Thread ID", alias: "gmail_thread_id" },
       ],
     });
-    const safeId = company.id.replace(/"/g, '""').replace(/'/g, "''");
+    const safeCompanyForLike = company.id
+      .replace(/"/g, '""')
+      .replace(/'/g, "''");
+    const safeCompaniesFieldId = threadCompaniesFieldId.replace(/'/g, "''");
+    const candidateThreadsCte = `candidate_threads`;
+    const latestMsg = buildLatestMessagePerThreadCte({
+      emailMessageFieldMap: fieldMaps.email_message,
+      candidateThreadIdsCte: candidateThreadsCte,
+    });
     const sql = `
-      SELECT * FROM (${threadProjection}) sub
-      WHERE EXISTS (
-        SELECT 1 FROM entry_fields c
-        WHERE c.entry_id = sub.entry_id
-          AND c.field_id = '${threadCompaniesFieldId.replace(/'/g, "''")}'
-          AND c.value LIKE '%"${safeId}"%'
-      )
-      ORDER BY last_message_at DESC NULLS LAST
-      LIMIT 50;
+      WITH base AS (${threadProjection}),
+      ${candidateThreadsCte} AS (
+        SELECT entry_id FROM base
+        WHERE EXISTS (
+          SELECT 1 FROM entry_fields c
+          WHERE c.entry_id = base.entry_id
+            AND c.field_id = '${safeCompaniesFieldId}'
+            AND c.value LIKE '%"${safeCompanyForLike}"%'
+        )
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT 50
+      )${latestMsg ? `, ${latestMsg.cte}` : ""}
+      SELECT
+        base.*${latestMsg ? `,
+        latest_msg.sender_type AS sender_type,
+        latest_msg.snippet AS snippet,
+        latest_msg.from_person_id AS from_person_id` : `,
+        NULL AS sender_type, NULL AS snippet, NULL AS from_person_id`}
+      FROM base
+      ${latestMsg ? latestMsg.joinClause : ""}
+      WHERE base.entry_id IN (SELECT entry_id FROM ${candidateThreadsCte})
+      ORDER BY base.last_message_at DESC NULLS LAST;
     `;
     const rows = await safeQuery<Record<string, string | null>>(sql);
-    threads = rows.map((row) => ({
-      id: String(row.entry_id),
-      subject: row.subject,
-      last_message_at: row.last_message_at,
-      message_count: row.message_count ? Number(row.message_count) : null,
-      gmail_thread_id: row.gmail_thread_id,
-    }));
+
+    // Hydrate the From-of-latest-message senders for the row chrome.
+    const senderIds = new Set<string>();
+    for (const row of rows) {
+      if (row.from_person_id) {senderIds.add(row.from_person_id);}
+    }
+    const senderMap = await hydratePeopleByIds(
+      Array.from(senderIds),
+      fieldMaps.people,
+    );
+
+    threads = rows.map((row) => {
+      const senderId = row.from_person_id ?? null;
+      const sender = senderId ? senderMap.get(senderId) ?? null : null;
+      return {
+        id: String(row.entry_id),
+        subject: row.subject,
+        last_message_at: row.last_message_at,
+        message_count: row.message_count ? Number(row.message_count) : null,
+        gmail_thread_id: row.gmail_thread_id,
+        snippet: row.snippet,
+        primary_sender_type: row.sender_type,
+        primary_sender_id: senderId,
+        primary_sender_name: sender?.name ?? null,
+        primary_sender_email: sender?.email ?? null,
+        primary_sender_avatar_url: sender?.avatar_url ?? null,
+      };
+    });
   }
 
   // ─── 4. Calendar events where Company is in Companies relation ───────

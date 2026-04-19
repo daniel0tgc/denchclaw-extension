@@ -3,6 +3,8 @@ import {
 } from "@/lib/workspace-schema-migrations";
 import {
   buildEntryProjection,
+  buildLatestMessagePerThreadCte,
+  hydratePeopleByIds,
   jsonArrayContains,
   loadCrmFieldMaps,
   safeQuery,
@@ -52,6 +54,15 @@ type ThreadSummary = {
   last_message_at: string | null;
   message_count: number | null;
   gmail_thread_id: string | null;
+  /** Snippet from the latest message — powers the row's preview text. */
+  snippet: string | null;
+  /** Sender Type of the latest message; null/Person → no chip in the UI. */
+  primary_sender_type: string | null;
+  /** Headline sender of the latest message — name + email + avatar. */
+  primary_sender_id: string | null;
+  primary_sender_name: string | null;
+  primary_sender_email: string | null;
+  primary_sender_avatar_url: string | null;
 };
 
 type EventSummary = {
@@ -157,6 +168,7 @@ export async function GET(
       `MAX(CASE WHEN ef.field_id = '${participantsFieldId.replace(/'/g, "''")}' THEN ef.value END)`,
       person.id,
     );
+    void containsExpr;
     const threadProjection = buildEntryProjection({
       objectId: ONBOARDING_OBJECT_IDS.email_thread,
       fieldMap: fieldMaps.email_thread,
@@ -167,26 +179,70 @@ export async function GET(
         { name: "Gmail Thread ID", alias: "gmail_thread_id" },
       ],
     });
+    const safePersonForLike = person.id.replace(/"/g, '""').replace(/'/g, "''");
+    const safeParticipantsFieldId = participantsFieldId.replace(/'/g, "''");
+    // Pre-filter the latest-message aggregate to threads this person
+    // participates in — same windowed-aggregate trick as Inbox so the
+    // join only scans messages we actually care about.
+    const candidateThreadsCte = `candidate_threads`;
+    const latestMsg = buildLatestMessagePerThreadCte({
+      emailMessageFieldMap: fieldMaps.email_message,
+      candidateThreadIdsCte: candidateThreadsCte,
+    });
     const threadSql = `
-      SELECT * FROM (${threadProjection}) sub
-      WHERE EXISTS (
-        SELECT 1 FROM entry_fields p
-        WHERE p.entry_id = sub.entry_id
-          AND p.field_id = '${participantsFieldId.replace(/'/g, "''")}'
-          AND p.value LIKE '%"${person.id.replace(/"/g, '""').replace(/'/g, "''")}"%'
-      )
-      ORDER BY last_message_at DESC NULLS LAST
-      LIMIT 50;
+      WITH base AS (${threadProjection}),
+      ${candidateThreadsCte} AS (
+        SELECT entry_id FROM base
+        WHERE EXISTS (
+          SELECT 1 FROM entry_fields p
+          WHERE p.entry_id = base.entry_id
+            AND p.field_id = '${safeParticipantsFieldId}'
+            AND p.value LIKE '%"${safePersonForLike}"%'
+        )
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT 50
+      )${latestMsg ? `, ${latestMsg.cte}` : ""}
+      SELECT
+        base.*${latestMsg ? `,
+        latest_msg.sender_type AS sender_type,
+        latest_msg.snippet AS snippet,
+        latest_msg.from_person_id AS from_person_id` : `,
+        NULL AS sender_type, NULL AS snippet, NULL AS from_person_id`}
+      FROM base
+      ${latestMsg ? latestMsg.joinClause : ""}
+      WHERE base.entry_id IN (SELECT entry_id FROM ${candidateThreadsCte})
+      ORDER BY base.last_message_at DESC NULLS LAST;
     `;
-    void containsExpr;
     const threadRows = await safeQuery<Record<string, string | null>>(threadSql);
-    threads = threadRows.map((row) => ({
-      id: String(row.entry_id),
-      subject: row.subject,
-      last_message_at: row.last_message_at,
-      message_count: row.message_count ? Number(row.message_count) : null,
-      gmail_thread_id: row.gmail_thread_id,
-    }));
+
+    // Hydrate the From-of-latest-message senders so each row can show
+    // "Sarah Chen" + avatar without a per-row fetch.
+    const senderIds = new Set<string>();
+    for (const row of threadRows) {
+      if (row.from_person_id) {senderIds.add(row.from_person_id);}
+    }
+    const senderMap = await hydratePeopleByIds(
+      Array.from(senderIds),
+      fieldMaps.people,
+    );
+
+    threads = threadRows.map((row) => {
+      const senderId = row.from_person_id ?? null;
+      const sender = senderId ? senderMap.get(senderId) ?? null : null;
+      return {
+        id: String(row.entry_id),
+        subject: row.subject,
+        last_message_at: row.last_message_at,
+        message_count: row.message_count ? Number(row.message_count) : null,
+        gmail_thread_id: row.gmail_thread_id,
+        snippet: row.snippet,
+        primary_sender_type: row.sender_type,
+        primary_sender_id: senderId,
+        primary_sender_name: sender?.name ?? null,
+        primary_sender_email: sender?.email ?? null,
+        primary_sender_avatar_url: sender?.avatar_url ?? null,
+      };
+    });
   }
 
   // ─── 4. Calendar events where person is in Attendees ──────────────────

@@ -36,6 +36,7 @@ import { EntryDetailPanel } from "../components/workspace/entry-detail-panel";
 import { useSearchIndex } from "@/lib/search-index";
 import { parseWorkspaceLink, isWorkspaceLink, parseUrlState, buildUrl, buildWorkspaceSyncParams, type WorkspaceUrlState } from "@/lib/workspace-links";
 import { isCodeFile } from "@/lib/report-utils";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { CronDashboard } from "../components/cron/cron-dashboard";
 import { SkillStorePanel } from "../components/skill-store/skill-store-panel";
 import { IntegrationsPanel } from "../components/integrations/integrations-panel";
@@ -54,7 +55,7 @@ import {
 } from "@/lib/object-filters";
 import { UnicodeSpinner } from "../components/unicode-spinner";
 import { ToastProvider } from "../components/workspace/toast";
-import { ChatSessionsSidebar, type SidebarGatewaySession, type SidebarChannelStatus } from "../components/workspace/chat-sessions-sidebar";
+import { ChatSessionsSidebar, type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
 import { RightPanel } from "../components/workspace/right-panel";
 import {
   DropdownMenu,
@@ -229,13 +230,24 @@ type WebSession = {
   filePath?: string;
 };
 
-const LEFT_SIDEBAR_MIN = 200;
+// Left sidebar has two visual modes driven by width:
+// - compact (icon-only) at LEFT_SIDEBAR_COMPACT_WIDTH
+// - full (labels, chat list, CRM nav) at >= LEFT_SIDEBAR_FULL_MIN
+// Dragging the resize handle below LEFT_SIDEBAR_COMPACT_THRESHOLD snaps to compact;
+// dragging into the [threshold, full min) gap snaps to full min.
+const LEFT_SIDEBAR_COMPACT_WIDTH = 56;
+const LEFT_SIDEBAR_COMPACT_THRESHOLD = 140;
+const LEFT_SIDEBAR_FULL_MIN = 200;
+const LEFT_SIDEBAR_FULL_DEFAULT = 260;
+const LEFT_SIDEBAR_MIN = LEFT_SIDEBAR_COMPACT_WIDTH;
 const LEFT_SIDEBAR_MAX = 480;
 const RIGHT_PANEL_MIN = 360;
 const RIGHT_PANEL_MAX = 2000;
 const STORAGE_LEFT = "dench-workspace-left-sidebar-width";
 const STORAGE_RIGHT_PANEL = "dench-workspace-right-panel-width";
 const STORAGE_RIGHT_PANEL_COLLAPSED = "dench-workspace-right-panel-collapsed";
+const STORAGE_FILE_TREE_COLLAPSED = "dench-workspace-file-tree-collapsed";
+const FILE_TREE_WIDTH = 240;
 
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
@@ -299,6 +311,138 @@ function ResizeHandle({
 }
 
 /**
+ * Small icon for a content tab in the unified right-panel tab strip. Picks an
+ * SVG by inspecting the tab's path/type so file tabs and CRM/page tabs render
+ * with a recognisable prefix even though they share the same strip.
+ */
+function TabIcon({ tab }: { tab: Tab }) {
+  const path = tab.path ?? "";
+  type IconKind =
+    | "people" | "company" | "inbox" | "calendar"
+    | "cloud" | "skills" | "integrations" | "cron"
+    | "app" | "object" | "folder" | "file";
+  const kind: IconKind = (() => {
+    if (path === "~crm/people") return "people";
+    if (path === "~crm/companies") return "company";
+    if (path === "~crm/inbox") return "inbox";
+    if (path === "~crm/calendar") return "calendar";
+    if (path.startsWith("~cloud")) return "cloud";
+    if (path.startsWith("~skills")) return "skills";
+    if (path.startsWith("~integrations")) return "integrations";
+    if (path.startsWith("~cron")) return "cron";
+    if (tab.type === "app" || path.includes(".dench.app")) return "app";
+    if (tab.type === "object") return "object";
+    if (tab.type === "file" && (!path || !path.includes("."))) return "folder";
+    return "file";
+  })();
+
+  const common = {
+    width: 12,
+    height: 12,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (kind) {
+    case "people":
+      return (
+        <svg {...common}>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    case "company":
+      return (
+        <svg {...common}>
+          <path d="M3 21h18" />
+          <path d="M5 21V7l8-4v18" />
+          <path d="M19 21V11l-6-4" />
+        </svg>
+      );
+    case "inbox":
+      return (
+        <svg {...common}>
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...common}>
+          <rect width="18" height="18" x="3" y="4" rx="2" />
+          <path d="M16 2v4" />
+          <path d="M8 2v4" />
+          <path d="M3 10h18" />
+        </svg>
+      );
+    case "cloud":
+      return (
+        <svg {...common}>
+          <path d="M17.5 19a4.5 4.5 0 1 0-1.97-8.55A6 6 0 1 0 6 18h11.5Z" />
+        </svg>
+      );
+    case "skills":
+      return (
+        <svg {...common}>
+          <path d="m12 3 1.9 5.84H20l-4.95 3.6L16.95 18 12 14.4 7.05 18l1.9-5.56L4 8.84h6.1Z" />
+        </svg>
+      );
+    case "integrations":
+      return (
+        <svg {...common}>
+          <rect width="7" height="7" x="3" y="3" rx="1" />
+          <rect width="7" height="7" x="14" y="3" rx="1" />
+          <rect width="7" height="7" x="14" y="14" rx="1" />
+          <rect width="7" height="7" x="3" y="14" rx="1" />
+        </svg>
+      );
+    case "cron":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      );
+    case "app":
+      return (
+        <svg {...common}>
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M9 9h6v6H9z" />
+        </svg>
+      );
+    case "object":
+      return (
+        <svg {...common}>
+          <path d="M3 3h18v4H3z" />
+          <path d="M3 11h18v4H3z" />
+          <path d="M3 19h18v2H3z" />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...common}>
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+        </svg>
+      );
+    case "file":
+    default:
+      return (
+        <svg {...common}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      );
+  }
+}
+
+/**
  * v3 invariant: at least one chat tab must exist so the center never goes blank.
  * Wrap any setTabState that could remove the last chat tab with this helper.
  */
@@ -329,6 +473,38 @@ function findNode(
 function objectNameFromPath(path: string): string {
   const segments = path.split("/");
   return segments[segments.length - 1];
+}
+
+/**
+ * Walk the workspace tree and collect every object node that should appear in
+ * the sidebar's CRM section. Excludes `people` / `company` / `companies` since
+ * those already have dedicated rows in the hard-coded CRM nav. Hidden CRM-only
+ * objects (`email_thread` / `email_message` / `calendar_event` / `interaction`)
+ * are filtered out upstream by the tree API and never appear here.
+ */
+const CRM_NAV_EXCLUDED_OBJECT_NAMES: ReadonlySet<string> = new Set([
+  "people",
+  "company",
+  "companies",
+]);
+
+function collectCrmObjectNodes(
+  tree: TreeNode[],
+): Array<{ name: string; icon?: string; defaultView?: "table" | "kanban" }> {
+  const out: Array<{ name: string; icon?: string; defaultView?: "table" | "kanban" }> = [];
+  function walk(nodes: TreeNode[]) {
+    for (const node of nodes) {
+      if (node.type === "object") {
+        const name = objectNameFromPath(node.path);
+        if (!CRM_NAV_EXCLUDED_OBJECT_NAMES.has(name)) {
+          out.push({ name, icon: node.icon, defaultView: node.defaultView });
+        }
+      }
+      if (node.children) {walk(node.children);}
+    }
+  }
+  walk(tree);
+  return out.toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Infer a tree node type from filename extension for ad-hoc path previews. */
@@ -479,12 +655,10 @@ function WorkspacePageInner() {
 
   // Gateway channel sessions
   const [gatewaySessions, setGatewaySessions] = useState<SidebarGatewaySession[]>([]);
-  const [channelStatuses, setChannelStatuses] = useState<SidebarChannelStatus[]>([]);
   const [activeGatewaySessionKey, setActiveGatewaySessionKey] = useState<string | null>(null);
 
   // Cron jobs state
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
-  const [heartbeatInfo, setHeartbeatInfo] = useState<{ intervalMs: number; nextDueEstimateMs: number | null } | null>(null);
 
   // Cron URL-backed view state
   const [cronView, setCronView] = useState<import("@/lib/workspace-links").CronDashboardView>("overview");
@@ -506,6 +680,10 @@ function WorkspacePageInner() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [mobileRightPanelOpen, setMobileRightPanelOpen] = useState(false);
+  // File tree (right panel's left column) is now always available, independently
+  // togglable from the right-panel collapse so users can hide it on CRM/page tabs
+  // when they want more horizontal space. Persisted in localStorage.
+  const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
 
   // v3: independent active tab ids per surface.
   // - activeChatTabId: which chat tab is visible in the center (always a chat or gateway-chat tab).
@@ -760,10 +938,14 @@ function WorkspacePageInner() {
   }, [activeSubagentKey, openSessionChatTab, subagents]);
 
   const openTabForNode = useCallback((node: { path: string; name: string; type: string }) => {
+    const isObject = node.type === "object";
+    const title = isObject
+      ? displayObjectName(node.name)
+      : inferTabTitle(node.path, node.name);
     const tab: Tab = {
       id: generateTabId(),
-      type: node.type === "object" ? "object" : inferTabType(node.path),
-      title: inferTabTitle(node.path, node.name),
+      type: isObject ? "object" : inferTabType(node.path),
+      title,
       path: node.path,
     };
     setTabState((prev) => openTab(prev, tab, { preview: true }));
@@ -771,13 +953,19 @@ function WorkspacePageInner() {
 
   // Resizable sidebar widths (desktop only; persisted in localStorage).
   // Use static defaults so server and client match on first render (avoid hydration mismatch).
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState(260);
+  // New default is compact (icon-only); user can drag to expand into full mode.
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(LEFT_SIDEBAR_COMPACT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(520);
   useEffect(() => {
     const left = window.localStorage.getItem(STORAGE_LEFT);
     const nLeft = left ? parseInt(left, 10) : NaN;
     if (Number.isFinite(nLeft)) {
-      setLeftSidebarWidth(clamp(nLeft, LEFT_SIDEBAR_MIN, LEFT_SIDEBAR_MAX));
+      // Snap loaded width into a valid mode (compact or full range).
+      const snapped =
+        nLeft < LEFT_SIDEBAR_COMPACT_THRESHOLD
+          ? LEFT_SIDEBAR_COMPACT_WIDTH
+          : clamp(nLeft, LEFT_SIDEBAR_FULL_MIN, LEFT_SIDEBAR_MAX);
+      setLeftSidebarWidth(snapped);
     }
     const right = window.localStorage.getItem(STORAGE_RIGHT_PANEL);
     const nRight = right ? parseInt(right, 10) : NaN;
@@ -788,6 +976,32 @@ function WorkspacePageInner() {
     if (collapsed === "1") {
       setRightPanelCollapsed(true);
     }
+    const treeCollapsed = window.localStorage.getItem(STORAGE_FILE_TREE_COLLAPSED);
+    if (treeCollapsed === "1") {
+      setFileTreeCollapsed(true);
+    }
+  }, []);
+
+  // Whether the left sidebar is in compact (icon-only) mode.
+  const isLeftSidebarCompact = leftSidebarWidth < LEFT_SIDEBAR_FULL_MIN;
+
+  // Snap-aware resize handler: dragging below the compact threshold snaps to icon mode;
+  // dragging into the gap between threshold and full min snaps to full min.
+  const handleLeftSidebarResize = useCallback((w: number) => {
+    if (w < LEFT_SIDEBAR_COMPACT_THRESHOLD) {
+      setLeftSidebarWidth(LEFT_SIDEBAR_COMPACT_WIDTH);
+    } else if (w < LEFT_SIDEBAR_FULL_MIN) {
+      setLeftSidebarWidth(LEFT_SIDEBAR_FULL_MIN);
+    } else {
+      setLeftSidebarWidth(clamp(w, LEFT_SIDEBAR_FULL_MIN, LEFT_SIDEBAR_MAX));
+    }
+  }, []);
+
+  // Toggle handler for keyboard shortcut and the sidebar's expand/collapse button.
+  const toggleLeftSidebarCompact = useCallback(() => {
+    setLeftSidebarWidth((current) =>
+      current < LEFT_SIDEBAR_FULL_MIN ? LEFT_SIDEBAR_FULL_DEFAULT : LEFT_SIDEBAR_COMPACT_WIDTH,
+    );
   }, []);
   useEffect(() => {
     window.localStorage.setItem(STORAGE_LEFT, String(leftSidebarWidth));
@@ -798,6 +1012,9 @@ function WorkspacePageInner() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_RIGHT_PANEL_COLLAPSED, rightPanelCollapsed ? "1" : "0");
   }, [rightPanelCollapsed]);
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_FILE_TREE_COLLAPSED, fileTreeCollapsed ? "1" : "0");
+  }, [fileTreeCollapsed]);
 
   // Keyboard shortcuts: Cmd+B = toggle left sidebar, Cmd+Shift+B = toggle right sidebar, Cmd+J = toggle terminal
   useEffect(() => {
@@ -812,6 +1029,12 @@ function WorkspacePageInner() {
         } else {
           setLeftSidebarCollapsed((v) => !v);
         }
+        return;
+      }
+
+      if (mod && key === "e" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setFileTreeCollapsed((v) => !v);
         return;
       }
 
@@ -888,8 +1111,6 @@ function WorkspacePageInner() {
   }, [refreshContext]);
 
   // Fetch chat sessions
-  const [fileScopedSessions, setFileScopedSessions] = useState<WebSession[]>([]);
-
   const fetchSessions = useCallback(async () => {
     setSessionsLoading(true);
     try {
@@ -897,7 +1118,6 @@ function WorkspacePageInner() {
       const data = await res.json();
       const all: Array<WebSession & { filePath?: string }> = data.sessions ?? [];
       setSessions(all.filter((s) => !s.filePath));
-      setFileScopedSessions(all.filter((s) => !!s.filePath));
     } catch {
       // ignore
     } finally {
@@ -932,21 +1152,11 @@ function WorkspacePageInner() {
     } catch { /* ignore */ }
   }, []);
 
-  const fetchChannelStatuses = useCallback(async () => {
-    try {
-      const res = await fetch("/api/gateway/channels");
-      const data = await res.json();
-      setChannelStatuses(data.channels ?? []);
-    } catch { /* ignore */ }
-  }, []);
-
   useEffect(() => {
     void fetchGatewaySessions();
-    void fetchChannelStatuses();
     const gwInterval = setInterval(fetchGatewaySessions, 10_000);
-    const chInterval = setInterval(fetchChannelStatuses, 30_000);
-    return () => { clearInterval(gwInterval); clearInterval(chInterval); };
-  }, [fetchGatewaySessions, fetchChannelStatuses]);
+    return () => { clearInterval(gwInterval); };
+  }, [fetchGatewaySessions]);
 
   const handleWorkspaceChanged = useCallback(() => {
     resetWorkspaceStateOnSwitch({
@@ -1067,7 +1277,6 @@ function WorkspacePageInner() {
       const res = await fetch("/api/cron/jobs");
       const data: CronJobsResponse = await res.json();
       setCronJobs(data.jobs ?? []);
-      if (data.heartbeat) setHeartbeatInfo(data.heartbeat);
     } catch {
       // ignore - cron might not be configured
     }
@@ -2051,6 +2260,16 @@ function WorkspacePageInner() {
     sendMessageInChatTab(tab.id, sendParam);
   }, [openBlankChatTab, searchParams, router, sendMessageInChatTab]);
 
+  const formatBreadcrumbSegment = useCallback(
+    (segment: string, partialPath: string) => {
+      if (isAbsolutePath(partialPath)) return segment;
+      const node = resolveNode(tree, partialPath);
+      if (node?.type === "object") return displayObjectName(segment);
+      return segment;
+    },
+    [tree],
+  );
+
   const handleBreadcrumbNavigate = useCallback(
     (path: string) => {
       if (!path) {
@@ -2330,39 +2549,14 @@ function WorkspacePageInner() {
 
   // v3 three-column layout derived values.
   // - Center always renders the chat panel stack (one session at a time in the center).
-  // - Right panel renders content tabs (files, CRM, cloud, etc.); when no content tab is
-  //   active it shows the Files home view (the file tree).
+  // - Right panel renders content tabs (files, CRM, cloud, etc.) in a single unified
+  //   tab strip alongside the always-available Files sidebar. When no content tab is
+  //   active the content area shows a placeholder while the file tree (if expanded)
+  //   lets the user pick something.
   const contentTabs = useMemo(
     () => tabState.tabs.filter((tab) => tab.id !== HOME_TAB_ID && tab.type !== "chat" && tab.type !== "gateway-chat"),
     [tabState.tabs],
   );
-
-  // Split the right-panel content tabs between:
-  // - fileContentTabs: workspace files (opened inside the Files surface as sub-tabs above the viewer)
-  // - pageContentTabs: full-width pages (CRM views, cloud settings, cron, etc.) shown in the outer pill strip
-  const isPageTabPath = (path?: string): boolean => !!path && path.startsWith("~");
-  const fileContentTabs = useMemo(
-    () => contentTabs.filter((tab) => !isPageTabPath(tab.path)),
-    [contentTabs],
-  );
-  const pageContentTabs = useMemo(
-    () => contentTabs.filter((tab) => isPageTabPath(tab.path)),
-    [contentTabs],
-  );
-
-  // The right panel runs in one of two modes:
-  // - File surface: file tree on the left, preview/editor on the right (Files tab or any
-  //   content tab pointing at a filesystem item).
-  // - Full surface: tab content takes the entire right panel (CRM pages, cloud settings,
-  //   cron dashboards, object tables, etc.).
-  const FILE_SURFACE_CONTENT_KINDS = useMemo(() => new Set<ContentState["kind"]>([
-    "none", "loading", "file", "document", "code", "media", "spreadsheet",
-    "html", "database", "report", "directory", "richDocument", "app", "duckdb-missing",
-  ]), []);
-  // Drive the split purely off content.kind so switching into CRM/cloud/cron tabs
-  // immediately hides the file tree, even during the transient moment before the
-  // activeContentTabId tracker settles.
-  const isFileSurface = FILE_SURFACE_CONTENT_KINDS.has(content.kind);
 
   // Track the last-focused tab per surface so switching between chat and content tabs
   // preserves each surface's selection independently (user requirement: "chat doesn't split").
@@ -2379,11 +2573,33 @@ function WorkspacePageInner() {
   }, [tabState.activeTabId, tabState.tabs]);
 
   // Clear stale active-content-tab-id if the content tab was closed externally.
+  // Also reset activePath/content so the right panel falls back to the placeholder
+  // instead of continuing to show the closed tab's content (this mirrors what the
+  // old outer "Files" pill click did, which no longer exists in the unified layout).
+  //
+  // IMPORTANT: when openTab() REPLACES a preview tab with another preview tab
+  // (e.g. clicking Integrations while a markdown file preview is active), the old
+  // tab id disappears from contentTabs but the new one is already the active tab.
+  // We must NOT wipe activePath/content in that case — the trackTab effect above
+  // will re-point activeContentTabId to the new tab on the next tick. Only clear
+  // when the current activeTabId is NOT itself a content tab (i.e. the user
+  // really did close the active content tab and focus moved to home/chat).
   useEffect(() => {
     if (activeContentTabId && !contentTabs.some((t) => t.id === activeContentTabId)) {
+      const activeTabIsContent = contentTabs.some((t) => t.id === tabState.activeTabId);
+      if (activeTabIsContent) {
+        // The new active tab is itself a content tab (e.g. preview-replaced via openTab).
+        // The trackTab effect will sync activeContentTabId on the next tick — don't clobber
+        // activePath/content that handleNavigate / loadContent / applyActivatedTab just set.
+        return;
+      }
       setActiveContentTabId(null);
+      setActivePath(null);
+      setContent({ kind: "none" });
     }
-  }, [activeContentTabId, contentTabs]);
+  }, [activeContentTabId, contentTabs, tabState.activeTabId]);
+
+
 
   // v3: the center always shows a chat panel. If no chat tab exists (e.g. after
   // closing the last one, on a fresh refresh, or before tab hydration completes),
@@ -2421,6 +2637,10 @@ function WorkspacePageInner() {
     setTabState((prev) => closeTab(prev, tabId));
   }, []);
 
+  // Custom CRM tables surfaced in the sidebar's CRM section. Derived from the
+  // already-watched workspace tree so adds/renames/deletes propagate live via SSE.
+  const customCrmObjects = useMemo(() => collectCrmObjectNodes(enhancedTree), [enhancedTree]);
+
   const sidebarCommonProps = {
     activePath: null,
     orgName: context?.organization?.name,
@@ -2442,10 +2662,7 @@ function WorkspacePageInner() {
     onDeleteChatSession: handleDeleteSession,
     onRenameChatSession: handleRenameSession,
     chatGatewaySessions: gatewaySessions,
-    chatChannelStatuses: channelStatuses,
     chatActiveGatewaySessionKey: activeGatewaySessionKey,
-    chatFileScopedSessions: fileScopedSessions,
-    chatHeartbeatInfo: heartbeatInfo,
     activeCrmTarget: (
       content.kind === "crm-people" || content.kind === "crm-person"
         ? "people" as const
@@ -2457,6 +2674,9 @@ function WorkspacePageInner() {
               ? "calendar" as const
               : null
     ),
+    customCrmObjects,
+    activeCrmObjectName: content.kind === "object" ? content.data.object.name : null,
+    onNavigateToCrmObject: handleNavigateToObject,
   };
 
   return (
@@ -2516,7 +2736,7 @@ function WorkspacePageInner() {
               containerRef={layoutRef}
               min={LEFT_SIDEBAR_MIN}
               max={LEFT_SIDEBAR_MAX}
-              onResize={setLeftSidebarWidth}
+              onResize={handleLeftSidebarResize}
             />
             <WorkspaceSidebar
               {...sidebarCommonProps}
@@ -2531,6 +2751,8 @@ function WorkspacePageInner() {
               showHidden={showHidden}
               onToggleHidden={() => setShowHidden((v) => !v)}
               width={leftSidebarWidth}
+              compact={isLeftSidebarCompact}
+              onToggleCompact={toggleLeftSidebarCompact}
               onCollapse={() => setLeftSidebarCollapsed(true)}
               onSelectChatSession={(sessionId) => {
                 const session = sessions.find((entry) => entry.id === sessionId);
@@ -2728,53 +2950,33 @@ function WorkspacePageInner() {
               max={RIGHT_PANEL_MAX}
               onResize={setRightPanelWidth}
             />
-            <RightPanel
-              tabs={pageContentTabs}
-              activeTabId={activeContentTabId}
-              onActivate={handleContentTabActivate}
-              onClose={handleContentTabClose}
-              onCloseOthers={handleTabCloseOthers}
-              onCloseToRight={handleTabCloseToRight}
-              onCloseAll={handleTabCloseAll}
-              onReorder={handleTabReorder}
-              onTogglePin={handleTabTogglePin}
-              onMakePermanent={promoteTabById}
-              onCollapse={() => setRightPanelCollapsed(true)}
-              filesTabActive={activeContentTabId === null}
-              onActivateFilesTab={() => {
-                setActiveContentTabId(null);
-                setActivePath(null);
-                setContent({ kind: "none" });
-              }}
-            >
-              {entryModal ? (
-                <div className="h-full min-h-0 overflow-hidden">
-                  <EntryDetailPanel
-                    objectName={entryModal.objectName}
-                    entryId={entryModal.entryId}
-                    members={context?.members}
-                    tree={tree}
-                    searchFn={searchIndex}
-                    onClose={handleCloseEntry}
-                    onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
-                    onNavigateObject={(objName) => {
-                      handleCloseEntry();
-                      handleNavigateToObject(objName);
-                    }}
-                    onRefresh={refreshCurrentObject}
-                    onNavigate={handleEditorNavigate}
-                  />
-                </div>
-              ) : isFileSurface ? (
-                <div className="flex h-full min-h-0 overflow-hidden">
-                  {/* File tree column (always visible in the Files surface) */}
+            <RightPanel>
+              <div className="flex h-full min-h-0 overflow-hidden">
+                {/* File tree column — always available, togglable independently of the right panel itself. */}
+                {!fileTreeCollapsed && (
                   <div
                     className="flex flex-col min-h-0 shrink-0 border-r overflow-hidden"
-                    style={{ width: 240, minWidth: 240, borderColor: "var(--color-border)" }}
+                    style={{ width: FILE_TREE_WIDTH, minWidth: FILE_TREE_WIDTH, borderColor: "var(--color-border)" }}
                   >
                     {handleFileSearchSelect && (
-                      <div className="px-2 pt-2 pb-1 shrink-0">
-                        <FileSearch onSelect={handleFileSearchSelect} searchFn={searchIndex} />
+                      <div className="px-2 pt-2 pb-1 shrink-0 flex items-center gap-1">
+                        <div className="flex-1 min-w-0">
+                          <FileSearch onSelect={handleFileSearchSelect} searchFn={searchIndex} />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFileTreeCollapsed(true)}
+                          className="p-1 rounded-md cursor-pointer shrink-0"
+                          style={{ color: "var(--color-text-muted)" }}
+                          title="Hide files (⌘E)"
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <polyline points="11 17 6 12 11 7" />
+                            <polyline points="18 17 13 12 18 7" />
+                          </svg>
+                        </button>
                       </div>
                     )}
                     {browseDir && (
@@ -2822,59 +3024,307 @@ function WorkspacePageInner() {
                       />
                     </div>
                   </div>
-                  {/* File preview / editor area (right) */}
-                  <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                    {fileContentTabs.length > 0 && (
-                      <div
-                        className="flex items-center gap-1 px-2 h-9 shrink-0 border-b overflow-x-auto"
-                        style={{ borderColor: "var(--color-border)" }}
+                )}
+
+                {/* Content column: unified tab strip + (entry detail | content | placeholder) */}
+                <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                  <div
+                    className="flex items-center gap-1 px-2 h-10 shrink-0 border-b overflow-x-auto"
+                    style={{ borderColor: "var(--color-border)" }}
+                  >
+                    {fileTreeCollapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setFileTreeCollapsed(false)}
+                        className="p-1 rounded-md cursor-pointer shrink-0"
+                        style={{ color: "var(--color-text-muted)" }}
+                        title="Show files (⌘E)"
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                       >
-                        {fileContentTabs.map((tab) => {
-                          const isActive = tab.id === activeContentTabId;
-                          return (
-                            <div
-                              key={tab.id}
-                              className="flex items-center rounded-md shrink-0"
-                              style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => handleContentTabActivate(tab.id)}
-                                className="pl-2.5 pr-1 py-0.5 text-[12px] font-medium transition-colors cursor-pointer"
-                                style={{
-                                  color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
-                                  fontStyle: tab.preview ? "italic" : "normal",
-                                }}
-                                title={tab.title}
-                              >
-                                {tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
-                                className="p-0.5 rounded-md mr-0.5 cursor-pointer"
-                                style={{ color: "var(--color-text-muted)" }}
-                                title="Close tab"
-                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
-                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                              >
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                                </svg>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <polyline points="13 17 18 12 13 7" />
+                          <polyline points="6 17 11 12 6 7" />
+                        </svg>
+                      </button>
                     )}
-                    {activePath && content.kind !== "none" ? (
-                      <>
+                    {contentTabs.map((tab) => {
+                      const isActive = tab.id === activeContentTabId;
+                      return (
+                        <div
+                          key={tab.id}
+                          className="flex items-center rounded-md shrink-0"
+                          style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleContentTabActivate(tab.id)}
+                            className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
+                            style={{
+                              color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
+                              fontStyle: tab.preview ? "italic" : "normal",
+                            }}
+                            title={tab.title}
+                          >
+                            <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
+                              <TabIcon tab={tab} />
+                            </span>
+                            <span>{tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
+                            className="p-0.5 rounded-md mr-0.5 cursor-pointer"
+                            style={{ color: "var(--color-text-muted)" }}
+                            title="Close tab"
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => setRightPanelCollapsed(true)}
+                      className="p-1.5 rounded-md cursor-pointer shrink-0"
+                      style={{ color: "var(--color-text-muted)" }}
+                      title="Hide right panel (⌘⇧B)"
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <rect width="18" height="18" x="3" y="3" rx="2" />
+                        <path d="M15 3v18" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {entryModal ? (
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <EntryDetailPanel
+                        objectName={entryModal.objectName}
+                        entryId={entryModal.entryId}
+                        members={context?.members}
+                        tree={tree}
+                        searchFn={searchIndex}
+                        onClose={handleCloseEntry}
+                        onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
+                        onNavigateObject={(objName) => {
+                          handleCloseEntry();
+                          handleNavigateToObject(objName);
+                        }}
+                        onRefresh={refreshCurrentObject}
+                        onNavigate={handleEditorNavigate}
+                      />
+                    </div>
+                  ) : activePath && content.kind !== "none" ? (
+                    <>
+                      {!activePath.startsWith("~") && (
                         <div
                           className="px-4 border-b flex-shrink-0 flex items-center h-10"
                           style={{ borderColor: "var(--color-border)" }}
                         >
-                          <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} />
+                          <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
                         </div>
+                      )}
+                      <div className="flex-1 overflow-y-auto">
+                        <ContentRenderer
+                          content={content}
+                          workspaceExists={workspaceExists}
+                          expectedPath={workspaceRoot}
+                          tree={tree}
+                          activePath={activePath}
+                          browseDir={browseDir}
+                          treeLoading={treeLoading}
+                          members={context?.members}
+                          onNodeSelect={handleNodeSelect}
+                          onNavigateToObject={handleNavigateToObject}
+                          onRefreshObject={refreshCurrentObject}
+                          onRefreshTree={refreshTree}
+                          onNavigate={handleEditorNavigate}
+                          onOpenEntry={handleOpenEntry}
+                          activeEntryId={undefined}
+                          searchFn={searchIndex}
+                          onSelectCronJob={handleSelectCronJob}
+                          onBackToCronDashboard={handleBackToCronDashboard}
+                          cronView={cronView}
+                          onCronViewChange={setCronView}
+                          cronCalMode={cronCalMode}
+                          onCronCalModeChange={setCronCalMode}
+                          cronDate={cronDate}
+                          onCronDateChange={setCronDate}
+                          cronRunFilter={cronRunFilter}
+                          onCronRunFilterChange={setCronRunFilter}
+                          cronRun={cronRun}
+                          onCronRunChange={setCronRun}
+                          onSendCommand={handleCronSendCommand}
+                          onMakeTabPermanent={promoteTabByPath}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-sm text-center px-6" style={{ color: "var(--color-text-muted)" }}>
+                        Select a file or open a page from the sidebar
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </RightPanel>
+          </div>
+        </aside>
+      )}
+
+      {/* Mobile right panel drawer */}
+      {isMobile && mobileRightPanelOpen && (
+        <div className="drawer-backdrop" onClick={() => setMobileRightPanelOpen(false)}>
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <div onClick={(e) => e.stopPropagation()} className="fixed inset-y-0 right-0 z-50 drawer-right" style={{ width: "min(90vw, 400px)", background: "var(--color-bg)" }}>
+            <div className="flex flex-col h-full">
+              <RightPanel>
+                <div className="flex h-full min-h-0 overflow-hidden">
+                  {/* On mobile the file tree shares horizontal space with content; respect the same toggle. */}
+                  {!fileTreeCollapsed && (
+                    <div
+                      className="flex flex-col min-h-0 shrink-0 border-r overflow-hidden"
+                      style={{ width: 200, minWidth: 200, borderColor: "var(--color-border)" }}
+                    >
+                      <div className="px-2 pt-2 pb-1 shrink-0 flex items-center gap-1">
+                        <span className="flex-1 text-[12px] font-medium px-1" style={{ color: "var(--color-text-muted)" }}>
+                          Files
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setFileTreeCollapsed(true)}
+                          className="p-1 rounded-md cursor-pointer shrink-0"
+                          style={{ color: "var(--color-text-muted)" }}
+                          title="Hide files"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <polyline points="11 17 6 12 11 7" />
+                            <polyline points="18 17 13 12 18 7" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto px-1 py-2">
+                        <FileManagerTree
+                          tree={enhancedTree}
+                          activePath={activePath}
+                          onSelect={(node) => { handleNodeSelect(node); }}
+                          onRefresh={refreshTree}
+                          parentDir={effectiveParentDir}
+                          onNavigateUp={handleNavigateUp}
+                          browseDir={browseDir}
+                          workspaceRoot={workspaceRoot}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                    <div
+                      className="flex items-center gap-1 px-2 h-10 shrink-0 border-b overflow-x-auto"
+                      style={{ borderColor: "var(--color-border)" }}
+                    >
+                      {fileTreeCollapsed && (
+                        <button
+                          type="button"
+                          onClick={() => setFileTreeCollapsed(false)}
+                          className="p-1 rounded-md cursor-pointer shrink-0"
+                          style={{ color: "var(--color-text-muted)" }}
+                          title="Show files"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <polyline points="13 17 18 12 13 7" />
+                            <polyline points="6 17 11 12 6 7" />
+                          </svg>
+                        </button>
+                      )}
+                      {contentTabs.map((tab) => {
+                        const isActive = tab.id === activeContentTabId;
+                        return (
+                          <div
+                            key={tab.id}
+                            className="flex items-center rounded-md shrink-0"
+                            style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleContentTabActivate(tab.id)}
+                              className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
+                              style={{
+                                color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
+                                fontStyle: tab.preview ? "italic" : "normal",
+                              }}
+                              title={tab.title}
+                            >
+                              <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
+                                <TabIcon tab={tab} />
+                              </span>
+                              <span>{tab.title.length > 20 ? tab.title.slice(0, 18) + "…" : tab.title}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
+                              className="p-0.5 rounded-md mr-0.5 cursor-pointer"
+                              style={{ color: "var(--color-text-muted)" }}
+                              title="Close tab"
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <div className="flex-1" />
+                      <button
+                        type="button"
+                        onClick={() => setMobileRightPanelOpen(false)}
+                        className="p-1.5 rounded-md cursor-pointer shrink-0"
+                        style={{ color: "var(--color-text-muted)" }}
+                        title="Close"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {entryModal ? (
+                      <div className="flex-1 min-h-0 overflow-hidden">
+                        <EntryDetailPanel
+                          objectName={entryModal.objectName}
+                          entryId={entryModal.entryId}
+                          members={context?.members}
+                          tree={tree}
+                          searchFn={searchIndex}
+                          onClose={handleCloseEntry}
+                          onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
+                          onNavigateObject={(objName) => {
+                            handleCloseEntry();
+                            handleNavigateToObject(objName);
+                          }}
+                          onRefresh={refreshCurrentObject}
+                          onNavigate={handleEditorNavigate}
+                        />
+                      </div>
+                    ) : activePath && content.kind !== "none" ? (
+                      <>
+                        {!activePath.startsWith("~") && (
+                          <div
+                            className="px-4 border-b flex-shrink-0 flex items-center h-10"
+                            style={{ borderColor: "var(--color-border)" }}
+                          >
+                            <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
+                          </div>
+                        )}
                         <div className="flex-1 overflow-y-auto">
                           <ContentRenderer
                             content={content}
@@ -2912,154 +3362,13 @@ function WorkspacePageInner() {
                       </>
                     ) : (
                       <div className="flex-1 flex items-center justify-center">
-                        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
-                          Select a file to view
+                        <p className="text-sm text-center px-6" style={{ color: "var(--color-text-muted)" }}>
+                          Select a file or open a page from the sidebar
                         </p>
                       </div>
                     )}
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col h-full min-h-0 overflow-hidden">
-                  {activePath && content.kind !== "none" && (
-                    <div
-                      className="px-4 border-b flex-shrink-0 flex items-center h-10"
-                      style={{ borderColor: "var(--color-border)" }}
-                    >
-                      <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} />
-                    </div>
-                  )}
-                  <div className="flex-1 overflow-y-auto">
-                    <ContentRenderer
-                      content={content}
-                      workspaceExists={workspaceExists}
-                      expectedPath={workspaceRoot}
-                      tree={tree}
-                      activePath={activePath}
-                      browseDir={browseDir}
-                      treeLoading={treeLoading}
-                      members={context?.members}
-                      onNodeSelect={handleNodeSelect}
-                      onNavigateToObject={handleNavigateToObject}
-                      onRefreshObject={refreshCurrentObject}
-                      onRefreshTree={refreshTree}
-                      onNavigate={handleEditorNavigate}
-                      onOpenEntry={handleOpenEntry}
-                      activeEntryId={undefined}
-                      searchFn={searchIndex}
-                      onSelectCronJob={handleSelectCronJob}
-                      onBackToCronDashboard={handleBackToCronDashboard}
-                      cronView={cronView}
-                      onCronViewChange={setCronView}
-                      cronCalMode={cronCalMode}
-                      onCronCalModeChange={setCronCalMode}
-                      cronDate={cronDate}
-                      onCronDateChange={setCronDate}
-                      cronRunFilter={cronRunFilter}
-                      onCronRunFilterChange={setCronRunFilter}
-                      cronRun={cronRun}
-                      onCronRunChange={setCronRun}
-                      onSendCommand={handleCronSendCommand}
-                      onMakeTabPermanent={promoteTabByPath}
-                    />
-                  </div>
-                </div>
-              )}
-            </RightPanel>
-          </div>
-        </aside>
-      )}
-
-      {/* Mobile right panel drawer */}
-      {isMobile && mobileRightPanelOpen && (
-        <div className="drawer-backdrop" onClick={() => setMobileRightPanelOpen(false)}>
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-          <div onClick={(e) => e.stopPropagation()} className="fixed inset-y-0 right-0 z-50 drawer-right" style={{ width: "min(90vw, 400px)", background: "var(--color-bg)" }}>
-            <div className="flex flex-col h-full">
-              <RightPanel
-                tabs={pageContentTabs}
-                activeTabId={activeContentTabId}
-                onActivate={(id) => { handleContentTabActivate(id); }}
-                onClose={handleContentTabClose}
-                onCloseOthers={handleTabCloseOthers}
-                onCloseToRight={handleTabCloseToRight}
-                onCloseAll={handleTabCloseAll}
-                onReorder={handleTabReorder}
-                onTogglePin={handleTabTogglePin}
-                onMakePermanent={promoteTabById}
-                onCollapse={() => setMobileRightPanelOpen(false)}
-                filesTabActive={activeContentTabId === null}
-                onActivateFilesTab={() => {
-                  setActiveContentTabId(null);
-                  setActivePath(null);
-                  setContent({ kind: "none" });
-                }}
-              >
-                {activeContentTabId === null ? (
-                  <div className="flex-1 overflow-y-auto px-1 py-2">
-                    <FileManagerTree
-                      tree={enhancedTree}
-                      activePath={null}
-                      onSelect={(node) => { handleNodeSelect(node); }}
-                      onRefresh={refreshTree}
-                      parentDir={effectiveParentDir}
-                      onNavigateUp={handleNavigateUp}
-                      browseDir={browseDir}
-                      workspaceRoot={workspaceRoot}
-                    />
-                  </div>
-                ) : entryModal ? (
-                  <EntryDetailPanel
-                    objectName={entryModal.objectName}
-                    entryId={entryModal.entryId}
-                    members={context?.members}
-                    tree={tree}
-                    searchFn={searchIndex}
-                    onClose={handleCloseEntry}
-                    onNavigateEntry={(objName, eid) => handleOpenEntry(objName, eid)}
-                    onNavigateObject={(objName) => {
-                      handleCloseEntry();
-                      handleNavigateToObject(objName);
-                    }}
-                    onRefresh={refreshCurrentObject}
-                    onNavigate={handleEditorNavigate}
-                  />
-                ) : (
-                  <div className="flex-1 overflow-y-auto">
-                    <ContentRenderer
-                      content={content}
-                      workspaceExists={workspaceExists}
-                      expectedPath={workspaceRoot}
-                      tree={tree}
-                      activePath={activePath}
-                      browseDir={browseDir}
-                      treeLoading={treeLoading}
-                      members={context?.members}
-                      onNodeSelect={handleNodeSelect}
-                      onNavigateToObject={handleNavigateToObject}
-                      onRefreshObject={refreshCurrentObject}
-                      onRefreshTree={refreshTree}
-                      onNavigate={handleEditorNavigate}
-                      onOpenEntry={handleOpenEntry}
-                      activeEntryId={undefined}
-                      searchFn={searchIndex}
-                      onSelectCronJob={handleSelectCronJob}
-                      onBackToCronDashboard={handleBackToCronDashboard}
-                      cronView={cronView}
-                      onCronViewChange={setCronView}
-                      cronCalMode={cronCalMode}
-                      onCronCalModeChange={setCronCalMode}
-                      cronDate={cronDate}
-                      onCronDateChange={setCronDate}
-                      cronRunFilter={cronRunFilter}
-                      onCronRunFilterChange={setCronRunFilter}
-                      cronRun={cronRun}
-                      onCronRunChange={setCronRun}
-                      onSendCommand={handleCronSendCommand}
-                      onMakeTabPermanent={promoteTabByPath}
-                    />
-                  </div>
-                )}
               </RightPanel>
             </div>
           </div>
@@ -3358,7 +3667,12 @@ function ContentRenderer({
       return <InboxView onOpenPerson={(id) => onOpenEntry("people", id)} />;
 
     case "crm-calendar":
-      return <CalendarView onOpenPerson={(id) => onOpenEntry("people", id)} />;
+      return (
+        <CalendarView
+          onOpenPerson={(id) => onOpenEntry("people", id)}
+          onOpenCompany={(id) => onOpenEntry("company", id)}
+        />
+      );
 
     case "crm-person":
       return (
@@ -3926,11 +4240,11 @@ function ObjectView({
         {/* Left: title + count (shrinks first when space is tight) */}
         <div className="flex items-center gap-2 min-w-0 flex-shrink">
           <h1
-            className="text-sm font-semibold capitalize truncate"
+            className="text-sm font-semibold truncate"
             style={{ color: "var(--color-text)" }}
-            title={data.object.description || data.object.name}
+            title={data.object.description || displayObjectName(data.object.name)}
           >
-            {data.object.name}
+            {displayObjectName(data.object.name)}
           </h1>
           <span
             className="text-[11px] tabular-nums px-1.5 py-0.5 rounded-full flex-shrink-0"
@@ -3980,7 +4294,7 @@ function ObjectView({
               type="text"
               value={globalFilter}
               onChange={(e) => handleGlobalFilterChange(e.target.value)}
-              placeholder={`Search ${data.object.name}...`}
+              placeholder={`Search ${displayObjectName(data.object.name)}...`}
               className="w-full h-full text-[12px] bg-transparent outline-none border-0 p-0"
               style={{ color: "var(--color-text)" }}
             />
@@ -4057,7 +4371,7 @@ function ObjectView({
               background: "var(--color-accent)",
               color: "#fff",
             }}
-            title={`Add ${data.object.name}`}
+            title={`Add ${displayObjectNameSingular(data.object.name)}`}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14" />
@@ -4204,13 +4518,15 @@ function DirectoryListing({
 }) {
   const children = node.children ?? [];
 
+  const titleText = node.type === "object" ? displayObjectName(node.name) : node.name;
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1
-        className="font-instrument text-3xl tracking-tight mb-1 capitalize"
+        className={`font-instrument text-3xl tracking-tight mb-1${node.type === "object" ? "" : " capitalize"}`}
         style={{ color: "var(--color-text)" }}
       >
-        {node.name}
+        {titleText}
       </h1>
       <p className="text-sm mb-6" style={{ color: "var(--color-text-muted)" }}>
         {children.length} items
@@ -4276,7 +4592,9 @@ function DirectoryListing({
                   className="text-sm font-medium truncate"
                   style={{ color: "var(--color-text)" }}
                 >
-                  {child.name.replace(/\.md$/, "")}
+                  {child.type === "object"
+                    ? displayObjectName(child.name)
+                    : child.name.replace(/\.md$/, "")}
                 </div>
                 <div
                   className="text-xs capitalize"
@@ -4367,10 +4685,10 @@ function WelcomeView({
                 </span>
                 <div className="min-w-0">
                   <div
-                    className="text-sm font-medium capitalize truncate"
+                    className="text-sm font-medium truncate"
                     style={{ color: "var(--color-text)" }}
                   >
-                    {obj.name}
+                    {displayObjectName(obj.name)}
                   </div>
                   <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
                     {obj.defaultView === "kanban" ? "Kanban board" : "Table view"}

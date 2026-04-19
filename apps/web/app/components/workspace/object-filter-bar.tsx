@@ -12,6 +12,7 @@ import {
 	filterId,
 	emptyFilterGroup,
 } from "@/lib/object-filters";
+import { displayObjectName } from "@/lib/object-display-name";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -483,7 +484,7 @@ function RelationValueEditor({
 				const ids = v.split(",").map((s) => s.trim()).filter(Boolean);
 				onChange(ids.length === 1 ? ids[0] : ids);
 			}}
-			placeholder={relatedObjectName ? `Search ${relatedObjectName}...` : "ID..."}
+			placeholder={relatedObjectName ? `Search ${displayObjectName(relatedObjectName)}...` : "ID..."}
 		/>
 	);
 }

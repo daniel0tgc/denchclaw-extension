@@ -5,6 +5,7 @@ import { RelationSelect } from "./relation-select";
 import { FormattedFieldValue } from "./formatted-field-value";
 import { formatWorkspaceFieldValue } from "@/lib/workspace-cell-format";
 import { parseTagsValue } from "@/lib/parse-tags";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
 
@@ -360,7 +361,7 @@ function ReverseRelationSection({
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
           <path d="m12 19-7-7 7-7" /><path d="M19 12H5" />
         </svg>
-        <span className="capitalize">{relation.sourceObjectName}</span>
+        <span>{displayObjectName(relation.sourceObjectName)}</span>
         <span className="normal-case tracking-normal font-normal opacity-60">
           via {relation.fieldName}
         </span>
@@ -377,7 +378,7 @@ function ReverseRelationSection({
               color: "#c084fc",
               border: "1px solid rgba(192, 132, 252, 0.2)",
             }}
-            title={`Open ${link.label} in ${relation.sourceObjectName}`}
+            title={`Open ${link.label} in ${displayObjectName(relation.sourceObjectName)}`}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0" style={{ opacity: 0.5 }}>
               <path d="M7 7h10v10" /><path d="M7 17 17 7" />
@@ -564,9 +565,10 @@ export function EntryDetailModal({
   }, [objectName, entryId, onRefresh, onClose]);
 
   const displayField = data?.effectiveDisplayField;
+  const objectLabel = displayObjectNameSingular(String(objectName));
   const title = displayField && data?.entry[displayField]
     ? safeString(data.entry[displayField])
-    : `${String(objectName)} entry`;
+    : `${objectLabel} entry`;
   const createdAtValue = data ? resolveEntryMetaValue(data.entry, CREATED_AT_KEYS) : undefined;
   const updatedAtValue = data ? resolveEntryMetaValue(data.entry, UPDATED_AT_KEYS) : undefined;
 
@@ -595,18 +597,18 @@ export function EntryDetailModal({
             <button
               type="button"
               onClick={() => void onNavigateObject?.(objectName)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium capitalize transition-colors hover:opacity-80 flex-shrink-0"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hover:opacity-80 flex-shrink-0"
               style={{
                 background: "var(--color-accent-light)",
                 color: "var(--color-accent)",
                 border: "1px solid var(--color-border)",
               }}
-              title={`Go to ${objectName}`}
+              title={`Go to ${objectLabel}`}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 3v18" /><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" />
               </svg>
-              {objectName}
+              {objectLabel}
             </button>
             <h2
               className="text-lg font-semibold truncate"

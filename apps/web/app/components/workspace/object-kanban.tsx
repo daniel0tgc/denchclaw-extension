@@ -15,6 +15,7 @@ import {
 } from "@dnd-kit/core";
 import { formatWorkspaceFieldValue } from "@/lib/workspace-cell-format";
 import { parseTagsValue } from "@/lib/parse-tags";
+import { displayObjectName } from "@/lib/object-display-name";
 import { ActionButton, type ActionConfig } from "./action-button";
 import { useToast } from "./toast";
 import { UrlFavicon } from "./url-favicon";
@@ -698,7 +699,7 @@ export function ObjectKanban({
         <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
           No enum field found for kanban grouping in{" "}
           <span className="font-medium" style={{ color: "var(--color-text)" }}>
-            {objectName}
+            {displayObjectName(objectName)}
           </span>
         </p>
       </div>

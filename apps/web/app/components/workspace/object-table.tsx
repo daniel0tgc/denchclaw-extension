@@ -7,6 +7,7 @@ import { RelationSelect } from "./relation-select";
 import { FormattedFieldValue } from "./formatted-field-value";
 import { formatWorkspaceFieldValue } from "@/lib/workspace-cell-format";
 import { parseTagsValue } from "@/lib/parse-tags";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { ActionButton, useActionStates, type ActionConfig } from "./action-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BulkActionBar } from "./bulk-action-bar";
@@ -820,7 +821,7 @@ export function ObjectTable({
 						<span className="truncate">{field.name}</span>
 						{field.type === "relation" && field.related_object_name && (
 							<span className="text-[9px] font-normal normal-case tracking-normal opacity-60 shrink-0">
-								({field.related_object_name})
+								({displayObjectName(field.related_object_name)})
 							</span>
 						)}
 						<ColumnHeaderMenu
@@ -918,13 +919,13 @@ export function ObjectTable({
 		for (const rr of activeReverseRelations) {
 			cols.push({
 				id: `rev_${rr.sourceObjectName}_${rr.fieldName}`,
-				meta: { label: `${rr.sourceObjectName} (via ${rr.fieldName})`, fieldType: "relation" },
+				meta: { label: `${displayObjectName(rr.sourceObjectName)} (via ${rr.fieldName})`, fieldType: "relation" },
 				header: () => (
 					<span className="flex items-center gap-1.5" style={{ color: "var(--color-text-muted)" }}>
 						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
 							<path d="m12 19-7-7 7-7" /><path d="M19 12H5" />
 						</svg>
-						<span className="capitalize">{rr.sourceObjectName}</span>
+						<span>{displayObjectName(rr.sourceObjectName)}</span>
 						<span className="text-[9px] font-normal normal-case tracking-normal opacity-50">via {rr.fieldName}</span>
 					</span>
 				),
@@ -1133,7 +1134,7 @@ export function ObjectTable({
 			rowSelection={rowSelection}
 			onRowSelectionChange={setRowSelection}
 			onColumnReorder={handleColumnReorder}
-			searchPlaceholder={`Search ${objectName}...`}
+			searchPlaceholder={`Search ${displayObjectName(objectName)}...`}
 			onRefresh={onRefresh}
 			onAdd={handleAdd}
 			addButtonLabel="+ Add"
@@ -1259,8 +1260,8 @@ export function AddEntryModal({
 					className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
 					style={{ borderColor: "var(--color-border)" }}
 				>
-					<h2 className="text-lg font-semibold capitalize" style={{ color: "var(--color-text)" }}>
-						Add {objectName}
+					<h2 className="text-lg font-semibold" style={{ color: "var(--color-text)" }}>
+						Add {displayObjectNameSingular(objectName)}
 					</h2>
 					<button type="button" onClick={onClose} className="p-1.5 rounded-lg" style={{ color: "var(--color-text-muted)" }}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1287,7 +1288,7 @@ export function AddEntryModal({
 									{field.name}
 									{isRelation && field.related_object_name && (
 										<span className="normal-case tracking-normal font-normal opacity-60 ml-1">
-											({field.related_object_name})
+											({displayObjectName(field.related_object_name)})
 										</span>
 									)}
 								</label>
@@ -1355,7 +1356,7 @@ export function AddEntryModal({
 										value={values[field.name] ?? ""}
 										multiple={field.relationship_type === "many_to_many"}
 										onChange={(v) => updateField(field.name, v)}
-										placeholder={`Select ${field.related_object_name}...`}
+										placeholder={`Select ${displayObjectNameSingular(field.related_object_name)}...`}
 									/>
 								) : isUser ? (
 									<select

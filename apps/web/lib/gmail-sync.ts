@@ -424,47 +424,57 @@ function decodeBase64Url(value: string): string {
 }
 
 function extractBodyPreview(message: ComposioGmailMessage): { preview: string; body: string } {
-  // Body content sources in priority order:
-  //   1. `messageText` — full decoded body, only present when the page was
-  //      fetched with `verbose: true`.
-  //   2. `preview.body` — Composio's HTML-decoded snippet, present in
+  // Body content sources in priority order — HTML wins so that the
+  // sandboxed iframe in the inbox renders a real email instead of a
+  // plain-text mirror image:
+  //   1. text/html part walked from `payload` (richest render).
+  //   2. text/plain part walked from `payload`.
+  //   3. `messageText` — Composio's normalized plain-text body (only
+  //      present when the page was fetched with `verbose: true`; always
+  //      plain text, never HTML).
+  //   4. `preview.body` — Composio's HTML-decoded snippet, present in
   //      both verbose and metadata-only modes.
-  //   3. `snippet` — raw Gmail snippet, only there in raw-API responses.
-  //   4. `payload.parts[]` walk — last-resort decode of base64 part bodies.
-  // We always store *some* preview so the UI doesn't render an empty cell
-  // for "Body Preview"; full body is only persisted when we actually have it.
-  const direct = (message.messageText ?? "").trim();
-  if (direct) {
-    const preview = (message.snippet ?? message.preview?.body ?? direct)
-      .replace(/\s+/g, " ")
-      .slice(0, 500);
-    return { preview, body: direct };
-  }
-
-  const previewBody = (message.preview?.body ?? message.snippet ?? "").trim();
-  if (previewBody) {
-    const preview = previewBody.replace(/\s+/g, " ").slice(0, 500);
-    return { preview, body: "" };
-  }
-
-  const payload = message.payload;
-  const candidates: string[] = [];
+  //   5. `snippet` — raw Gmail snippet, only there in raw-API responses.
+  //
+  // We always store *some* preview so the UI doesn't render an empty
+  // cell for "Body Preview"; the full body is only persisted when we
+  // actually have it (HTML preferred, plain text accepted).
+  let htmlBody = "";
+  let textBody = "";
 
   function walk(part: ComposioGmailMessage["payload"] | undefined): void {
     if (!part) {return;}
     const mime = (part.mimeType ?? "").toLowerCase();
     const data = part.body?.data;
-    if (typeof data === "string" && data && (mime.startsWith("text/") || !mime)) {
-      candidates.push(decodeBase64Url(data));
+    if (typeof data === "string" && data) {
+      const decoded = decodeBase64Url(data);
+      if (decoded) {
+        if (mime.startsWith("text/html") && !htmlBody) {
+          htmlBody = decoded;
+        } else if ((mime.startsWith("text/plain") || !mime) && !textBody) {
+          textBody = decoded;
+        }
+      }
     }
     for (const child of part.parts ?? []) {
       walk(child);
     }
   }
-  walk(payload);
+  walk(message.payload);
 
-  const body = candidates.find((c) => c.trim().length > 0)?.trim() ?? "";
-  const preview = body.replace(/\s+/g, " ").slice(0, 500);
+  const direct = (message.messageText ?? "").trim();
+  const body = htmlBody || textBody || direct || "";
+
+  // Preview should always be plain text — it's shown inline in lists,
+  // not rendered as HTML. Prefer the actual snippets over stripped HTML.
+  const previewSource =
+    (message.snippet ?? "").trim() ||
+    (message.preview?.body ?? "").trim() ||
+    direct ||
+    textBody ||
+    htmlBody;
+  const preview = previewSource.replace(/\s+/g, " ").slice(0, 500);
+
   return { preview, body };
 }
 

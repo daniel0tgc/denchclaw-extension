@@ -62,20 +62,23 @@ function decodeBase64Url(value: string): string {
 /**
  * Pull the best body string out of a full Gmail message payload.
  *
- * Preference order:
- *   1. top-level `messageText` (Composio's convenience field)
- *   2. first text/html part found walking the MIME tree (richest render)
- *   3. first text/plain part (fallback)
+ * Preference order — HTML wins so the sandboxed iframe in
+ * `message-body.tsx` can render a real marketing email with images,
+ * links, layout and typography:
+ *
+ *   1. first text/html part found walking the MIME tree (richest render)
+ *   2. first text/plain part walked from the MIME tree
+ *   3. top-level `messageText` (Composio's normalized plain-text body —
+ *      always plain text, never HTML, so it's a fallback only)
  *   4. preview / snippet (very last resort)
  *
- * Returning HTML when available lets the existing sandboxed iframe in
- * `message-body.tsx` render a real email — the prior behavior of keeping
- * only the stripped text would lose images + links inside the body.
+ * IMPORTANT: do not short-circuit on `messageText` before walking the
+ * MIME tree. Composio populates `messageText` with the decoded plain
+ * text body alongside the full payload. Returning it early was the
+ * cause of every newsletter rendering as plain text — the HTML part
+ * was right there in `payload`, we just never looked at it.
  */
 export function extractFullBody(message: ComposioGmailMessage): string {
-  const direct = (message.messageText ?? "").trim();
-  if (direct) return direct;
-
   let htmlBody = "";
   let textBody = "";
 
@@ -100,8 +103,28 @@ export function extractFullBody(message: ComposioGmailMessage): string {
   if (htmlBody) return htmlBody;
   if (textBody) return textBody;
 
+  const direct = (message.messageText ?? "").trim();
+  if (direct) return direct;
+
   const fallback = (message.preview?.body ?? message.snippet ?? "").trim();
   return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// HTML detection — kept in sync with `looksLikeHtml` in
+// `apps/web/app/components/crm/inbox/message-body.tsx`. The client uses
+// the same regex to decide between iframe rendering and the
+// preformatted plain-text fallback; the server uses it to decide
+// whether a stored body is "real" rich content or a stale plain-text
+// body that predates the extractFullBody fix and should be re-hydrated.
+// ---------------------------------------------------------------------------
+
+const HTML_SHAPE_RE =
+  /<!doctype|<html|<body|<head|<table|<div|<p\b|<a\s|<br\s*\/?>|<img\s|<\/[a-z]/i;
+
+export function bodyLooksLikeHtml(input: string | null | undefined): boolean {
+  if (!input) return false;
+  return HTML_SHAPE_RE.test(input);
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ type ProgressEvent = {
     | "gmail"
     | "calendar"
     | "scoring"
+    | "merging"
     | "complete"
     | "error";
   message: string;
@@ -127,6 +128,8 @@ export function SyncStep({
         return "Loading email";
       case "calendar":
         return "Loading calendar";
+      case "merging":
+        return "Merging duplicates";
       case "scoring":
         return "Ranking relationships";
       case "complete":

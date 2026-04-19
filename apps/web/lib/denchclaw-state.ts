@@ -29,6 +29,7 @@ const ONBOARDING_FILENAME = "onboarding.json";
 const CONNECTIONS_FILENAME = "connections.json";
 const SYNC_CURSORS_FILENAME = "sync-cursors.json";
 const PERSONAL_DOMAINS_FILENAME = "personal-domains.json";
+const EMAIL_BODY_HYDRATION_FILENAME = "email-body-hydration-attempted.json";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -426,5 +427,77 @@ export function writePersonalDomainsOverrides(
     updatedAt: nowIso(),
   };
   writeJsonFileAtomic(denchClawFilePath(PERSONAL_DOMAINS_FILENAME, workspaceName), next);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Email body HTML re-hydration tracking
+//
+// The Composio Gmail sync used to store plain-text bodies for every
+// message because `extractFullBody` short-circuited on the normalized
+// `messageText` field before walking the MIME tree for HTML. After that
+// bug was fixed, the inbox detail route re-hydrates any stored body
+// that doesn't *look* like HTML so existing data flips to the rich
+// rendering on next open.
+//
+// To keep that re-hydration from hitting Composio every single time a
+// thread is opened on a genuinely plain-text email (e.g. a coworker's
+// reply), we persist the set of email_message entry IDs we've already
+// attempted. Once an entry is in the set we never try again, regardless
+// of whether the attempt successfully produced HTML.
+//
+// Manual recovery: delete this file to force a one-time retry across
+// every plain-text message in the workspace.
+// ---------------------------------------------------------------------------
+
+export type EmailBodyHydrationAttemptedFile = {
+  version: 1;
+  /** Sorted list of email_message entry IDs we've already attempted. */
+  attempted: string[];
+  updatedAt: string;
+};
+
+function defaultEmailBodyHydrationAttempted(): EmailBodyHydrationAttemptedFile {
+  return { version: 1, attempted: [], updatedAt: nowIso() };
+}
+
+export function readEmailBodyHydrationAttempted(
+  workspaceName?: string | null,
+): Set<string> {
+  const raw = readJsonFile<unknown>(
+    denchClawFilePath(EMAIL_BODY_HYDRATION_FILENAME, workspaceName),
+    null,
+  );
+  if (!raw || typeof raw !== "object") {
+    return new Set();
+  }
+  const list = (raw as Record<string, unknown>).attempted;
+  if (!Array.isArray(list)) {
+    return new Set();
+  }
+  return new Set(list.filter((v): v is string => typeof v === "string" && Boolean(v)));
+}
+
+/**
+ * Mark a batch of email_message entry IDs as "we've already attempted
+ * to hydrate their HTML body". Idempotent: re-marking is a no-op for
+ * the on-disk set, but always bumps `updatedAt` for observability.
+ */
+export function markEmailBodyHydrationAttempted(
+  entryIds: ReadonlyArray<string>,
+  workspaceName?: string | null,
+): EmailBodyHydrationAttemptedFile {
+  const current = readEmailBodyHydrationAttempted(workspaceName);
+  for (const id of entryIds) {
+    if (typeof id === "string" && id) {
+      current.add(id);
+    }
+  }
+  const next: EmailBodyHydrationAttemptedFile = {
+    version: 1,
+    attempted: Array.from(current).sort(),
+    updatedAt: nowIso(),
+  };
+  writeJsonFileAtomic(denchClawFilePath(EMAIL_BODY_HYDRATION_FILENAME, workspaceName), next);
   return next;
 }

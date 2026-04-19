@@ -31,6 +31,7 @@ import { recomputeAllScores } from "./strength-score";
 import { ComposioToolNoConnectionError } from "./composio-execute";
 import { ensureLatestSchema } from "./workspace-schema-migrations";
 import { ensureOnboardingObjectDirs, installDefaultViews } from "./onboarding-views";
+import { mergeDuplicatePeople } from "./people-merge";
 
 // ---------------------------------------------------------------------------
 // Public progress event
@@ -42,6 +43,7 @@ export type SyncProgressEvent = {
     | "gmail"
     | "calendar"
     | "scoring"
+    | "merging"
     | "complete"
     | "error"
     | "polling";
@@ -269,6 +271,34 @@ async function runBackfillInner(options: StartBackfillOptions): Promise<void> {
       }
     }
 
+    // ----- Auto-merge duplicate people (by normalized email/phone) -----
+    // Runs *before* scoring so the score recompute reflects the
+    // consolidated people rows (interactions on losers are remapped onto
+    // the canonical winner before we sum up Strength Score).
+    emit({
+      phase: "merging",
+      message: "Merging duplicate contacts…",
+      messagesProcessed: totalMessages,
+      peopleProcessed: totalPeople,
+      companiesProcessed: totalCompanies,
+      threadsProcessed: totalThreads,
+      eventsProcessed: totalEvents,
+    });
+    try {
+      const mergeReport = await mergeDuplicatePeople();
+      if (mergeReport.rowsMerged > 0) {
+        // The People count we surfaced earlier counted post-sync rows
+        // *before* dedupe; subtract the merged-away losers so the
+        // onboarding "X people" headline reflects what the user will
+        // actually see in the workspace.
+        totalPeople = Math.max(0, totalPeople - mergeReport.rowsMerged);
+      }
+    } catch (err) {
+      console.error("[sync-runner] people merge failed:", err);
+      // Non-fatal: a failed merge leaves duplicates in place but the
+      // rest of the workspace is fine. Next poll tick will retry.
+    }
+
     // ----- Score recompute -----
     emit({
       phase: "scoring",
@@ -415,6 +445,15 @@ async function tickPoller(): Promise<void> {
     }
 
     if (didWork) {
+      // Auto-merge any duplicate people that the incremental sync may
+      // have introduced (e.g. an attendee surfaced via Calendar that the
+      // Gmail-side cache hadn't yet seen). Order matters: merge first so
+      // the rescore aggregates over the canonical-only set of people.
+      try {
+        await mergeDuplicatePeople();
+      } catch (err) {
+        console.error("[sync-runner] people merge failed during poll:", err);
+      }
       // Lightweight rescore — runs in foreground so the next render has it.
       try {
         await recomputeAllScores();

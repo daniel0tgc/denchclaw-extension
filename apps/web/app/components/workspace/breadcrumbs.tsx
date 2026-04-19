@@ -3,9 +3,13 @@
 type BreadcrumbsProps = {
   path: string;
   onNavigate: (path: string) => void;
+  /** Optional per-segment formatter (e.g. prettify CRM object names). Receives
+   *  the raw segment plus the partial path up to that segment. Falls back to
+   *  the raw segment text when omitted. */
+  formatSegment?: (segment: string, partialPath: string) => string;
 };
 
-export function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
+export function Breadcrumbs({ path, onNavigate, formatSegment }: BreadcrumbsProps) {
   const isAbsolute = path.startsWith("/");
   const segments = path.split("/").filter(Boolean);
 
@@ -33,6 +37,8 @@ export function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
       {segments.map((segment, idx) => {
         const partialPath = (isAbsolute ? "/" : "") + segments.slice(0, idx + 1).join("/");
         const isLast = idx === segments.length - 1;
+        const baseLabel = isLast ? segment.replace(/\.md$/, "") : segment;
+        const label = formatSegment ? formatSegment(baseLabel, partialPath) : baseLabel;
 
         return (
           <span key={partialPath} className="flex items-center gap-1">
@@ -55,7 +61,7 @@ export function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
                 className="px-1.5 py-0.5"
                 style={{ color: "var(--color-text)" }}
               >
-                {segment.replace(/\.md$/, "")}
+                {label}
               </span>
             ) : (
               <button
@@ -76,7 +82,7 @@ export function Breadcrumbs({ path, onNavigate }: BreadcrumbsProps) {
                     "transparent";
                 }}
               >
-                {segment}
+                {label}
               </button>
             )}
           </span>

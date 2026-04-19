@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import type { Editor, Range } from "@tiptap/core";
 import type { SearchIndexItem } from "@/lib/search-index";
 import { buildEntryLink, buildFileLink } from "@/lib/workspace-links";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 
 // Unique plugin keys so both suggestions can coexist
 const slashCommandPluginKey = new PluginKey("slashCommand");
@@ -156,16 +157,18 @@ const entryIcon = (
 /** Convert a SearchIndexItem to a SlashItem for the @ mention popup. */
 function searchItemToSlashItem(item: SearchIndexItem): SlashItem {
   if (item.kind === "entry") {
-    const label = item.label || `(${item.objectName} entry)`;
+    const insertedLabel = item.label || `(${item.objectName} entry)`;
+    const displayObjLabel = item.objectName ? displayObjectNameSingular(item.objectName) : "";
+    const displayTitle = item.label || (item.objectName ? `(${displayObjLabel} entry)` : insertedLabel);
     return {
-      title: label,
+      title: displayTitle,
       description: item.fields
         ? Object.entries(item.fields)
             .slice(0, 2)
             .map(([k, v]) => `${k}: ${v}`)
             .join(" | ")
         : undefined,
-      badge: item.objectName,
+      badge: displayObjLabel || item.objectName,
       icon: entryIcon,
       category: "entry",
       command: ({ editor, range }: { editor: Editor; range: Range }) => {
@@ -176,7 +179,7 @@ function searchItemToSlashItem(item: SearchIndexItem): SlashItem {
           .deleteRange(range)
           .insertContent({
             type: "text",
-            text: label,
+            text: insertedLabel,
             marks: [{ type: "link", attrs: { href, target: null } }],
           })
           .run();
@@ -186,8 +189,9 @@ function searchItemToSlashItem(item: SearchIndexItem): SlashItem {
 
   const nodeType = item.nodeType ?? (item.kind === "object" ? "object" : "file");
   const label = item.label || item.path || item.id;
+  const displayLabel = item.kind === "object" ? displayObjectName(label) : label;
   return {
-    title: label,
+    title: displayLabel,
     description: item.sublabel,
     icon: nodeTypeIcon(nodeType),
     category: "file",

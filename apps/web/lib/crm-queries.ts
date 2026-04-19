@@ -158,3 +158,140 @@ export async function safeQuery<T = Record<string, unknown>>(
     return fallback;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Latest-message-per-thread aggregate
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the SQL fragment that produces a `latest_msg` CTE row per
+ * thread, projecting:
+ *   - thread_id          → email_thread.entry_id this latest msg belongs to
+ *   - sender_type        → Sender Type of the message with max sent_at
+ *   - snippet            → Body Preview of the same message
+ *   - from_person_id     → email_message.From relation entry_id
+ *
+ * Returns `null` when the email_message field map is missing the
+ * critical Thread / Sent At fields (i.e. fresh / un-migrated workspace),
+ * so the caller can branch and emit a no-aggregate fallback.
+ *
+ * If `candidateThreadIdsCte` is provided, the message scan is restricted
+ * to threads whose id is in that CTE — dramatically cheaper when only a
+ * small windowed set of threads is needed (the Inbox uses this; Person /
+ * Company profile pages use it too).
+ */
+export function buildLatestMessagePerThreadCte(params: {
+  emailMessageFieldMap: Record<string, string>;
+  /** Name of an upstream CTE that yields a single column `entry_id`. */
+  candidateThreadIdsCte?: string;
+}): { cte: string; joinClause: string } | null {
+  const fm = params.emailMessageFieldMap;
+  const threadFieldId = fm["Thread"];
+  const sentFieldId = fm["Sent At"];
+  if (!threadFieldId || !sentFieldId) {return null;}
+
+  const senderTypeFieldId = fm["Sender Type"];
+  const previewFieldId = fm["Body Preview"];
+  const fromFieldId = fm["From"];
+
+  const fieldIdsInJoin = [threadFieldId, sentFieldId];
+  if (senderTypeFieldId) {fieldIdsInJoin.push(senderTypeFieldId);}
+  if (previewFieldId) {fieldIdsInJoin.push(previewFieldId);}
+  if (fromFieldId) {fieldIdsInJoin.push(fromFieldId);}
+  const inList = fieldIdsInJoin.map((id) => `'${id.replace(/'/g, "''")}'`).join(", ");
+
+  const candidateFilter = params.candidateThreadIdsCte
+    ? `WHERE m.thread_value IN (SELECT entry_id FROM ${params.candidateThreadIdsCte})`
+    : `WHERE m.thread_value IS NOT NULL`;
+
+  const cte = `
+    latest_msg AS (
+      SELECT
+        thread_value AS thread_id,
+        ${senderTypeFieldId ? "ARG_MAX(sender_type_value, sent_at_value)" : "NULL"} AS sender_type,
+        ${previewFieldId ? "ARG_MAX(preview_value, sent_at_value)" : "NULL"} AS snippet,
+        ${fromFieldId ? "ARG_MAX(from_value, sent_at_value)" : "NULL"} AS from_person_id
+      FROM (
+        SELECT
+          e.id AS msg_id,
+          MAX(CASE WHEN ef.field_id = '${threadFieldId}' THEN ef.value END) AS thread_value,
+          MAX(CASE WHEN ef.field_id = '${sentFieldId}' THEN ef.value END) AS sent_at_value,
+          ${senderTypeFieldId ? `MAX(CASE WHEN ef.field_id = '${senderTypeFieldId}' THEN ef.value END)` : "NULL"} AS sender_type_value,
+          ${previewFieldId ? `MAX(CASE WHEN ef.field_id = '${previewFieldId}' THEN ef.value END)` : "NULL"} AS preview_value,
+          ${fromFieldId ? `MAX(CASE WHEN ef.field_id = '${fromFieldId}' THEN ef.value END)` : "NULL"} AS from_value
+        FROM entries e
+        JOIN entry_fields ef
+          ON ef.entry_id = e.id
+         AND ef.field_id IN (${inList})
+        WHERE e.object_id = '${ONBOARDING_OBJECT_IDS.email_message}'
+        GROUP BY e.id
+      ) m
+      ${candidateFilter}
+      GROUP BY thread_value
+    )
+  `;
+
+  return {
+    cte,
+    joinClause: "LEFT JOIN latest_msg ON latest_msg.thread_id = base.entry_id",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// People hydration by id
+// ---------------------------------------------------------------------------
+
+export type ParticipantRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatar_url: string | null;
+};
+
+/**
+ * Bulk-hydrate a set of People entries by id. Returns a Map keyed by
+ * person entry_id. Quietly tolerates missing field-map entries (returns
+ * an empty map instead of throwing) so a partially-migrated workspace
+ * never breaks the caller's UX.
+ */
+export async function hydratePeopleByIds(
+  peopleIds: ReadonlyArray<string>,
+  peopleFieldMap: Record<string, string>,
+): Promise<Map<string, ParticipantRow>> {
+  const map = new Map<string, ParticipantRow>();
+  if (peopleIds.length === 0) {return map;}
+
+  const nameFieldId = peopleFieldMap["Full Name"];
+  const emailFieldId = peopleFieldMap["Email Address"];
+  const avatarFieldId = peopleFieldMap["Avatar URL"];
+  if (!nameFieldId && !emailFieldId) {return map;}
+
+  const inList = peopleIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(", ");
+  const sql = `
+    SELECT
+      e.id AS person_id,
+      ${nameFieldId ? `MAX(CASE WHEN ef.field_id = '${nameFieldId}' THEN ef.value END)` : "NULL"} AS name,
+      ${emailFieldId ? `MAX(CASE WHEN ef.field_id = '${emailFieldId}' THEN ef.value END)` : "NULL"} AS email,
+      ${avatarFieldId ? `MAX(CASE WHEN ef.field_id = '${avatarFieldId}' THEN ef.value END)` : "NULL"} AS avatar_url
+    FROM entries e
+    LEFT JOIN entry_fields ef ON ef.entry_id = e.id
+    WHERE e.object_id = '${ONBOARDING_OBJECT_IDS.people}'
+      AND e.id IN (${inList})
+    GROUP BY e.id;
+  `;
+  const rows = await safeQuery<{
+    person_id: string;
+    name: string | null;
+    email: string | null;
+    avatar_url: string | null;
+  }>(sql);
+  for (const row of rows) {
+    map.set(row.person_id, {
+      id: row.person_id,
+      name: row.name,
+      email: row.email,
+      avatar_url: row.avatar_url,
+    });
+  }
+  return map;
+}

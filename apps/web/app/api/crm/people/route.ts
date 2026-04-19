@@ -157,9 +157,23 @@ export async function GET(req: Request) {
   // list + total into one round trip cuts the warm-path latency in half.
   // `COUNT(*) OVER ()` computes the full filtered total on every row;
   // LIMIT applies after the window so pagination still works correctly.
+  //
+  // The DISTINCT ON deduper sits between `base` (the raw EAV pivot) and
+  // the WHERE/ORDER apply: even with `mergeDuplicatePeople` running on
+  // every sync, brand-new duplicates can appear briefly between an
+  // incremental write and the next merge tick. Rows without an email get
+  // their own bucket via COALESCE(entry_id) so anonymous people don't
+  // accidentally collapse into one.
   const sql = `
-    WITH base AS (${projection})
-    SELECT *, COUNT(*) OVER () AS _total FROM base
+    WITH base AS (${projection}),
+    deduped AS (
+      SELECT DISTINCT ON (COALESCE(LOWER(TRIM(email)), entry_id)) *
+      FROM base
+      ORDER BY COALESCE(LOWER(TRIM(email)), entry_id),
+               TRY_CAST(strength_score AS DOUBLE) DESC NULLS LAST,
+               last_interaction_at DESC NULLS LAST
+    )
+    SELECT *, COUNT(*) OVER () AS _total FROM deduped
     WHERE ${where}
     ORDER BY ${order}
     LIMIT ${pagination.pageSize} OFFSET ${offset};

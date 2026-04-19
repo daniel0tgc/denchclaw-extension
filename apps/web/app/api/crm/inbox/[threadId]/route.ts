@@ -7,7 +7,15 @@ import {
   safeQuery,
   sqlString,
 } from "@/lib/crm-queries";
-import { hydrateMessageBodies, type MessageNeedingHydration } from "@/lib/gmail-body-hydrate";
+import {
+  bodyLooksLikeHtml,
+  hydrateMessageBodies,
+  type MessageNeedingHydration,
+} from "@/lib/gmail-body-hydrate";
+import {
+  markEmailBodyHydrationAttempted,
+  readEmailBodyHydrationAttempted,
+} from "@/lib/denchclaw-state";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -109,23 +117,59 @@ export async function GET(
     }
   }
 
-  // ─── Lazy-hydrate full bodies from Composio for messages that only
-  // have a preview. The sync stores just the snippet (Composio's verbose
-  // page mode exceeds the gateway 413 cap at 50-message pages), so the
-  // first time a thread is opened we fetch the full bodies in parallel,
-  // persist them back to DuckDB, and merge into the response. Subsequent
-  // opens skip the fetch entirely because `row.body` is now populated.
+  // ─── Lazy-hydrate full bodies from Composio.
+  //
+  // Two cases trigger a fetch:
+  //
+  //   1. Body is empty — the sync stores only the snippet (Composio's
+  //      verbose page mode exceeds the gateway 413 cap at 50-message
+  //      pages), so the first time a thread is opened we fetch the
+  //      full bodies in parallel and persist them back to DuckDB.
+  //
+  //   2. Body is non-empty but doesn't look like HTML — predates the
+  //      extractFullBody bug fix, where Composio's plain-text
+  //      `messageText` was preferred over the actual text/html part.
+  //      We re-fetch once per entry to get the rich HTML body.
+  //
+  // To keep case (2) from re-hitting Composio every single thread open
+  // for genuinely plain-text emails, we persist a marker file of entry
+  // IDs we've already attempted. Once an entry is in the set we skip
+  // it forever (delete the file to force a workspace-wide retry).
+  const attemptedHtmlRehydrate = readEmailBodyHydrationAttempted();
   const toHydrate: MessageNeedingHydration[] = [];
+  const newlyAttempted: string[] = [];
   for (const row of rows) {
-    if ((row.body ?? "").trim() === "" && row.gmail_message_id) {
+    if (!row.gmail_message_id) continue;
+    const entryId = String(row.entry_id);
+    const stored = (row.body ?? "").trim();
+    const bodyEmpty = stored === "";
+    const bodyIsPlainText =
+      !bodyEmpty && !bodyLooksLikeHtml(stored) && !attemptedHtmlRehydrate.has(entryId);
+    if (bodyEmpty || bodyIsPlainText) {
       toHydrate.push({
-        entryId: String(row.entry_id),
+        entryId,
         gmailMessageId: row.gmail_message_id,
       });
+      if (bodyIsPlainText) {
+        newlyAttempted.push(entryId);
+      }
     }
   }
 
   const hydrated = await hydrateMessageBodies(toHydrate);
+
+  // Persist the "attempted" set even when a re-fetch returned the same
+  // plain text (genuine plain-text email) — that's the whole point of
+  // the marker, so we don't keep fetching the same Gmail message every
+  // time the thread is opened.
+  if (newlyAttempted.length > 0 && !hydrated.skipped) {
+    try {
+      markEmailBodyHydrationAttempted(newlyAttempted);
+    } catch {
+      // Marker writes are best-effort; failure just means we may
+      // re-attempt one more time on the next request.
+    }
+  }
 
   const messages: Message[] = rows.map((row) => {
     const entryId = String(row.entry_id);
@@ -154,6 +198,7 @@ export async function GET(
       fetched: hydrated.bodies.size,
       failed: hydrated.failed,
       skipped: hydrated.skipped,
+      rehydrated_plain_text: newlyAttempted.length,
     },
   });
 }

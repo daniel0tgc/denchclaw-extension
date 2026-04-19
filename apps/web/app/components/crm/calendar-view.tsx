@@ -2,15 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CrmListShell, CrmEmptyState, CrmLoadingState } from "./crm-list-shell";
-import { PersonAvatar } from "./person-avatar";
-import { formatDayLabel, formatRelativeDate } from "./format-relative-date";
-
-type Attendee = {
-  id: string;
-  name: string | null;
-  email: string | null;
-  avatar_url: string | null;
-};
+import { formatDayLabel } from "./format-relative-date";
+import { EventListItem, type EventDetailPerson } from "./event-list-item";
 
 type EventRow = {
   id: string;
@@ -20,7 +13,7 @@ type EventRow = {
   organizer: string | null;
   meeting_type: string | null;
   google_event_id: string | null;
-  attendees: Attendee[];
+  attendees: EventDetailPerson[];
 };
 
 type Range = "upcoming" | "this_week" | "past";
@@ -33,14 +26,17 @@ const RANGES: ReadonlyArray<{ id: Range; label: string }> = [
 
 export function CalendarView({
   onOpenPerson,
+  onOpenCompany,
 }: {
   onOpenPerson?: (id: string) => void;
+  onOpenCompany?: (id: string) => void;
 }) {
   const [range, setRange] = useState<Range>("upcoming");
   const [events, setEvents] = useState<EventRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(
     async (signal: AbortSignal) => {
@@ -155,7 +151,16 @@ export function CalendarView({
               </h3>
               <ul className="space-y-2">
                 {dayEvents.map((event) => (
-                  <EventRow key={event.id} event={event} onOpenPerson={onOpenPerson} />
+                  <EventListItem
+                    key={event.id}
+                    event={event}
+                    expanded={expandedId === event.id}
+                    onToggle={() =>
+                      setExpandedId((prev) => (prev === event.id ? null : event.id))
+                    }
+                    onOpenPerson={onOpenPerson}
+                    onOpenCompany={onOpenCompany}
+                  />
                 ))}
               </ul>
             </section>
@@ -164,90 +169,6 @@ export function CalendarView({
       )}
     </CrmListShell>
   );
-}
-
-function EventRow({
-  event,
-  onOpenPerson,
-}: {
-  event: EventRow;
-  onOpenPerson?: (id: string) => void;
-}) {
-  const startDate = event.start_at ? new Date(event.start_at) : null;
-  const endDate = event.end_at ? new Date(event.end_at) : null;
-  const timeRange = startDate
-    ? endDate
-      ? `${formatTime(startDate)} – ${formatTime(endDate)}`
-      : formatTime(startDate)
-    : "";
-
-  const visibleAttendees = event.attendees.slice(0, 5);
-  const overflow = event.attendees.length - visibleAttendees.length;
-
-  return (
-    <li
-      className="rounded-xl border px-4 py-3"
-      style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[14px] font-medium" style={{ color: "var(--color-text)" }}>
-            {event.title?.trim() || "(no title)"}
-          </p>
-          <p className="mt-0.5 text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-            {timeRange}
-            {event.start_at && (
-              <>
-                {timeRange && " · "}
-                {formatRelativeDate(event.start_at)}
-              </>
-            )}
-          </p>
-        </div>
-        {event.meeting_type && (
-          <span
-            className="rounded-full px-2 py-0.5 text-[11px] shrink-0"
-            style={{
-              background: "var(--color-surface-hover)",
-              color: "var(--color-text-muted)",
-            }}
-          >
-            {event.meeting_type}
-          </span>
-        )}
-      </div>
-      {visibleAttendees.length > 0 && (
-        <div className="mt-2.5 flex items-center gap-1">
-          {visibleAttendees.map((person) => (
-            <button
-              key={person.id}
-              type="button"
-              onClick={() => onOpenPerson?.(person.id)}
-              disabled={!onOpenPerson}
-              title={person.name ?? person.email ?? undefined}
-              className="disabled:cursor-default"
-            >
-              <PersonAvatar
-                src={person.avatar_url}
-                name={person.name}
-                seed={person.email ?? person.id}
-                size="sm"
-              />
-            </button>
-          ))}
-          {overflow > 0 && (
-            <span className="text-[11px] ml-1" style={{ color: "var(--color-text-muted)" }}>
-              +{overflow}
-            </span>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-function formatTime(d: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(d);
 }
 
 function startOfWeek(d: Date): Date {

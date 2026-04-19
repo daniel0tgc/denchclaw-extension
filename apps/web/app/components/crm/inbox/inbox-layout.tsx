@@ -12,11 +12,9 @@ const COLLAPSE_BREAKPOINT = 900;
  * Responsive shell for the inbox.
  *
  * Modes:
- *   - desktop (>= 900px) + no focus mode
+ *   - desktop (>= 900px)
  *       → two-pane split, resizable drag handle between list + reader.
  *         Width is persisted to localStorage so it's stable across visits.
- *   - desktop + focus mode
- *       → conversation full-width; list hidden.
  *   - narrow (<  900px)
  *       → single-pane drilldown. Show list when no thread is selected,
  *         otherwise show conversation pane (with back-to-list affordance
@@ -26,12 +24,10 @@ export function InboxLayout({
   list,
   conversation,
   hasSelection,
-  focusMode,
 }: {
   list: ReactNode;
   conversation: ReactNode;
   hasSelection: boolean;
-  focusMode: boolean;
 }) {
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH);
   const [isNarrow, setIsNarrow] = useState<boolean>(false);
@@ -99,17 +95,8 @@ export function InboxLayout({
   // ─── Single-pane (narrow) ─────────────────────────────────────────────
   if (isNarrow) {
     return (
-      <div ref={containerRef} className="flex h-full min-h-0 w-full">
+      <div ref={containerRef} className="h-full min-h-0 w-full">
         {hasSelection ? conversation : list}
-      </div>
-    );
-  }
-
-  // ─── Focus mode (full-width conversation) ─────────────────────────────
-  if (focusMode && hasSelection) {
-    return (
-      <div ref={containerRef} className="flex h-full min-h-0 w-full">
-        {conversation}
       </div>
     );
   }

@@ -6,8 +6,11 @@ import { PersonAvatar } from "./person-avatar";
 import { CompanyFavicon } from "./company-favicon";
 import { ConnectionStrengthChip } from "./connection-strength-chip";
 import { CrmEmptyState, CrmLoadingState } from "./crm-list-shell";
-import { formatAbsoluteDate, formatDayLabel, formatRelativeDate } from "./format-relative-date";
+import { formatDayLabel, formatRelativeDate } from "./format-relative-date";
 import { EnrichButton } from "./enrich-button";
+import { ProfileThreadList } from "./inbox/profile-thread-list";
+import { EventListItem } from "./event-list-item";
+import { ActivityTimeline } from "./activity-timeline";
 
 // ---------------------------------------------------------------------------
 // API response shape (mirrors apps/web/app/api/crm/people/[id]/route.ts)
@@ -50,6 +53,12 @@ type PersonResponse = {
     last_message_at: string | null;
     message_count: number | null;
     gmail_thread_id: string | null;
+    snippet: string | null;
+    primary_sender_type: string | null;
+    primary_sender_id: string | null;
+    primary_sender_name: string | null;
+    primary_sender_email: string | null;
+    primary_sender_avatar_url: string | null;
   }>;
   events: Array<{
     id: string;
@@ -173,9 +182,21 @@ export function PersonProfile({
           {tab === "overview" && (
             <OverviewTab data={data} onOpenCompany={onOpenCompany} />
           )}
-          {tab === "emails" && <EmailsTab data={data} />}
-          {tab === "calendar" && <CalendarTab data={data} onOpenPerson={onOpenPerson} />}
-          {tab === "activity" && <ActivityTab data={data} />}
+          {tab === "emails" && <EmailsTab data={data} onOpenPerson={onOpenPerson} />}
+          {tab === "calendar" && (
+            <CalendarTab
+              data={data}
+              onOpenPerson={onOpenPerson}
+              onOpenCompany={onOpenCompany}
+            />
+          )}
+          {tab === "activity" && (
+            <ActivityTab
+              data={data}
+              onOpenPerson={onOpenPerson}
+              onOpenCompany={onOpenCompany}
+            />
+          )}
           {tab === "notes" && <NotesTab data={data} />}
         </div>
       </div>
@@ -461,7 +482,13 @@ function OverviewTab({
   );
 }
 
-function EmailsTab({ data }: { data: PersonResponse }) {
+function EmailsTab({
+  data,
+  onOpenPerson,
+}: {
+  data: PersonResponse;
+  onOpenPerson?: (id: string) => void;
+}) {
   if (data.threads.length === 0) {
     return (
       <CrmEmptyState
@@ -470,56 +497,24 @@ function EmailsTab({ data }: { data: PersonResponse }) {
       />
     );
   }
-  return (
-    <ul className="divide-y" style={{ borderTop: "1px solid var(--color-border)", borderBottom: "1px solid var(--color-border)" }}>
-      {data.threads.map((thread) => {
-        const linkHref = thread.gmail_thread_id
-          ? `https://mail.google.com/mail/u/0/#all/${thread.gmail_thread_id}`
-          : undefined;
-        const Inner = (
-          <div className="flex items-start gap-4 px-4 py-3 hover:bg-[var(--color-surface-hover)]">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-medium" style={{ color: "var(--color-text)" }}>
-                {thread.subject?.trim() || "(no subject)"}
-              </p>
-              <p className="mt-0.5 text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-                {thread.message_count ?? 0}{" "}
-                {(thread.message_count ?? 0) === 1 ? "message" : "messages"}
-              </p>
-            </div>
-            <div className="text-right text-[12px] shrink-0" style={{ color: "var(--color-text-muted)" }}>
-              {thread.last_message_at && (
-                <span title={formatAbsoluteDate(thread.last_message_at)}>
-                  {formatRelativeDate(thread.last_message_at)}
-                </span>
-              )}
-            </div>
-          </div>
-        );
-        return (
-          <li key={thread.id}>
-            {linkHref ? (
-              <a href={linkHref} target="_blank" rel="noreferrer" className="block">
-                {Inner}
-              </a>
-            ) : (
-              Inner
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
+  // ProfileThreadList renders the same Inbox-style row treatment AND
+  // expands the conversation reader inline on click — same MessageCard /
+  // MessageBody / QuickReply chain the Inbox uses, no external Gmail
+  // round-trip required.
+  return <ProfileThreadList threads={data.threads} onOpenPerson={onOpenPerson} />;
 }
 
 function CalendarTab({
   data,
   onOpenPerson,
+  onOpenCompany,
 }: {
   data: PersonResponse;
   onOpenPerson?: (id: string) => void;
+  onOpenCompany?: (id: string) => void;
 }) {
-  void onOpenPerson;
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (data.events.length === 0) {
     return (
       <CrmEmptyState
@@ -528,7 +523,8 @@ function CalendarTab({
       />
     );
   }
-  // Group by day
+  // Group by day — preserves the API's start_at DESC ordering inside
+  // each group, which is what the user expects (most recent on top).
   const groups = new Map<string, typeof data.events>();
   for (const event of data.events) {
     const day = event.start_at ? formatDayLabel(event.start_at) : "Unknown date";
@@ -547,31 +543,16 @@ function CalendarTab({
           </h3>
           <ul className="space-y-2">
             {events.map((event) => (
-              <li
+              <EventListItem
                 key={event.id}
-                className="rounded-xl border px-4 py-3"
-                style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <p className="text-[14px] font-medium truncate" style={{ color: "var(--color-text)" }}>
-                    {event.title?.trim() || "(no title)"}
-                  </p>
-                  {event.meeting_type && (
-                    <span
-                      className="text-[11px] rounded-full px-2 py-0.5"
-                      style={{
-                        background: "var(--color-surface-hover)",
-                        color: "var(--color-text-muted)",
-                      }}
-                    >
-                      {event.meeting_type}
-                    </span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-                  {event.start_at && formatAbsoluteDate(event.start_at)}
-                </p>
-              </li>
+                event={event}
+                expanded={expandedId === event.id}
+                onToggle={() =>
+                  setExpandedId((prev) => (prev === event.id ? null : event.id))
+                }
+                onOpenPerson={onOpenPerson}
+                onOpenCompany={onOpenCompany}
+              />
             ))}
           </ul>
         </section>
@@ -580,7 +561,15 @@ function CalendarTab({
   );
 }
 
-function ActivityTab({ data }: { data: PersonResponse }) {
+function ActivityTab({
+  data,
+  onOpenPerson,
+  onOpenCompany,
+}: {
+  data: PersonResponse;
+  onOpenPerson?: (id: string) => void;
+  onOpenCompany?: (id: string) => void;
+}) {
   const summary = data.interactions_summary;
   if (summary.total === 0) {
     return (
@@ -590,28 +579,54 @@ function ActivityTab({ data }: { data: PersonResponse }) {
       />
     );
   }
+  // The "Total" stat is the count of raw atomic interaction rows
+  // (one per message-per-counterparty + one per attendee-per-meeting),
+  // which is intentionally larger than the number of timeline rows
+  // shown below — those are de-duplicated to one row per
+  // message I exchanged with this person + one row per meeting we
+  // both attended. The label below makes that distinction explicit so
+  // users don't wonder why "500" doesn't match what they're scrolling.
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total" value={summary.total.toLocaleString()} />
-        <Stat label="Emails" value={summary.email_count.toLocaleString()} />
-        <Stat label="Meetings" value={summary.meeting_count.toLocaleString()} />
-        <Stat
-          label="Last reply"
-          value={summary.last_inbound_at ? formatRelativeDate(summary.last_inbound_at) : "—"}
-        />
-      </div>
-      {summary.last_outbound_at && (
-        <div className="rounded-2xl border px-4 py-3 text-[13px]" style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}>
-          <p style={{ color: "var(--color-text-muted)" }}>
-            You last reached out{" "}
-            <strong style={{ color: "var(--color-text)" }}>
-              {formatRelativeDate(summary.last_outbound_at)}
-            </strong>
-            .
-          </p>
+    <div className="space-y-6">
+      <section className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Interactions" value={summary.total.toLocaleString()} />
+          <Stat label="Emails" value={summary.email_count.toLocaleString()} />
+          <Stat label="Meetings" value={summary.meeting_count.toLocaleString()} />
+          <Stat
+            label="Last reply"
+            value={summary.last_inbound_at ? formatRelativeDate(summary.last_inbound_at) : "—"}
+          />
         </div>
-      )}
+        {summary.last_outbound_at && (
+          <div
+            className="rounded-2xl border px-4 py-3 text-[13px]"
+            style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+          >
+            <p style={{ color: "var(--color-text-muted)" }}>
+              You last reached out{" "}
+              <strong style={{ color: "var(--color-text)" }}>
+                {formatRelativeDate(summary.last_outbound_at)}
+              </strong>
+              .
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3
+          className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em]"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Timeline
+        </h3>
+        <ActivityTimeline
+          personId={data.person.id}
+          onOpenPerson={onOpenPerson}
+          onOpenCompany={onOpenCompany}
+        />
+      </section>
     </div>
   );
 }

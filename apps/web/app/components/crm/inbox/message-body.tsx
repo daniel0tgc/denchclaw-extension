@@ -1,15 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 /**
  * Renders a single message body with format detection:
  *
- *   - HTML-shaped content → rendered in a strict sandboxed iframe via
- *     `srcdoc`. Sandbox is `allow-popups` only — NO scripts, NO same-
- *     origin, NO forms, NO modals. We wrap the body in a base stylesheet
- *     that keeps it inside the conversation column (max-width 100%),
- *     forces all links to open in a new tab, and scopes images.
+ *   - HTML-shaped content → rendered in a sandboxed iframe via `srcdoc`.
+ *     We strip every `<script>` block, every `on*=…` inline event handler,
+ *     and every `javascript:` URL from the email HTML before injecting,
+ *     then enable `allow-scripts` (without `allow-same-origin`) so a
+ *     tiny measurement script we inject inside the iframe can postMessage
+ *     its real document height back to the parent. This is the same
+ *     pattern Gmail / Outlook web use because parent→child contentDocument
+ *     reads are unreliable across sandbox/srcdoc/lazy-load combinations,
+ *     while in-iframe self-measurement always works.
+ *
+ *     Without `allow-same-origin` the iframe lives in an opaque origin,
+ *     so even if any malicious markup slipped past sanitization it cannot
+ *     reach the parent's cookies/storage/DOM — the only channel out is
+ *     `postMessage`, and we filter incoming messages by a per-instance
+ *     token to ignore spoofs.
  *
  *   - Plain text / markdown → rendered as preformatted text inside a
  *     scrollable column. We deliberately avoid pulling the workspace's
@@ -17,8 +27,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
  *     uses markdown syntax intentionally and we don't want subject lines
  *     like "Re: Section 1" to render as a heading.
  *
- * The iframe auto-resizes to fit its content height (capped at 1200px) so
- * the conversation pane scrolls naturally instead of nesting scrollbars.
+ * The iframe auto-resizes to its full natural content height — no cap, no
+ * internal scrollbar — so the conversation pane is the only scroll surface
+ * and the email reads as one continuous document.
  */
 export function MessageBody({ body, preview }: { body: string | null; preview: string | null }) {
   const text = body?.trim() || preview?.trim() || "";
@@ -75,86 +86,189 @@ function SandboxedHtmlBody({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(160);
 
-  // Build the srcdoc once per body change. Wrapped in a minimal HTML
-  // shell with a base stylesheet that:
-  //   - clamps width
-  //   - forces links to _blank (so clicks don't break out of the iframe)
-  //   - scales images to the column width
-  //   - uses Bookerly + Instrument Serif via CSS @font-face is overkill
-  //     here; system fonts inside the iframe is fine because the parent
-  //     UI already provides editorial type around it.
-  const srcdoc = useMemo(() => buildSrcdoc(html), [html]);
+  // Per-instance token. The in-iframe measurement script tags every
+  // postMessage with this token, and the parent listener only accepts
+  // matching messages — so two open emails on the page never confuse
+  // each other's heights.
+  const reactId = useId();
+  const token = useMemo(
+    () => reactId.replace(/[^a-zA-Z0-9_-]/g, "") || "iframe",
+    [reactId],
+  );
+
+  const srcdoc = useMemo(() => buildSrcdoc(html, token), [html, token]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) {return;}
-    let cancelled = false;
-    let observer: ResizeObserver | null = null;
-
-    const measure = () => {
-      if (cancelled) {return;}
-      try {
-        const doc = iframe.contentDocument;
-        if (!doc?.body) {return;}
-        const next = Math.min(1200, Math.max(60, doc.body.scrollHeight + 8));
-        setHeight((prev) => (Math.abs(prev - next) > 2 ? next : prev));
-      } catch {
-        // contentDocument access can throw in some edge cases — keep height as-is.
+    const onMessage = (event: MessageEvent) => {
+      // Only accept messages from THIS iframe's window — not from any
+      // other iframe / extension / parent that happens to broadcast.
+      if (event.source !== iframe.contentWindow) {return;}
+      const data = event.data as { type?: unknown; token?: unknown; height?: unknown } | null;
+      if (
+        !data ||
+        typeof data !== "object" ||
+        data.type !== "denchclaw_email_height" ||
+        data.token !== token
+      ) {
+        return;
       }
+      const reported = Number(data.height);
+      if (!Number.isFinite(reported)) {return;}
+      // No padding added here on purpose — any added pixels would feed
+      // back into the next measurement (clientHeight grows with the
+      // iframe), creating a runaway loop. Breathing room lives inside
+      // the iframe body's own padding instead.
+      const next = Math.max(60, Math.round(reported));
+      setHeight((prev) => (Math.abs(prev - next) > 2 ? next : prev));
     };
-
-    const handleLoad = () => {
-      measure();
-      try {
-        const doc = iframe.contentDocument;
-        if (doc?.body && typeof ResizeObserver !== "undefined") {
-          observer = new ResizeObserver(measure);
-          observer.observe(doc.body);
-        }
-      } catch {
-        // no-op
-      }
-    };
-
-    iframe.addEventListener("load", handleLoad);
-    // In case load fired before the listener attached.
-    if (iframe.contentDocument?.readyState === "complete") {
-      handleLoad();
-    }
-
-    return () => {
-      cancelled = true;
-      iframe.removeEventListener("load", handleLoad);
-      observer?.disconnect();
-    };
-  }, [srcdoc]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [token]);
 
   return (
     <iframe
       ref={iframeRef}
       title="Email body"
       srcDoc={srcdoc}
-      // Strict sandbox: NO scripts, NO same-origin, NO forms, NO modals.
-      // `allow-popups` lets users follow target=_blank links, which we
-      // inject below.
-      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      // Sandbox flags:
+      //   - `allow-scripts`: required for our injected measurement script
+      //     to run and postMessage the height back. Email-supplied JS is
+      //     stripped by stripScripts() before the srcdoc is built.
+      //   - NO `allow-same-origin`: the iframe lives in an opaque origin,
+      //     so even if some script slipped past sanitization it cannot
+      //     read the parent's cookies/storage/DOM. The only channel out
+      //     is postMessage, which we filter by a per-instance token.
+      //   - `allow-popups` + `allow-popups-to-escape-sandbox`: clicks on
+      //     `<a target="_blank">` (forced via our `<base>` injection)
+      //     open in a real new tab.
+      sandbox="allow-popups allow-popups-to-escape-sandbox allow-scripts"
       referrerPolicy="no-referrer"
-      loading="lazy"
       style={{
         width: "100%",
         height,
         border: "none",
         background: "var(--color-surface)",
         colorScheme: "light",
+        display: "block",
       }}
     />
   );
 }
 
-function buildSrcdoc(html: string): string {
-  // Wrap the user-supplied HTML in a minimal document with a base
-  // stylesheet + a <base> tag forcing target=_blank on every anchor.
-  // We do NOT inject any JavaScript — the sandbox blocks scripts anyway.
+// ---------------------------------------------------------------------------
+// HTML sanitization — strips everything that could execute JS in the iframe.
+// Belt-and-suspenders alongside the sandbox: even with `allow-scripts`, we
+// only want OUR measurement script to actually run.
+// ---------------------------------------------------------------------------
+
+function stripScripts(html: string): string {
+  return (
+    html
+      // <script>...</script> blocks (greedy enough for nested attempts).
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+      // Orphan <script> open/close tags.
+      .replace(/<\/?script\b[^>]*>/gi, "")
+      // Inline event handlers — onclick, onload, onerror, onmouseover, etc.
+      .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, "")
+      .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, "")
+      .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "")
+      // javascript: URLs in href / src / etc.
+      .replace(/javascript\s*:/gi, "")
+  );
+}
+
+function buildMeasureScript(token: string): string {
+  // Runs INSIDE the iframe. Computes the document's natural height and
+  // postMessages it to the parent. Re-runs on every meaningful event:
+  // initial paint, every image load (each one), DOMContentLoaded, full
+  // load, ResizeObserver mutations, and a backstop polling schedule for
+  // slow webfonts / external assets that don't trigger any of the above.
+  return `<script>(function(){
+var TOKEN = ${JSON.stringify(token)};
+function measure(){
+  try {
+    var b = document.body;
+    if (!b) return;
+    // CRITICAL: only measure the BODY (content), never the documentElement
+    // or window. documentElement.clientHeight / scrollHeight reflect the
+    // iframe's CURRENT viewport height, not the document's natural height
+    // — using them here creates a feedback loop where every measurement
+    // reports the iframe's own grown size and the iframe keeps growing.
+    var height = Math.max(b.scrollHeight, b.offsetHeight);
+    parent.postMessage({ type: 'denchclaw_email_height', token: TOKEN, height: height }, '*');
+  } catch (e) {}
+}
+function attach(){
+  measure();
+  try {
+    // Observe ONLY the body — observing documentElement would also fire
+    // on the viewport resize that we ourselves cause when growing the
+    // iframe, contributing to feedback-loop runs.
+    if (typeof ResizeObserver !== 'undefined' && document.body) {
+      var ro = new ResizeObserver(measure);
+      ro.observe(document.body);
+    }
+  } catch (e) {}
+  var imgs = document.images || [];
+  for (var i = 0; i < imgs.length; i++) {
+    if (!imgs[i].complete) {
+      imgs[i].addEventListener('load', measure);
+      imgs[i].addEventListener('error', measure);
+    }
+  }
+  var delays = [50, 200, 500, 1000, 2000, 4000, 8000];
+  for (var j = 0; j < delays.length; j++) setTimeout(measure, delays[j]);
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', attach);
+} else {
+  attach();
+}
+window.addEventListener('load', measure);
+})();</script>`;
+}
+
+function buildSrcdoc(html: string, token: string): string {
+  // Real marketing emails (MJML, Gmail-rendered HTML, etc.) almost always
+  // come as a complete HTML document — `<!doctype><html><head><style>…
+  // </style></head><body>…</body></html>`. If we naively wrap that inside
+  // our own `<html><body>`, the parser treats the nested <html>/<body>
+  // tags as invalid and the email's content lands in unexpected places
+  // in the DOM (and `body.scrollHeight` reports a tiny value).
+  //
+  // So: if the body is already a full document, surgically inject our
+  // additions (base href + image clamp + measurement script) into its
+  // own <head>. Otherwise, wrap the fragment in a styled shell.
+  const sanitized = stripScripts(html.trim());
+  const isFullDoc = /^\s*(?:<!doctype|<html\b)/i.test(sanitized);
+  const measureScript = buildMeasureScript(token);
+
+  if (isFullDoc) {
+    // Minimal head injection — we deliberately don't add a base stylesheet
+    // because the email ships its own; piling our font/padding on top
+    // tends to make marketing layouts look broken.
+    const HEAD_INJECT = `<base target="_blank"><style>
+  img, video { max-width: 100% !important; height: auto !important; }
+  table { max-width: 100%; }
+  img[width="1"][height="1"] { display: none !important; }
+</style>${measureScript}`;
+
+    const headOpen = sanitized.match(/<head\b[^>]*>/i);
+    if (headOpen?.index !== undefined) {
+      const cut = headOpen.index + headOpen[0].length;
+      return sanitized.slice(0, cut) + HEAD_INJECT + sanitized.slice(cut);
+    }
+    const htmlOpen = sanitized.match(/<html\b[^>]*>/i);
+    if (htmlOpen?.index !== undefined) {
+      const cut = htmlOpen.index + htmlOpen[0].length;
+      return `${sanitized.slice(0, cut)}<head>${HEAD_INJECT}</head>${sanitized.slice(cut)}`;
+    }
+    // Doctype-only with no <html> tag — extremely unusual; fall through to wrap.
+  }
+
+  // Fragment path: wrap in our editorial shell.
   const STYLE = `
     :root { color-scheme: light; }
     html, body {
@@ -185,7 +299,8 @@ function buildSrcdoc(html: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base target="_blank">
 <style>${STYLE}</style>
+${measureScript}
 </head>
-<body>${html}</body>
+<body>${sanitized}</body>
 </html>`;
 }

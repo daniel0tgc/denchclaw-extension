@@ -24,11 +24,13 @@ CREATE OR REPLACE MACRO nanoid32() AS (
   FROM generate_series(1, 32)
 );
 
+-- NOTE: Object icons live ONLY in `<objectDir>/.object.yaml` under the
+-- `icon:` key. There is intentionally no `icon` column on `objects` —
+-- never include one in INSERT/UPDATE statements.
 CREATE TABLE IF NOT EXISTS objects (
   id VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()::VARCHAR),
   name VARCHAR NOT NULL,
   description VARCHAR,
-  icon VARCHAR,
   default_view VARCHAR DEFAULT 'table',
   parent_document_id VARCHAR,
   sort_order INTEGER DEFAULT 0,
@@ -249,9 +251,12 @@ All operations use `exec` with `duckdb {{WORKSPACE_PATH}}/workspace.duckdb`. Bat
 
 ### Create Object
 
+Icons are not part of the `objects` row — set `icon:` in `<objectDir>/.object.yaml`
+after the INSERT, or use the icon picker in the web UI.
+
 ```sql
-INSERT INTO objects (name, description, icon, default_view)
-VALUES ('lead', 'Sales leads tracking', 'user-plus', 'table')
+INSERT INTO objects (name, description, default_view)
+VALUES ('lead', 'Sales leads tracking', 'table')
 ON CONFLICT (name) DO NOTHING RETURNING *;
 ```
 

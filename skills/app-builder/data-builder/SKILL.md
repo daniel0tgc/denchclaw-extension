@@ -1006,10 +1006,10 @@ permissions:
       async function loadDashboard() {
         try {
           const result = await window.dench.db.query(`
-          SELECT o.name, o.description, o.icon, COUNT(e.id) as entry_count
+          SELECT o.name, o.description, COUNT(e.id) as entry_count
           FROM objects o
           LEFT JOIN entries e ON e.object_id = o.id
-          GROUP BY o.name, o.description, o.icon
+          GROUP BY o.name, o.description
           ORDER BY entry_count DESC
         `);
 

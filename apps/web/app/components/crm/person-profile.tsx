@@ -352,7 +352,7 @@ function PersonHeader({
               </svg>
             </a>
           )}
-          <EnrichButton type="people" id={person.id} />
+          {/* <EnrichButton type="people" id={person.id} /> */}
         </div>
       </div>
 

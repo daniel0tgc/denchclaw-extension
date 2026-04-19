@@ -25,6 +25,7 @@ vi.mock("@/lib/workspace", () => ({
   resolveDuckdbBin: vi.fn(() => null),
   discoverDuckDBPaths: vi.fn(() => []),
   discoverDuckDBPathsAsync: vi.fn(async () => []),
+  readObjectYamlIcon: vi.fn(() => undefined),
 }));
 
 describe("Workspace Objects API", () => {
@@ -52,6 +53,7 @@ describe("Workspace Objects API", () => {
       resolveDuckdbBin: vi.fn(() => null),
       discoverDuckDBPaths: vi.fn(() => []),
       discoverDuckDBPathsAsync: vi.fn(async () => []),
+      readObjectYamlIcon: vi.fn(() => undefined),
     }));
   });
 

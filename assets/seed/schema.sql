@@ -11,11 +11,13 @@ CREATE OR REPLACE MACRO nanoid32() AS (
 
 -- ── Core tables ──
 
+-- NOTE: object icons are stored ONLY in `<objectDir>/.object.yaml` (single
+-- source of truth). The legacy `icon` column has been retired — DO NOT add
+-- it back here. Sidebar / search / object header all read yaml.
 CREATE TABLE IF NOT EXISTS objects (
   id VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()::VARCHAR),
   name VARCHAR NOT NULL,
   description VARCHAR,
-  icon VARCHAR,
   default_view VARCHAR DEFAULT 'table',
   parent_document_id VARCHAR,
   sort_order INTEGER DEFAULT 0,
@@ -107,15 +109,20 @@ CREATE TABLE IF NOT EXISTS action_runs (
 );
 
 -- ── Seed: people ──
+-- (Icon for each seeded object lives in `<object>/.object.yaml` only.)
 
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_people_00000000000000', 'people', 'Contact management', 'users', 'table', true, 0);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_people_00000000000000', 'people', 'Contact management', 'table', true, 0);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_people_fullname_000000', 'seed_obj_people_00000000000000', 'Full Name', 'text', true, 0),
   ('seed_fld_people_email_000000000', 'seed_obj_people_00000000000000', 'Email Address', 'email', true, 1),
-  ('seed_fld_people_phone_000000000', 'seed_obj_people_00000000000000', 'Phone Number', 'phone', false, 2),
-  ('seed_fld_people_company_0000000', 'seed_obj_people_00000000000000', 'Company', 'text', false, 3);
+  ('seed_fld_people_phone_000000000', 'seed_obj_people_00000000000000', 'Phone Number', 'phone', false, 2);
+
+-- The people.Company `relation` field declaration and its entry_fields are
+-- inserted AFTER the company object + entries below (the FK on
+-- `fields.related_object_id` and on `entry_fields.value` requires the
+-- company rows to already exist).
 
 INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
   ('seed_fld_people_status_00000000', 'seed_obj_people_00000000000000', 'Status', 'enum', false,
@@ -131,31 +138,28 @@ INSERT INTO entries (id, object_id) VALUES
   ('seed_ent_people_alex_0000000000', 'seed_obj_people_00000000000000'),
   ('seed_ent_people_priya_000000000', 'seed_obj_people_00000000000000');
 
+-- people.Company is a relation, declared + populated below the company
+-- section so its FK references already exist when these rows land.
 INSERT INTO entry_fields (entry_id, field_id, value) VALUES
   ('seed_ent_people_sarah_000000000', 'seed_fld_people_fullname_000000', 'Sarah Chen'),
   ('seed_ent_people_sarah_000000000', 'seed_fld_people_email_000000000', 'sarah@acmecorp.com'),
   ('seed_ent_people_sarah_000000000', 'seed_fld_people_phone_000000000', '+1 (555) 234-5678'),
-  ('seed_ent_people_sarah_000000000', 'seed_fld_people_company_0000000', 'Acme Corp'),
   ('seed_ent_people_sarah_000000000', 'seed_fld_people_status_00000000', 'Active'),
   ('seed_ent_people_james_000000000', 'seed_fld_people_fullname_000000', 'James Wilson'),
   ('seed_ent_people_james_000000000', 'seed_fld_people_email_000000000', 'james@techcorp.io'),
   ('seed_ent_people_james_000000000', 'seed_fld_people_phone_000000000', '+1 (555) 876-5432'),
-  ('seed_ent_people_james_000000000', 'seed_fld_people_company_0000000', 'TechCorp Industries'),
   ('seed_ent_people_james_000000000', 'seed_fld_people_status_00000000', 'Active'),
   ('seed_ent_people_maria_000000000', 'seed_fld_people_fullname_000000', 'Maria Garcia'),
   ('seed_ent_people_maria_000000000', 'seed_fld_people_email_000000000', 'maria@innovate.co'),
   ('seed_ent_people_maria_000000000', 'seed_fld_people_phone_000000000', '+1 (555) 345-6789'),
-  ('seed_ent_people_maria_000000000', 'seed_fld_people_company_0000000', 'Innovate Co'),
   ('seed_ent_people_maria_000000000', 'seed_fld_people_status_00000000', 'Lead'),
   ('seed_ent_people_alex_0000000000', 'seed_fld_people_fullname_000000', 'Alex Thompson'),
   ('seed_ent_people_alex_0000000000', 'seed_fld_people_email_000000000', 'alex@designstudio.io'),
   ('seed_ent_people_alex_0000000000', 'seed_fld_people_phone_000000000', '+1 (555) 567-8901'),
-  ('seed_ent_people_alex_0000000000', 'seed_fld_people_company_0000000', 'Design Studio'),
   ('seed_ent_people_alex_0000000000', 'seed_fld_people_status_00000000', 'Active'),
   ('seed_ent_people_priya_000000000', 'seed_fld_people_fullname_000000', 'Priya Patel'),
   ('seed_ent_people_priya_000000000', 'seed_fld_people_email_000000000', 'priya@cloudnine.dev'),
   ('seed_ent_people_priya_000000000', 'seed_fld_people_phone_000000000', '+1 (555) 789-0123'),
-  ('seed_ent_people_priya_000000000', 'seed_fld_people_company_0000000', 'CloudNine'),
   ('seed_ent_people_priya_000000000', 'seed_fld_people_status_00000000', 'Lead');
 
 CREATE OR REPLACE VIEW v_people AS
@@ -170,8 +174,8 @@ PIVOT (
 
 -- ── Seed: company ──
 
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_company_0000000000000', 'company', 'Company tracking', 'building-2', 'table', true, 1);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_company_0000000000000', 'company', 'Company tracking', 'table', true, 1);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_company_name_000000000', 'seed_obj_company_0000000000000', 'Company Name', 'text', true, 0);
@@ -221,10 +225,23 @@ PIVOT (
   WHERE e.object_id = 'seed_obj_company_0000000000000'
 ) ON field_name IN ('Company Name', 'Industry', 'Website', 'Type', 'Notes') USING first(value);
 
+-- ── Seed: people.Company relation (declared after company exists) ──
+-- The relation lets the unified ObjectTable show a "People (via Company)"
+-- reverse column on the Companies table. Sarah/James/Maria link to the
+-- seeded companies; Alex/Priya are intentionally left without a Company
+-- so the empty state is also represented.
+INSERT INTO fields (id, object_id, name, type, required, related_object_id, relationship_type, sort_order) VALUES
+  ('seed_fld_people_company_0000000', 'seed_obj_people_00000000000000', 'Company', 'relation', false, 'seed_obj_company_0000000000000', 'many_to_one', 3);
+
+INSERT INTO entry_fields (entry_id, field_id, value) VALUES
+  ('seed_ent_people_sarah_000000000', 'seed_fld_people_company_0000000', 'seed_ent_company_acme_000000000'),
+  ('seed_ent_people_james_000000000', 'seed_fld_people_company_0000000', 'seed_ent_company_tech_000000000'),
+  ('seed_ent_people_maria_000000000', 'seed_fld_people_company_0000000', 'seed_ent_company_innov_00000000');
+
 -- ── Seed: task ──
 
-INSERT INTO objects (id, name, description, icon, default_view, sort_order)
-VALUES ('seed_obj_task_000000000000000', 'task', 'Task tracking board', 'check-square', 'kanban', 2);
+INSERT INTO objects (id, name, description, default_view, sort_order)
+VALUES ('seed_obj_task_000000000000000', 'task', 'Task tracking board', 'kanban', 2);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_task_title_00000000000', 'seed_obj_task_000000000000000', 'Title', 'text', true, 0),
@@ -330,7 +347,7 @@ INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_color
   ('seed_fld_company_source_0000000', 'seed_obj_company_0000000000000', 'Source', 'enum', false,
    '["Manual","Gmail","Calendar"]'::JSON, '["#94a3b8","#ef4444","#3b82f6"]'::JSON, 10);
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
-  ('seed_fld_company_domain_0000000', 'seed_obj_company_0000000000000', 'Domain', 'text', false, 11),
+  ('seed_fld_company_domain_0000000', 'seed_obj_company_0000000000000', 'Domain', 'url', false, 11),
   ('seed_fld_company_strength_00000', 'seed_obj_company_0000000000000', 'Strength Score', 'number', false, 12),
   ('seed_fld_company_lastinter_0000', 'seed_obj_company_0000000000000', 'Last Interaction At', 'date', false, 13);
 
@@ -353,8 +370,8 @@ PIVOT (
 ) USING first(value);
 
 -- ── New object: email_thread ──
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_email_thread_000000000', 'email_thread', 'Email thread synced from Gmail', 'messages-square', 'table', true, 10);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_email_thread_000000000', 'email_thread', 'Email thread synced from Gmail', 'table', true, 10);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_emthread_subject_0000', 'seed_obj_email_thread_000000000', 'Subject', 'text', true, 0),
@@ -381,8 +398,8 @@ PIVOT (
 ) USING first(value);
 
 -- ── New object: email_message ──
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_email_message_00000000', 'email_message', 'Single email message synced from Gmail', 'mail', 'table', true, 11);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_email_message_00000000', 'email_message', 'Single email message synced from Gmail', 'table', true, 11);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_emmsg_subject_0000000', 'seed_obj_email_message_00000000', 'Subject', 'text', false, 0),
@@ -419,8 +436,8 @@ PIVOT (
 ) USING first(value);
 
 -- ── New object: calendar_event ──
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_calendar_event_0000000', 'calendar_event', 'Calendar event synced from Google Calendar', 'calendar', 'calendar', true, 12);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_calendar_event_0000000', 'calendar_event', 'Calendar event synced from Google Calendar', 'calendar', true, 12);
 
 INSERT INTO fields (id, object_id, name, type, required, sort_order) VALUES
   ('seed_fld_calev_title_0000000000', 'seed_obj_calendar_event_0000000', 'Title', 'text', true, 0),
@@ -452,8 +469,8 @@ PIVOT (
 ) USING first(value);
 
 -- ── New object: interaction ──
-INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order)
-VALUES ('seed_obj_interaction_00000000000', 'interaction', 'Email or meeting between you and a contact (used for ranking)', 'activity', 'timeline', true, 13);
+INSERT INTO objects (id, name, description, default_view, immutable, sort_order)
+VALUES ('seed_obj_interaction_00000000000', 'interaction', 'Email or meeting between you and a contact (used for ranking)', 'timeline', true, 13);
 
 INSERT INTO fields (id, object_id, name, type, required, enum_values, enum_colors, sort_order) VALUES
   ('seed_fld_inter_type_00000000000', 'seed_obj_interaction_00000000000', 'Type', 'enum', false,

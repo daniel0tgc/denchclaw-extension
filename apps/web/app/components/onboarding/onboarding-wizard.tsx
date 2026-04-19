@@ -12,6 +12,8 @@ import { ConnectGmailStep } from "./connect-gmail-step";
 import { ConnectCalendarStep } from "./connect-calendar-step";
 import { SyncStep } from "./sync-step";
 import { CompleteStep } from "./complete-step";
+import { ProfileSwitcher } from "../workspace/profile-switcher";
+import { CreateWorkspaceDialog } from "../workspace/create-workspace-dialog";
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
   welcome: "Welcome",
@@ -36,10 +38,32 @@ const VISIBLE_STEPS: OnboardingStep[] = [
  * Top-level orchestrator. Owns the in-memory copy of `OnboardingState`,
  * delegates rendering to the per-step component, and refetches state from
  * the server after every transition so a refresh resumes exactly here.
+ *
+ * `workspaceCount` is rendered server-side so the workspace switcher (only
+ * shown when more than one workspace exists) appears immediately on first
+ * paint without a fetch flicker.
  */
-export function OnboardingWizard({ initialState }: { initialState: OnboardingState }) {
+export function OnboardingWizard({
+  initialState,
+  workspaceCount = 1,
+  activeWorkspace = null,
+}: {
+  initialState: OnboardingState;
+  workspaceCount?: number;
+  activeWorkspace?: string | null;
+}) {
   const [state, setState] = useState<OnboardingState>(initialState);
   const [refreshing, setRefreshing] = useState(false);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+
+  // Switching or creating a workspace flips the active workspace server-side;
+  // a full reload re-runs the page server component so it can either redirect
+  // (target workspace already onboarded) or render the wizard for the new
+  // workspace's persisted state. router.refresh() is not enough because
+  // `redirect()` lives in the server component path.
+  const reloadAfterWorkspaceChange = useCallback(() => {
+    window.location.reload();
+  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -80,22 +104,100 @@ export function OnboardingWizard({ initialState }: { initialState: OnboardingSta
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10 lg:flex-row lg:gap-16 lg:py-16">
         {/* Progress rail */}
         <aside className="lg:w-72 lg:shrink-0">
-          <div className="mb-8 flex items-center gap-2">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold"
-              style={{
-                background: "var(--color-accent)",
-                color: "#fff",
-              }}
-            >
-              D
+          <div className="mb-8">
+            <div className="flex items-center gap-2">
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold"
+                style={{
+                  background: "var(--color-accent)",
+                  color: "#fff",
+                }}
+              >
+                D
+              </div>
+              <span
+                className="font-instrument text-xl tracking-tight"
+                style={{ color: "var(--color-text)" }}
+              >
+                DenchClaw
+              </span>
             </div>
-            <span
-              className="font-instrument text-xl tracking-tight"
-              style={{ color: "var(--color-text)" }}
-            >
-              DenchClaw
-            </span>
+
+            {/* Workspace switcher: each workspace has its own onboarding state,
+                so when more than one exists we let the user jump between them
+                (or hop to one that's already onboarded) without finishing this
+                wizard first. */}
+            {workspaceCount > 1 && (
+              <div className="mt-4">
+                <p
+                  className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em]"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  Workspace
+                </p>
+                <ProfileSwitcher
+                  activeWorkspaceHint={activeWorkspace}
+                  onWorkspaceSwitch={reloadAfterWorkspaceChange}
+                  onWorkspaceDelete={reloadAfterWorkspaceChange}
+                  onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
+                  trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
+                    <button
+                      type="button"
+                      onClick={onClick}
+                      disabled={switching}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] transition-colors disabled:opacity-50"
+                      style={{
+                        background: "var(--color-surface)",
+                        border: "1px solid var(--color-border)",
+                        color: "var(--color-text)",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (switching) return;
+                        (e.currentTarget as HTMLElement).style.background =
+                          "var(--color-surface-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.background =
+                          "var(--color-surface)";
+                      }}
+                      title="Switch workspace"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="shrink-0"
+                        style={{ color: "var(--color-text-muted)" }}
+                      >
+                        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                      </svg>
+                      <span className="flex-1 truncate font-medium">
+                        {workspaceName ?? "Select workspace"}
+                      </span>
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="shrink-0"
+                        style={{ color: "var(--color-text-muted)" }}
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                  )}
+                />
+              </div>
+            )}
           </div>
 
           <ol className="space-y-1.5">
@@ -182,6 +284,12 @@ export function OnboardingWizard({ initialState }: { initialState: OnboardingSta
           </div>
         </main>
       </div>
+
+      <CreateWorkspaceDialog
+        isOpen={createWorkspaceOpen}
+        onClose={() => setCreateWorkspaceOpen(false)}
+        onCreated={reloadAfterWorkspaceChange}
+      />
     </div>
   );
 }

@@ -37,7 +37,6 @@ export type TreeNode = {
 
 type DbObject = {
   name: string;
-  icon?: string;
   default_view?: string;
   hidden_in_sidebar?: boolean | null;
 };
@@ -110,15 +109,16 @@ async function loadDbObjects(): Promise<{
   let rows: Array<DbObject & { name: string }> = [];
   try {
     rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT name, icon, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
+      "SELECT name, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
       "name",
     );
   } catch {
-    // Older DuckDB schema — column doesn't exist. Fall back to fetching
-    // the columns we do have; the HARDCODED_HIDDEN_OBJECT_NAMES set
-    // already keeps the CRM-only objects out of the tree.
+    // Older DuckDB schema — hidden_in_sidebar column doesn't exist. Fall back
+    // to fetching only the columns we know are present; the
+    // HARDCODED_HIDDEN_OBJECT_NAMES set already keeps the CRM-only objects
+    // out of the tree.
     rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT name, icon, default_view FROM objects",
+      "SELECT name, default_view FROM objects",
       "name",
     );
   }
@@ -257,7 +257,7 @@ async function buildTree(
           name: entry.name,
           path: relPath,
           type: "object",
-          icon: objectMeta?.icon ?? dbObject?.icon,
+          icon: objectMeta?.icon,
           defaultView:
             ((objectMeta?.defaultView ?? dbObject?.default_view) as
               | "table"

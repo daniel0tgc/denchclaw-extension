@@ -8,6 +8,7 @@ import {
   discoverDuckDBPathsAsync,
   getObjectViews,
   duckdbExecOnFileAsync,
+  readObjectYamlIcon,
 } from "@/lib/workspace";
 import { deserializeFilters, buildWhereClause, buildOrderByClause, type FieldMeta } from "@/lib/object-filters";
 
@@ -18,12 +19,13 @@ type ObjectRow = {
   id: string;
   name: string;
   description?: string;
-  icon?: string;
   default_view?: string;
   display_field?: string;
   immutable?: boolean;
   created_at?: string;
   updated_at?: string;
+  /** Overlay from `<objectDir>/.object.yaml` — never read from DuckDB. */
+  icon?: string;
 };
 
 type FieldRow = {
@@ -547,8 +549,13 @@ export async function GET(
   // Include saved views from .object.yaml
   const { views: savedViews, activeView, viewSettings } = getObjectViews(name);
 
+  // Overlay the object icon from .object.yaml. The DuckDB `objects.icon`
+  // column has been retired — yaml is the single source of truth.
+  const yamlIcon = readObjectYamlIcon(name);
+  const objectWithIcon = { ...obj, icon: yamlIcon };
+
   return Response.json({
-    object: obj,
+    object: objectWithIcon,
     fields: enrichedFields,
     statuses,
     entries,

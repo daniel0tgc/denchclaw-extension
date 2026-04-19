@@ -19,8 +19,6 @@ import { useTheme } from "next-themes";
 import { type TreeNode } from "./file-manager-tree";
 import { ProfileSwitcher } from "./profile-switcher";
 import { CreateWorkspaceDialog } from "./create-workspace-dialog";
-import { ChatSessionsSidebar } from "./chat-sessions-sidebar";
-import type { WebSession, SidebarSubagentInfo, SidebarGatewaySession } from "./chat-sessions-sidebar";
 import type { SearchIndexItem } from "@/lib/search-index";
 import { displayObjectName } from "@/lib/object-display-name";
 import { CrmObjectIcon } from "./crm-object-icon";
@@ -84,24 +82,6 @@ type WorkspaceSidebarProps = {
   activeWorkspace?: string | null;
   /** Called after workspace switches or workspace creation so parent can refresh state. */
   onWorkspaceChanged?: () => void;
-  /** Chat sessions embedded in the sidebar's flex-1 middle area (v3). */
-  chatSessions?: WebSession[];
-  activeChatSessionId?: string | null;
-  activeChatSessionTitle?: string;
-  chatStreamingSessionIds?: Set<string>;
-  chatSubagents?: SidebarSubagentInfo[];
-  chatActiveSubagentKey?: string | null;
-  chatSessionsLoading?: boolean;
-  onSelectChatSession?: (sessionId: string) => void;
-  onNewChatSession?: () => void;
-  onSelectChatSubagent?: (sessionKey: string) => void;
-  onDeleteChatSession?: (sessionId: string) => void;
-  onRenameChatSession?: (sessionId: string, newTitle: string) => void;
-  onStopChatSession?: (sessionId: string) => void;
-  onStopChatSubagent?: (sessionKey: string) => void;
-  chatGatewaySessions?: SidebarGatewaySession[];
-  chatActiveGatewaySessionKey?: string | null;
-  onSelectGatewayChatSession?: (sessionKey: string, sessionId: string) => void;
   /** Navigate to a sidebar section (cloud, integrations, skills, cron). */
   onNavigate?: (
     target:
@@ -310,30 +290,10 @@ export function WorkspaceSidebar({
   customCrmObjects,
   activeCrmObjectName = null,
   onNavigateToCrmObject,
-  searchFn,
-  chatSessions,
-  activeChatSessionId,
-  activeChatSessionTitle,
-  chatStreamingSessionIds,
-  chatSubagents,
-  chatActiveSubagentKey,
-  chatSessionsLoading,
-  onSelectChatSession,
-  onNewChatSession,
-  onSelectChatSubagent,
-  onDeleteChatSession,
-  onRenameChatSession,
-  onStopChatSession,
-  onStopChatSubagent,
-  chatGatewaySessions,
-  chatActiveGatewaySessionKey,
-  onSelectGatewayChatSession,
 }: WorkspaceSidebarProps) {
 	const width = mobile ? "280px" : (widthProp ?? 260);
 	const isCompact = !mobile && compact;
 	const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
-
-	const orgInitial = (orgName || "W").trim().slice(0, 1).toUpperCase() || "W";
 
 	const crmNavItems = [
 		{
@@ -433,29 +393,29 @@ export function WorkspaceSidebar({
 		>
 			{/* Header: workspace switcher (icon-only). Click opens dropdown to switch workspaces. */}
 			<div className="flex items-center justify-center h-[44px] shrink-0">
-				<div className="w-9">
-					<ProfileSwitcher
-						activeWorkspaceHint={activeWorkspace ?? null}
-						onWorkspaceSwitch={() => { onWorkspaceChanged?.(); }}
-						onWorkspaceDelete={() => { onWorkspaceChanged?.(); }}
-						onCreateWorkspace={() => { setCreateWorkspaceOpen(true); }}
-						trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
-							<button
-								type="button"
-								onClick={onClick}
-								disabled={switching}
-								className="w-9 h-9 rounded-lg flex items-center justify-center font-semibold text-[13px] transition-colors"
-								style={{
-									color: "var(--color-text)",
-									background: "var(--color-surface-hover)",
-								}}
-								title={`${orgName || "Workspace"}${workspaceName ? ` — ${workspaceName}` : ""}`}
-							>
-								{orgInitial}
-							</button>
-						)}
-					/>
-				</div>
+				<ProfileSwitcher
+					activeWorkspaceHint={activeWorkspace ?? null}
+					onWorkspaceSwitch={() => { onWorkspaceChanged?.(); }}
+					onWorkspaceDelete={() => { onWorkspaceChanged?.(); }}
+					onCreateWorkspace={() => { setCreateWorkspaceOpen(true); }}
+					trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
+						<button
+							type="button"
+							onClick={onClick}
+							disabled={switching}
+							className="w-7 h-7 mx-auto rounded-lg overflow-hidden flex items-center justify-center transition-opacity hover:opacity-90"
+							title={`${orgName || "Workspace"}${workspaceName ? ` — ${workspaceName}` : ""}`}
+						>
+							{/* eslint-disable-next-line @next/next/no-img-element */}
+							<img
+								src="/dench-workspace-icon.png"
+								alt=""
+								className="w-7 h-7 object-cover"
+								draggable={false}
+							/>
+						</button>
+					)}
+				/>
 			</div>
 
 			{/* Expand button — primary discoverability hint for compact mode. */}
@@ -474,25 +434,6 @@ export function WorkspaceSidebar({
 							<rect width="18" height="18" x="3" y="3" rx="2" />
 							<path d="M15 3v18" />
 							<path d="m8 9 3 3-3 3" />
-						</svg>
-					</button>
-				</div>
-			)}
-
-			{/* New chat icon — ghost style to match the chat sidebar's New button. */}
-			{onSelectChatSession && onNewChatSession && (
-				<div className="flex justify-center pt-0.5 pb-0.5">
-					<button
-						type="button"
-						onClick={onNewChatSession}
-						className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
-						style={{ color: "var(--color-text-muted)" }}
-						onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-						onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-						title="New chat"
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-							<path d="M5 12h14" /><path d="M12 5v14" />
 						</svg>
 					</button>
 				</div>
@@ -753,32 +694,8 @@ export function WorkspaceSidebar({
 			</div>
 		)}
 
-			{/* v3: chat history takes the flex-1 middle section.
-			    File tree lives in the right panel now. */}
-			<div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-				{onSelectChatSession ? (
-					<ChatSessionsSidebar
-						sessions={chatSessions ?? []}
-						activeSessionId={activeChatSessionId ?? null}
-						activeSessionTitle={activeChatSessionTitle}
-						streamingSessionIds={chatStreamingSessionIds ?? new Set()}
-						subagents={chatSubagents ?? []}
-						activeSubagentKey={chatActiveSubagentKey ?? null}
-						loading={chatSessionsLoading ?? false}
-						onSelectSession={onSelectChatSession}
-						onNewSession={onNewChatSession ?? (() => {})}
-						onSelectSubagent={onSelectChatSubagent ?? (() => {})}
-						onDeleteSession={onDeleteChatSession}
-						onRenameSession={onRenameChatSession}
-						onStopSession={onStopChatSession}
-						onStopSubagent={onStopChatSubagent}
-						gatewaySessions={chatGatewaySessions ?? []}
-						activeGatewaySessionKey={chatActiveGatewaySessionKey ?? null}
-						onSelectGatewaySession={onSelectGatewayChatSession}
-						embedded
-					/>
-				) : null}
-			</div>
+			{/* v3: chat history moved into chat-panel header (Clock dropdown). */}
+			<div className="flex-1 min-h-0" />
 
 		{onNavigate && (
 			<div className="px-2 py-1 space-y-0.5">

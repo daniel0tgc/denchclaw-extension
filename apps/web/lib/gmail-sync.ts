@@ -596,17 +596,23 @@ function processMessage(params: {
   let newPeople = 0;
   let newCompanies = 0;
 
-  // Helper: upsert a person + their company; return the entry_id.
+  // Helper: upsert a person + their company; return the entry_id, isSelf,
+  // and the resolved company entry id (used by callers that emit interactions
+  // so we can populate `interaction.Company`).
   function ensurePerson(
     parsedAddress: ReturnType<typeof parseEmailAddress>,
-  ): { entryId: string; isSelf: boolean } | null {
+  ): { entryId: string; isSelf: boolean; companyId?: string } | null {
     if (!parsedAddress) {return null;}
     const key = normalizeEmailKey(parsedAddress.address);
     if (!key) {return null;}
     const isSelf = selfEmails.has(key);
+    // Resolve the company once up-front so cached-person paths can still
+    // surface the companyId to the interaction emitter.
+    const domain = rootDomainFromEmail(parsedAddress.address, domainOverrides);
     const cachedId = cache.peopleByEmail.get(key);
     if (cachedId) {
-      return { entryId: cachedId, isSelf };
+      const cachedCompanyId = domain ? cache.companyByDomain.get(domain) : undefined;
+      return { entryId: cachedId, isSelf, companyId: cachedCompanyId };
     }
     if (isSelf) {
       // Don't create a People row for the user's own mailbox.
@@ -640,7 +646,7 @@ function processMessage(params: {
     }
 
     // Company auto-create
-    const domain = rootDomainFromEmail(parsedAddress.address, domainOverrides);
+    let resolvedCompanyId: string | undefined;
     if (domain) {
       let companyId = cache.companyByDomain.get(domain);
       if (!companyId) {
@@ -670,17 +676,20 @@ function processMessage(params: {
           });
         }
       }
-      // Link person → company via the legacy "Company" text field for v_people compat.
+      resolvedCompanyId = companyId;
+      // Link person → company via the `Company` relation field (entry id).
+      // The legacy text behaviour is replaced by the relation flip in
+      // workspace-schema-migrations.ts → migratePeopleCompanyToRelation.
       if (fieldMaps.people["Company"]) {
         emitInsertField(batch, {
           entryId,
           fieldId: fieldMaps.people["Company"],
-          value: deriveCompanyNameFromDomain(domain),
+          value: companyId,
         });
       }
     }
 
-    return { entryId, isSelf };
+    return { entryId, isSelf, companyId: resolvedCompanyId };
   }
 
   // For bulk senders, skip the Person + Company auto-create and pretend
@@ -843,7 +852,11 @@ function processMessage(params: {
   const interactionDirectionEnum = direction;
 
   let interactionsCreated = 0;
-  function emitInteraction(personEntryId: string, role: EmailRole): void {
+  function emitInteraction(
+    personEntryId: string,
+    role: EmailRole,
+    companyEntryId?: string,
+  ): void {
     if (!personEntryId) {return;}
     const interactionId = randomUUID();
     interactionsCreated += 1;
@@ -867,6 +880,13 @@ function processMessage(params: {
         entryId: interactionId,
         fieldId: fieldMaps.interaction["Person"],
         value: personEntryId,
+      });
+    }
+    if (companyEntryId && fieldMaps.interaction["Company"]) {
+      emitInsertField(batch, {
+        entryId: interactionId,
+        fieldId: fieldMaps.interaction["Company"],
+        value: companyEntryId,
       });
     }
     if (fieldMaps.interaction["Email"]) {
@@ -901,13 +921,17 @@ function processMessage(params: {
   }
 
   if (fromInfo && !fromInfo.isSelf && fromInfo.entryId) {
-    emitInteraction(fromInfo.entryId, "from");
+    emitInteraction(fromInfo.entryId, "from", fromInfo.companyId);
   }
   for (const t of toInfos) {
-    if (t.info && !t.info.isSelf && t.info.entryId) {emitInteraction(t.info.entryId, "to");}
+    if (t.info && !t.info.isSelf && t.info.entryId) {
+      emitInteraction(t.info.entryId, "to", t.info.companyId);
+    }
   }
   for (const c of ccInfos) {
-    if (c.info && !c.info.isSelf && c.info.entryId) {emitInteraction(c.info.entryId, "cc");}
+    if (c.info && !c.info.isSelf && c.info.entryId) {
+      emitInteraction(c.info.entryId, "cc", c.info.companyId);
+    }
   }
 
   // Update People.Last Interaction At for everyone we touched.

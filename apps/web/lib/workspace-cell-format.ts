@@ -156,24 +156,44 @@ function inferFilePath(raw: string): string | null {
 	return trimmed;
 }
 
+/**
+ * Bare domain or domain+path (no scheme), e.g. `acme.com`, `sub.example.co.uk/path?q=1`.
+ * Requires at least one dot and a TLD-shaped tail (2+ ASCII letters) so we
+ * don't false-match on file paths (`foo.txt`), version numbers (`v1.2.3`),
+ * or arbitrary dotted text. Each label is letters/digits/hyphens, can't start
+ * or end with a hyphen, and the final label must be all letters.
+ */
+const BARE_DOMAIN_RE =
+	/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}(?:\/[^\s]*)?$/i;
+
 function normalizeUrl(raw: string): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed) {return null;}
 	if (trimmed.startsWith("www.")) {
 		return `https://${trimmed}`;
 	}
-	if (!URL_RE.test(trimmed)) {
-		return null;
-	}
-	try {
-		const u = new URL(trimmed);
-		if (u.protocol !== "http:" && u.protocol !== "https:") {
+	if (URL_RE.test(trimmed)) {
+		try {
+			const u = new URL(trimmed);
+			if (u.protocol !== "http:" && u.protocol !== "https:") {
+				return null;
+			}
+			return u.toString();
+		} catch {
 			return null;
 		}
-		return u.toString();
-	} catch {
-		return null;
 	}
+	// Bare domain (e.g. `acme.com`): prepend `http://` so link previews and
+	// outbound clicks resolve. Servers redirect to https when applicable.
+	if (BARE_DOMAIN_RE.test(trimmed)) {
+		try {
+			const u = new URL(`http://${trimmed}`);
+			return u.toString();
+		} catch {
+			return null;
+		}
+	}
+	return null;
 }
 
 function buildGoogleFaviconUrl(href: string): string | undefined {

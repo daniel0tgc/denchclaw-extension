@@ -14,7 +14,11 @@ import {
   duckdbExecAsync,
   duckdbExecOnFileAsync,
   duckdbQueryAsync,
+  duckdbQueryOnFileAsync,
   duckdbPathAsync,
+  findObjectDir,
+  readObjectYaml,
+  writeObjectYaml,
 } from "./workspace";
 
 // ---------------------------------------------------------------------------
@@ -478,17 +482,20 @@ function buildFieldInsertSql(objectId: string, def: FieldDef): string {
 }
 
 function buildObjectInsertSql(def: ObjectDef): string {
+  // Icon is intentionally NOT written here — it lives only in
+  // `<objectDir>/.object.yaml` (single source of truth). `def.icon` is kept
+  // on the type so the matching yaml seed in `ensureOnboardingObjectDirs`
+  // can pick it up.
   const parts = [
     escSql(def.id),
     escSql(def.name),
     escSql(def.description),
-    escSql(def.icon),
     escSql(def.defaultView),
     def.immutable === true ? "true" : "false",
     String(def.sortOrder),
   ].join(", ");
 
-  return `INSERT INTO objects (id, name, description, icon, default_view, immutable, sort_order) VALUES (${parts});`;
+  return `INSERT INTO objects (id, name, description, default_view, immutable, sort_order) VALUES (${parts});`;
 }
 
 function buildPivotViewSql(viewName: string, objectId: string, fieldNames: string[]): string {
@@ -588,6 +595,180 @@ const VIEW_NAMES: Array<{ object: string; objectId: string; viewName: string }> 
 ];
 
 /**
+ * One-shot migration that retires the legacy `objects.icon` column.
+ *
+ * Icons are now stored only in `<objectDir>/.object.yaml`. For each row in
+ * `objects` whose `icon` is non-null, copy the value into the matching yaml
+ * (only if the yaml is missing one — yaml always wins on conflict). After
+ * the copy, DROP the column. Both steps swallow errors so this stays
+ * idempotent: re-running on a workspace whose column has already been
+ * dropped (or whose yaml already has icons) is a no-op.
+ */
+async function migrateIconsFromDuckdbToYaml(dbPath: string): Promise<void> {
+  let rows: Array<{ name: string; icon: string | null }> = [];
+  try {
+    rows = await duckdbQueryOnFileAsync<{ name: string; icon: string | null }>(
+      dbPath,
+      "SELECT name, icon FROM objects WHERE icon IS NOT NULL",
+    );
+  } catch {
+    // Column already dropped (or table missing on a brand-new DB) — done.
+    return;
+  }
+
+  for (const row of rows) {
+    if (!row.icon || typeof row.icon !== "string") {continue;}
+    const dir = findObjectDir(row.name);
+    if (!dir) {continue;}
+    const existing = readObjectYaml(dir) ?? {};
+    if (typeof existing.icon === "string" && existing.icon.trim() !== "") {
+      // Yaml already declares an icon — yaml wins, leave it alone.
+      continue;
+    }
+    try {
+      writeObjectYaml(dir, { icon: row.icon });
+    } catch {
+      // Skip — best effort. The user can edit yaml by hand if needed.
+    }
+  }
+
+  try {
+    await duckdbExecOnFileAsync(dbPath, "ALTER TABLE objects DROP COLUMN icon;");
+  } catch {
+    // Column may already be gone, or DuckDB may not support DROP COLUMN
+    // on this version — non-fatal. The read paths no longer depend on it.
+  }
+}
+
+/**
+ * Stable seed IDs for fields that participate in one-shot type migrations.
+ * Hard-coded here so the migration paths don't depend on `fetchFieldNames`
+ * (which only resolves by name) and stay idempotent across re-runs.
+ */
+const PEOPLE_COMPANY_FIELD_ID = "seed_fld_people_company_0000000";
+const COMPANY_DOMAIN_FIELD_ID = "seed_fld_company_domain_0000000";
+
+/** Single-quote escape for inline SQL values. */
+function sqlEsc(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * One-shot migration that converts `people.Company` from a `text` field
+ * (storing the company name string) into a `relation` field pointing at
+ * `company` (storing the company entry id). Idempotent: re-running on a
+ * workspace where the field is already a relation is a no-op.
+ *
+ * After the type flip, existing text values are backfilled to company
+ * entry ids by case-insensitive name match against `company.Company Name`.
+ * Rows that don't match a known company are left untouched — sync will
+ * overwrite them on the next run, or a user can clean them up by hand.
+ */
+async function migratePeopleCompanyToRelation(dbPath: string): Promise<void> {
+  let typeRows: Array<{ type: string | null }> = [];
+  try {
+    typeRows = await duckdbQueryOnFileAsync<{ type: string | null }>(
+      dbPath,
+      `SELECT type FROM fields WHERE id = '${PEOPLE_COMPANY_FIELD_ID}'`,
+    );
+  } catch {
+    return;
+  }
+  const currentType = typeRows[0]?.type;
+  if (!currentType || currentType === "relation") {return;}
+
+  const flipOk = await duckdbExecOnFileAsync(
+    dbPath,
+    `UPDATE fields SET type = 'relation', `
+      + `related_object_id = '${COMPANY_OBJECT_ID}', `
+      + `relationship_type = 'many_to_one' `
+      + `WHERE id = '${PEOPLE_COMPANY_FIELD_ID}';`,
+  );
+  if (!flipOk) {return;}
+
+  // Build a name → company entry id map from the company table.
+  let companyRows: Array<{ entry_id: string; value: string | null }> = [];
+  try {
+    companyRows = await duckdbQueryOnFileAsync<{ entry_id: string; value: string | null }>(
+      dbPath,
+      `SELECT e.id AS entry_id, ef.value
+         FROM entries e
+         JOIN entry_fields ef ON ef.entry_id = e.id
+         JOIN fields f ON f.id = ef.field_id
+        WHERE e.object_id = '${COMPANY_OBJECT_ID}'
+          AND f.name = 'Company Name'
+          AND ef.value IS NOT NULL`,
+    );
+  } catch {
+    return;
+  }
+  const companyEntryIds = new Set<string>();
+  const companyByName = new Map<string, string>();
+  for (const row of companyRows) {
+    companyEntryIds.add(row.entry_id);
+    if (!row.value) {continue;}
+    const key = row.value.trim().toLowerCase();
+    if (!key) {continue;}
+    if (!companyByName.has(key)) {companyByName.set(key, row.entry_id);}
+  }
+
+  let peopleRows: Array<{ entry_id: string; value: string | null }> = [];
+  try {
+    peopleRows = await duckdbQueryOnFileAsync<{ entry_id: string; value: string | null }>(
+      dbPath,
+      `SELECT entry_id, value FROM entry_fields WHERE field_id = '${PEOPLE_COMPANY_FIELD_ID}'`,
+    );
+  } catch {
+    return;
+  }
+
+  const updates: Array<{ entryId: string; companyId: string }> = [];
+  for (const row of peopleRows) {
+    if (!row.value) {continue;}
+    // Already a company entry id (from a partial re-run); skip.
+    if (companyEntryIds.has(row.value)) {continue;}
+    const key = row.value.trim().toLowerCase();
+    if (!key) {continue;}
+    const cid = companyByName.get(key);
+    if (cid) {updates.push({ entryId: row.entry_id, companyId: cid });}
+  }
+  if (updates.length === 0) {return;}
+
+  const sqlParts = updates.map(
+    (u) =>
+      `UPDATE entry_fields SET value = '${sqlEsc(u.companyId)}' `
+      + `WHERE field_id = '${PEOPLE_COMPANY_FIELD_ID}' `
+      + `AND entry_id = '${sqlEsc(u.entryId)}';`,
+  );
+  await duckdbExecOnFileAsync(dbPath, sqlParts.join("\n"));
+}
+
+/**
+ * One-shot migration that flips `company.Domain` from `text` to `url` so
+ * the cell renders with the URL formatter (favicon, link preview hover)
+ * once `normalizeUrl` is taught to accept bare domains. Idempotent: skips
+ * if the field is already typed `url`.
+ */
+async function migrateCompanyDomainToUrl(dbPath: string): Promise<void> {
+  let typeRows: Array<{ type: string | null }> = [];
+  try {
+    typeRows = await duckdbQueryOnFileAsync<{ type: string | null }>(
+      dbPath,
+      `SELECT type FROM fields WHERE id = '${COMPANY_DOMAIN_FIELD_ID}'`,
+    );
+  } catch {
+    return;
+  }
+  const currentType = typeRows[0]?.type;
+  if (!currentType || currentType === "url") {return;}
+
+  await duckdbExecOnFileAsync(
+    dbPath,
+    `UPDATE fields SET type = 'url' WHERE id = '${COMPANY_DOMAIN_FIELD_ID}';`,
+  );
+}
+
+/**
  * Apply all onboarding-related migrations against the active workspace's
  * DuckDB. Idempotent: returns details about anything actually changed.
  */
@@ -628,6 +809,27 @@ export async function ensureLatestSchema(): Promise<MigrationResult> {
       // Non-fatal — table doesn't exist yet on a brand-new DB; the seed
       // schema already includes the column.
     }
+
+    // ── 0b. Retire the legacy `objects.icon` column ───────────────────────
+    // Icons now live exclusively in `<objectDir>/.object.yaml`. For any
+    // existing workspace where the column still has data, copy each
+    // non-null icon into yaml first (only if yaml is missing one), then
+    // DROP the column. Idempotent: a workspace whose column is already
+    // dropped silently no-ops.
+    await migrateIconsFromDuckdbToYaml(dbPath);
+
+    // ── 0c. Convert `people.Company` from text → relation ─────────────────
+    // Existing workspaces stored the company name as text on the people
+    // object. Flip the field type to a many_to_one relation pointing at
+    // the company object and backfill text values to company entry ids by
+    // case-insensitive name match. Sync writes (Gmail/Calendar) emit ids
+    // going forward. Idempotent.
+    await migratePeopleCompanyToRelation(dbPath);
+
+    // ── 0d. Flip `company.Domain` from text → url ─────────────────────────
+    // Lets the URL cell formatter (favicon + link preview) render the
+    // column once `normalizeUrl` accepts bare domains. Idempotent.
+    await migrateCompanyDomainToUrl(dbPath);
 
     const existingObjectIds = await fetchObjectIds();
 

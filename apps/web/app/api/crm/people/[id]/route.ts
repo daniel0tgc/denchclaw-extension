@@ -21,7 +21,11 @@ type Person = {
   id: string;
   name: string | null;
   email: string | null;
+  /** Resolved display name of the linked company (dereferenced from the
+   * `Company` relation field, falling back to the domain-matched company). */
   company_name: string | null;
+  /** Direct company entry id from the `Company` relation field, when set. */
+  company_id: string | null;
   phone: string | null;
   status: string | null;
   source: string | null;
@@ -95,6 +99,9 @@ export async function GET(
   const fieldMaps = await loadCrmFieldMaps();
 
   // ─── 1. Person row ────────────────────────────────────────────────────
+  // `Company` is now a many_to_one relation (post-migration), so its raw
+  // value is a company entry id. We project it as `company_id` and
+  // dereference to the company's `Company Name` for display below.
   const personSql = buildEntryProjection({
     objectId: ONBOARDING_OBJECT_IDS.people,
     fieldMap: fieldMaps.people,
@@ -102,7 +109,7 @@ export async function GET(
       { name: "Full Name", alias: "name" },
       { name: "Email Address", alias: "email" },
       { name: "Phone Number", alias: "phone" },
-      { name: "Company", alias: "company_name" },
+      { name: "Company", alias: "company_id" },
       { name: "Status", alias: "status" },
       { name: "Source", alias: "source" },
       { name: "Strength Score", alias: "strength_score" },
@@ -121,11 +128,42 @@ export async function GET(
   const personRaw = personRows[0];
   const strengthScoreNum = personRaw.strength_score ? Number(personRaw.strength_score) : 0;
   const bucket = getConnectionStrengthBucket(strengthScoreNum);
+
+  // ─── 2. Resolve company: prefer the relation, fall back to domain match ─
+  let company: Company | null = null;
+  const linkedCompanyId = personRaw.company_id?.trim() || null;
+  if (linkedCompanyId) {
+    const loaded = await loadCompany(linkedCompanyId, fieldMaps.company);
+    // A successfully resolved company always has at least a `name` or
+    // `domain`; an empty result means the relation points at a deleted /
+    // unmigrated value, so fall through to the domain-match fallback.
+    if (loaded.name || loaded.domain) {
+      company = loaded;
+    }
+  }
+  if (!company) {
+    const personHost = personRaw.email ? extractEmailHost(personRaw.email) : null;
+    const domainFieldId = fieldMaps.company["Domain"];
+    if (personHost && domainFieldId) {
+      const safeDomain = personHost.replace(/'/g, "''");
+      const companyRows = await safeQuery<{ entry_id: string }>(`
+        SELECT entry_id FROM entry_fields
+        WHERE field_id = ${sqlString(domainFieldId)}
+          AND (LOWER(value) = '${safeDomain}' OR '${safeDomain}' LIKE '%.' || LOWER(value))
+        LIMIT 1;
+      `);
+      if (companyRows.length > 0) {
+        company = await loadCompany(companyRows[0].entry_id, fieldMaps.company);
+      }
+    }
+  }
+
   const person: Person = {
     id: String(personRaw.entry_id),
     name: personRaw.name,
     email: personRaw.email,
-    company_name: personRaw.company_name,
+    company_id: linkedCompanyId,
+    company_name: company?.name ?? null,
     phone: personRaw.phone,
     status: personRaw.status,
     source: personRaw.source,
@@ -140,25 +178,6 @@ export async function GET(
     created_at: personRaw.created_at,
     updated_at: personRaw.updated_at,
   };
-
-  // ─── 2. Resolve company by domain match (or by Company text field name) ─
-  let company: Company | null = null;
-  const personHost = person.email ? extractEmailHost(person.email) : null;
-  if (personHost) {
-    const domainFieldId = fieldMaps.company["Domain"];
-    if (domainFieldId) {
-      const safeDomain = personHost.replace(/'/g, "''");
-      const companyRows = await safeQuery<{ entry_id: string }>(`
-        SELECT entry_id FROM entry_fields
-        WHERE field_id = ${sqlString(domainFieldId)}
-          AND (LOWER(value) = '${safeDomain}' OR '${safeDomain}' LIKE '%.' || LOWER(value))
-        LIMIT 1;
-      `);
-      if (companyRows.length > 0) {
-        company = await loadCompany(companyRows[0].entry_id, fieldMaps.company);
-      }
-    }
-  }
 
   // ─── 3. Email threads where person is in Participants ─────────────────
   const participantsFieldId = fieldMaps.email_thread["Participants"];

@@ -21,6 +21,12 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { ChatHistoryPopover } from "./workspace/chat-history-popover";
+import type {
+	SidebarGatewaySession,
+	SidebarSubagentInfo,
+	WebSession,
+} from "./workspace/chat-sessions-sidebar";
 import { UnicodeSpinner } from "./unicode-spinner";
 import { Dialog, DialogContent } from "./ui/dialog";
 import type { ChatPanelRuntimeState } from "@/lib/chat-session-registry";
@@ -832,6 +838,38 @@ type ChatPanelProps = {
 	visible?: boolean;
 	/** Client-side search function for instant @ mention results. */
 	searchFn?: (query: string, limit?: number) => import("@/lib/search-index").SearchIndexItem[];
+
+	// ── Chat history dropdown (header Clock icon) ──
+	/** All native chat sessions (used by the header's chat-history dropdown). */
+	historySessions?: WebSession[];
+	/** Sessions currently streaming, to show a spinner in the dropdown. */
+	historyStreamingSessionIds?: Set<string>;
+	/** Subagent info to show nested under their parent session in the dropdown. */
+	historySubagents?: SidebarSubagentInfo[];
+	/** Currently active subagent key, for highlighting in the dropdown. */
+	historyActiveSubagentKey?: string | null;
+	/** Whether the parent is still loading the initial session list. */
+	historyLoading?: boolean;
+	/** Gateway/channel sessions (telegram, discord, etc.) to merge into the dropdown. */
+	historyGatewaySessions?: SidebarGatewaySession[];
+	/** Currently active gateway session key, for highlighting. */
+	historyActiveGatewaySessionKey?: string | null;
+	/** Open the given session in this chat panel's tab area. */
+	onSelectHistorySession?: (sessionId: string) => void;
+	/** Start a brand new (blank) chat tab. */
+	onNewChatSession?: () => void;
+	/** Open a subagent (child) session by its session key. */
+	onSelectHistorySubagent?: (sessionKey: string) => void;
+	/** Open a gateway/channel session by its key + id. */
+	onSelectHistoryGatewaySession?: (sessionKey: string, sessionId: string) => void;
+	/** Rename a session (used by double-click & context menu in the dropdown). */
+	onRenameHistorySession?: (sessionId: string, newTitle: string) => void;
+	/** Delete a session from the dropdown. */
+	onDeleteHistorySession?: (sessionId: string) => void;
+	/** Stop a running session from the dropdown. */
+	onStopHistorySession?: (sessionId: string) => void;
+	/** Stop a running subagent from the dropdown. */
+	onStopHistorySubagent?: (sessionKey: string) => void;
 };
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
@@ -862,6 +900,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			gatewayChannel: _gatewayChannel,
 			visible,
 			searchFn,
+			historySessions,
+			historyStreamingSessionIds,
+			historySubagents,
+			historyActiveSubagentKey,
+			historyLoading,
+			historyGatewaySessions,
+			historyActiveGatewaySessionKey,
+			onSelectHistorySession,
+			onNewChatSession,
+			onSelectHistorySubagent,
+			onSelectHistoryGatewaySession,
+			onRenameHistorySession,
+			onDeleteHistorySession,
+			onStopHistorySession,
+			onStopHistorySubagent,
 		},
 		ref,
 	) {
@@ -2322,6 +2375,27 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 					{!hideHeaderActions && (
 					<div className="flex items-center gap-1 shrink-0">
+						{onSelectHistorySession && onNewChatSession && (
+							<ChatHistoryPopover
+								sessions={historySessions ?? []}
+								activeSessionId={currentSessionId}
+								streamingSessionIds={historyStreamingSessionIds}
+								subagents={historySubagents}
+								activeSubagentKey={historyActiveSubagentKey}
+								loading={historyLoading}
+								gatewaySessions={historyGatewaySessions}
+								activeGatewaySessionKey={historyActiveGatewaySessionKey}
+								onSelectSession={onSelectHistorySession}
+								onNewSession={onNewChatSession}
+								onSelectSubagent={onSelectHistorySubagent}
+								onSelectGatewaySession={onSelectHistoryGatewaySession}
+								onRenameSession={onRenameHistorySession}
+								onDeleteSession={onDeleteHistorySession}
+								onStopSession={onStopHistorySession}
+								onStopSubagent={onStopHistorySubagent}
+								compact={!!compact}
+							/>
+						)}
 						{currentSessionId && onDeleteSession && (
 							<DropdownMenu>
 								<DropdownMenuTrigger

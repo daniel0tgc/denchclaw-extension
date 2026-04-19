@@ -159,6 +159,7 @@ export function installDefaultViews(): DefaultViewsResult {
   // ----- people · Strongest connections -----
   installPeopleStrongestView(installed);
   installPeopleGoingColdView(installed);
+  installPeopleRecentlyAddedView(installed);
 
   // ----- company · By Strength -----
   installCompanyByStrengthView(installed);
@@ -234,6 +235,36 @@ function installPeopleGoingColdView(out: DefaultViewsResult["installed"]): void 
   const updated = upsertView(views, next);
   saveObjectViews("people", updated, activeView ?? "Strongest", viewSettings);
   out.push({ object: "people", view: "Going Cold", created: !existing });
+}
+
+/**
+ * Replaces the legacy "Recently added" preset chip on the People list. The
+ * preset used to live on `/api/crm/people?filter=recent` and sort by
+ * `created_at DESC`; now that People renders through the unified ObjectView,
+ * the same affordance is provided as a saved view that the user can pick
+ * from the ObjectFilterBar.
+ */
+function installPeopleRecentlyAddedView(out: DefaultViewsResult["installed"]): void {
+  const dir = findObjectDir("people");
+  if (!dir) {return;}
+  const { views, activeView, viewSettings } = getObjectViews("people");
+  const existing = viewByName(views, "Recently Added");
+  const next: SavedView = {
+    name: "Recently Added",
+    view_type: "table",
+    sort: [{ field: "created_at", direction: "desc" }],
+    columns: [
+      "Full Name",
+      "Email Address",
+      "Company",
+      "Strength Score",
+      "Last Interaction At",
+      "Source",
+    ],
+  };
+  const updated = upsertView(views, next);
+  saveObjectViews("people", updated, activeView ?? "Strongest", viewSettings);
+  out.push({ object: "people", view: "Recently Added", created: !existing });
 }
 
 function installCompanyByStrengthView(out: DefaultViewsResult["installed"]): void {

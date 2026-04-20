@@ -442,8 +442,18 @@ function WorkspacePageInner() {
     showHidden, setShowHidden,
   } = useWorkspaceWatcher();
 
+  // Track tree changes to refresh search index
+  const treeRefreshCount = useRef(0);
+  const [searchRefreshSignal, setSearchRefreshSignal] = useState(0);
+  useEffect(() => {
+    if (tree.length > 0) {
+      treeRefreshCount.current += 1;
+      setSearchRefreshSignal(treeRefreshCount.current);
+    }
+  }, [tree]);
+
   // Search index for @ mention fuzzy search (files + entries)
-  const { search: searchIndex } = useSearchIndex();
+  const { search: searchIndex } = useSearchIndex(searchRefreshSignal);
 
   const [context, setContext] = useState<WorkspaceContext | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -1676,28 +1686,31 @@ function WorkspacePageInner() {
   // Handle file search selection: navigate sidebar to the file's location and open it
   const handleFileSearchSelect = useCallback(
     (item: { name: string; path: string; type: string }) => {
+      const itemPath = browseDir == null && workspaceRoot && item.path.startsWith(workspaceRoot + "/")
+        ? item.path.slice(workspaceRoot.length + 1)
+        : item.path;
       const node: TreeNode = {
         name: item.name,
-        path: item.path,
+        path: itemPath,
         type: item.type as TreeNode["type"],
       };
       if (item.type === "folder") {
-        // Navigate the sidebar into the folder and show it in the main panel.
-        // Children come from the live tree (same data source as the sidebar).
-        setBrowseDir(item.path);
+        if (browseDir != null) {
+          setBrowseDir(item.path);
+        }
         openTabForNode(node);
-        setActivePath(item.path);
-        setContent({ kind: "directory", node: { name: item.name, path: item.path, type: "folder" } });
+        setActivePath(itemPath);
+        setContent({ kind: "directory", node: { name: item.name, path: itemPath, type: "folder" } });
       } else {
-        // Navigate the sidebar to the parent directory of the file
-        const parentOfFile = item.path.split("/").slice(0, -1).join("/") || "/";
-        setBrowseDir(parentOfFile);
-        // Open the file in the main panel
+        if (browseDir != null) {
+          const parentOfFile = item.path.split("/").slice(0, -1).join("/") || "/";
+          setBrowseDir(parentOfFile);
+        }
         openTabForNode(node);
         void loadContent(node);
       }
     },
-    [setBrowseDir, openTabForNode, loadContent],
+    [browseDir, workspaceRoot, setBrowseDir, openTabForNode, loadContent],
   );
 
   // Sync URL bar with active content / chat / browse / subagent / preview state.
@@ -2331,7 +2344,7 @@ function WorkspacePageInner() {
         sidebarOpen && (
           <WorkspaceSidebar
             tree={enhancedTree}
-            activePath={activePath}
+            activePath={activeTab.type === "chat" || activeTab.type === "gateway-chat" ? null : activePath}
             onSelect={(node) => { handleNodeSelect(node); setSidebarOpen(false); }}
             onRefresh={refreshTree}
             orgName={context?.organization?.name}
@@ -2341,6 +2354,7 @@ function WorkspacePageInner() {
             onNavigateUp={handleNavigateUp}
             onGoHome={handleGoHome}
             onFileSearchSelect={(item) => { handleFileSearchSelect?.(item); setSidebarOpen(false); }}
+            searchFn={searchIndex}
             workspaceRoot={workspaceRoot}
             onGoToChat={() => { handleGoToChat(); setSidebarOpen(false); }}
             onExternalDrop={handleSidebarExternalDrop}
@@ -2403,7 +2417,7 @@ function WorkspacePageInner() {
               />
               <WorkspaceSidebar
                 tree={enhancedTree}
-                activePath={activePath}
+                activePath={activeTab.type === "chat" || activeTab.type === "gateway-chat" ? null : activePath}
                 onSelect={handleNodeSelect}
                 onRefresh={refreshTree}
                 orgName={context?.organization?.name}
@@ -2413,6 +2427,7 @@ function WorkspacePageInner() {
                 onNavigateUp={handleNavigateUp}
                 onGoHome={handleGoHome}
                 onFileSearchSelect={handleFileSearchSelect}
+                searchFn={searchIndex}
                 workspaceRoot={workspaceRoot}
                 onGoToChat={handleGoToChat}
                 onExternalDrop={handleSidebarExternalDrop}
@@ -2762,6 +2777,7 @@ function WorkspacePageInner() {
                         gatewayChannel={isGateway ? tab.channel : undefined}
                         onOpenCloudSettings={() => handleNavigate("cloud")}
                         visible={isVisible}
+                        searchFn={searchIndex}
                       />
                     </div>
                   );
@@ -2961,6 +2977,7 @@ function WorkspacePageInner() {
                   onComposioAction={handleComposioActionFromChat}
                   onActiveSessionChange={setFileChatSessionId}
                   onOpenCloudSettings={() => handleNavigate("cloud")}
+                  searchFn={searchIndex}
                 />
               </div>
             </aside>
@@ -3026,6 +3043,7 @@ function WorkspacePageInner() {
                   onComposioAction={(action) => { handleComposioActionFromChat(action); setMobileFileChatOpen(false); }}
                   onActiveSessionChange={setFileChatSessionId}
                   onOpenCloudSettings={() => handleNavigate("cloud")}
+                  searchFn={searchIndex}
                 />
               </div>
             </div>

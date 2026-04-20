@@ -133,7 +133,10 @@ async function openUrl(url: string): Promise<boolean> {
   const [cmd, ...args] = argv;
   if (!cmd) return false;
   return new Promise<boolean>((resolve) => {
-    const child = spawn(cmd, args, { stdio: "ignore" });
+    const child = spawn(cmd, args, {
+      stdio: "ignore",
+      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+    });
     const timer = setTimeout(() => {
       child.kill();
       resolve(false);
@@ -175,6 +178,7 @@ async function runOpenClawUpdateWithProgress(openclawCommand: string): Promise<v
     const child = spawn(openclawCommand, ["update", "--yes"], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
+      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
     });
     let stdout = "";
     let stderr = "";

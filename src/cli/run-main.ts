@@ -165,6 +165,7 @@ async function delegateToGlobalOpenClaw(argv: string[]): Promise<number> {
         DENCHCLAW_DELEGATED: "1",
         OPENCLAW_DELEGATED: "1",
       },
+      ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
     });
 
     child.once("error", (error) => {

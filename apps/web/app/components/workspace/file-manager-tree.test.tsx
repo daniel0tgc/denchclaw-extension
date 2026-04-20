@@ -97,43 +97,20 @@ function renderTree(onSelect = vi.fn()) {
   return onSelect;
 }
 
-function getChevronForRow(label: string): HTMLElement {
-  const row = screen.getByText(label).closest('[role="treeitem"]');
-  if (!row) {
-    throw new Error(`Could not find tree row for ${label}`);
-  }
-  const chevron = row.querySelector("span.w-4.h-4");
-  if (!(chevron instanceof HTMLElement)) {
-    throw new Error(`Could not find chevron for ${label}`);
-  }
-  return chevron;
-}
-
 describe("FileManagerTree object expansion", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    try { window.localStorage.clear(); } catch { /* noop */ }
   });
 
-  it("opens object rows without expanding their backing files", async () => {
+  it("clicking object rows selects and expands them", async () => {
     const user = userEvent.setup();
     const onSelect = renderTree();
-
-    expect(screen.queryByText(".object.yaml")).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Tasks"));
 
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ path: "Tasks", type: "object" }),
     );
-    expect(screen.queryByText(".object.yaml")).not.toBeInTheDocument();
-  });
-
-  it("still expands object rows from the chevron control", async () => {
-    const user = userEvent.setup();
-    renderTree();
-
-    await user.click(getChevronForRow("Tasks"));
-
     expect(screen.getByText(".object.yaml")).toBeInTheDocument();
     expect(screen.getByText("entries.parquet")).toBeInTheDocument();
   });

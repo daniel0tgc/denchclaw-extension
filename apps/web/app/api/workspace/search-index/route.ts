@@ -7,6 +7,7 @@ import {
   discoverDuckDBPaths,
   duckdbQueryOnFileAsync,
   isDatabaseFile,
+  pivotViewIdentifier,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +43,7 @@ export type SearchIndexItem = {
   // File/object-specific
   path?: string;
   nodeType?: "document" | "folder" | "file" | "report" | "database";
+  defaultView?: "table" | "kanban";
 };
 
 // --- DB types ---
@@ -138,6 +140,7 @@ function flattenTree(
           icon: icon ?? dbObj?.icon,
           path: relPath,
           nodeType: undefined,
+          defaultView: (dbObj?.default_view === "kanban" ? "kanban" : "table") as "table" | "kanban",
         });
       } else {
         // Regular folder -- don't add as item, but recurse
@@ -152,7 +155,7 @@ function flattenTree(
 
       items.push({
         id: relPath,
-        label: entry.name.replace(/\.md$/, ""),
+        label: entry.name,
         sublabel: relPath,
         kind: "file",
         path: relPath,
@@ -201,9 +204,12 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
       .filter((f) => !["relation", "richtext"].includes(f.type))
       .slice(0, 4);
 
-    // Try PIVOT view first, then raw EAV (on the same DB)
+    // Try PIVOT view first, then raw EAV (on the same DB).
+    // Use pivotViewIdentifier so object names with hyphens (e.g. "ai-agent")
+    // resolve to the correct quoted identifier ("v_ai_agent") instead of
+    // producing invalid SQL.
     let entries: Record<string, unknown>[] = await duckdbQueryOnFileAsync(dbPath,
-      `SELECT * FROM v_${obj.name} ORDER BY created_at DESC LIMIT 500`,
+      `SELECT * FROM ${pivotViewIdentifier(obj.name)} ORDER BY created_at DESC LIMIT 500`,
     );
 
     if (entries.length === 0) {

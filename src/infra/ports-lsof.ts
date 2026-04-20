@@ -16,6 +16,9 @@ async function canExecute(path: string): Promise<boolean> {
 }
 
 export async function resolveLsofCommand(): Promise<string> {
+  if (process.platform === "win32") {
+    throw new Error("lsof is not available on Windows; use netstat-based port listing instead");
+  }
   for (const candidate of LSOF_CANDIDATES) {
     if (await canExecute(candidate)) {
       return candidate;
@@ -25,6 +28,9 @@ export async function resolveLsofCommand(): Promise<string> {
 }
 
 export function resolveLsofCommandSync(): string {
+  if (process.platform === "win32") {
+    throw new Error("lsof is not available on Windows; use netstat-based port listing instead");
+  }
   for (const candidate of LSOF_CANDIDATES) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);

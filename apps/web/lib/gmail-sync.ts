@@ -43,7 +43,7 @@ import {
   normalizeEmailKey,
   rootDomainFromEmail,
 } from "./email-domain";
-import { readPersonalDomainsOverrides, writeSyncCursors } from "./denchclaw-state";
+import { readPersonalDomainsOverrides, readSyncCursors, writeSyncCursors } from "./denchclaw-state";
 import { roundScore, scoreEmailInteraction, type EmailRole } from "./strength-score";
 import { classifySender, type SenderKind } from "./email-classifier";
 
@@ -1084,6 +1084,51 @@ async function fetchPage(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Photo sync (shared between backfill + incremental paths)
+// ---------------------------------------------------------------------------
+
+/** Don't re-fetch Google profile photos more than once per hour from an
+ *  incremental poll — People API shares a per-user QPS quota with Gmail
+ *  and the polling loop runs every few minutes. Backfill bypasses this
+ *  with force=true. */
+const PHOTO_SYNC_THROTTLE_MS = 60 * 60 * 1000;
+
+async function runPhotoSync(opts: {
+  connectionId: string;
+  signal?: AbortSignal;
+  /** Skip the throttle check — backfill path always wants a fresh run. */
+  force?: boolean;
+  onDone?: (photosWritten: number) => void;
+}): Promise<void> {
+  if (!opts.force) {
+    const cursors = readSyncCursors();
+    const last = cursors.gmail?.lastPhotoSyncAt;
+    if (last) {
+      const lastMs = Date.parse(last);
+      if (Number.isFinite(lastMs) && Date.now() - lastMs < PHOTO_SYNC_THROTTLE_MS) {
+        return; // throttled — next incremental tick will retry.
+      }
+    }
+  }
+  try {
+    const { syncGooglePhotos } = await import("./gmail-photo-sync");
+    const result = await syncGooglePhotos({
+      connectionId: opts.connectionId,
+      signal: opts.signal,
+    });
+    writeSyncCursors({
+      gmail: { lastPhotoSyncAt: new Date().toISOString() },
+    });
+    opts.onDone?.(result.photosWritten);
+  } catch (err) {
+    // Photo sync is always best-effort — don't let a failure poison the
+    // containing Gmail sync. The throttle record isn't written on error,
+    // so the next tick will try again.
+    console.warn("[gmail-sync] photo sync failed (non-fatal):", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry: backfill
 // ---------------------------------------------------------------------------
 
@@ -1236,25 +1281,23 @@ export async function runGmailBackfill(opts: GmailSyncOptions): Promise<GmailSyn
 
   // Best-effort: pull real Google profile photos for every person we
   // just learned about (via the People API otherContacts endpoint —
-  // same Gmail OAuth scope, no extra consent). Failures here shouldn't
-  // block a successful Gmail sync, so we swallow errors.
-  try {
-    const { syncGooglePhotos } = await import("./gmail-photo-sync");
-    const photoResult = await syncGooglePhotos({
-      connectionId: opts.connectionId,
-      signal: opts.signal,
-    });
-    opts.onProgress?.({
-      phase: "gmail",
-      message: `Synced ${photoResult.photosWritten} profile photos from Google.`,
-      messagesProcessed: cache.messageByGmailId.size,
-      peopleProcessed: cache.peopleByEmail.size,
-      companiesProcessed: cache.companyByDomain.size,
-      threadsProcessed: cache.threadByGmailId.size,
-    });
-  } catch (err) {
-    console.warn("[gmail-sync] photo backfill failed (non-fatal):", err);
-  }
+  // same Gmail OAuth scope, no extra consent). Force=true bypasses the
+  // incremental throttle since a full backfill always wants fresh art.
+  await runPhotoSync({
+    connectionId: opts.connectionId,
+    signal: opts.signal,
+    force: true,
+    onDone: (photosWritten) => {
+      opts.onProgress?.({
+        phase: "gmail",
+        message: `Synced ${photosWritten} profile photos from Google.`,
+        messagesProcessed: cache.messageByGmailId.size,
+        peopleProcessed: cache.peopleByEmail.size,
+        companiesProcessed: cache.companyByDomain.size,
+        threadsProcessed: cache.threadByGmailId.size,
+      });
+    },
+  });
 
   return {
     ok: true,
@@ -1390,6 +1433,17 @@ export async function runGmailIncremental(opts: {
       lastPolledAt: new Date().toISOString(),
     },
   });
+
+  // New senders showed up → try to fetch their Google profile photos.
+  // Throttled to once per hour so a 5-minute polling cadence doesn't
+  // hammer the People API. Skipped entirely when no new people were
+  // created this tick, since nothing new needs a photo.
+  if (newPeople > 0) {
+    await runPhotoSync({
+      connectionId: opts.connectionId,
+      signal: opts.signal,
+    });
+  }
 
   return {
     ok: true,

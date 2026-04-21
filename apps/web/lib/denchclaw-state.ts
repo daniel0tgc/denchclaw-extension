@@ -121,6 +121,10 @@ export type SyncCursors = {
     messagesProcessed?: number;
     lastPolledAt?: string;
     lastBackfillCompletedAt?: string;
+    /** ISO timestamp of the last Google profile-photo sync. Used by
+     *  incremental polls to throttle the People API call (at most once
+     *  per hour) so a fast polling interval doesn't hammer Composio. */
+    lastPhotoSyncAt?: string;
   };
   calendar?: {
     syncToken?: string;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import {
   type OnboardingState,
   type OnboardingStep,
@@ -96,25 +97,43 @@ export function OnboardingWizard({
     [],
   );
 
+  // Client-side back-navigation: jump the view to a previously completed step
+  // without touching server state. The user can click "continue" on that step
+  // to resume forward; since the step is already in `completedSteps`, the
+  // server will short-circuit and return us to the furthest real step.
+  const handleJumpToStep = useCallback(
+    (target: OnboardingStep) => {
+      const targetIdx = VISIBLE_STEPS.indexOf(target);
+      const currentIdx = VISIBLE_STEPS.indexOf(state.currentStep);
+      const isCompleted = state.completedSteps.includes(target);
+      if (targetIdx === -1) return;
+      if (targetIdx >= currentIdx && !isCompleted) return;
+      setState((prev) => ({ ...prev, currentStep: target }));
+    },
+    [state.currentStep, state.completedSteps],
+  );
+
   return (
     <div
       className="min-h-screen w-full"
       style={{ background: "var(--color-background)" }}
     >
+      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
+        <ThemeToggle />
+      </div>
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10 lg:flex-row lg:gap-16 lg:py-16">
         {/* Progress rail */}
         <aside className="lg:w-72 lg:shrink-0">
           <div className="mb-8">
             <div className="flex items-center gap-2">
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold"
-                style={{
-                  background: "var(--color-accent)",
-                  color: "#fff",
-                }}
-              >
-                D
-              </div>
+              <img
+                src="/dench-workspace-icon.png"
+                alt="DenchClaw"
+                width={36}
+                height={36}
+                className="h-9 w-9 rounded-xl"
+                draggable={false}
+              />
               <span
                 className="font-instrument text-xl tracking-tight"
                 style={{ color: "var(--color-text)" }}
@@ -204,11 +223,12 @@ export function OnboardingWizard({
             {VISIBLE_STEPS.map((step, idx) => {
               const isCurrent = step === state.currentStep;
               const isCompleted = state.completedSteps.includes(step) || idx < stepIndex;
-              return (
-                <li key={step} className="flex items-center gap-3">
+              const canJump = !isCurrent && (isCompleted || idx < stepIndex);
+              const content = (
+                <>
                   <span
                     aria-hidden
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors"
                     style={{
                       background: isCompleted
                         ? "var(--color-accent)"
@@ -241,18 +261,37 @@ export function OnboardingWizard({
                     )}
                   </span>
                   <span
-                    className="text-[13px]"
+                    className="text-[13px] transition-colors"
                     style={{
                       color: isCurrent
                         ? "var(--color-text)"
-                        : isCompleted
-                          ? "var(--color-text-muted)"
-                          : "var(--color-text-muted)",
+                        : "var(--color-text-muted)",
                       fontWeight: isCurrent ? 600 : 500,
                     }}
                   >
                     {STEP_LABELS[step]}
                   </span>
+                </>
+              );
+              return (
+                <li key={step}>
+                  {canJump ? (
+                    <button
+                      type="button"
+                      onClick={() => handleJumpToStep(step)}
+                      className="group flex w-full items-center gap-3 rounded-lg px-1.5 py-1 -mx-1.5 text-left transition-colors hover:bg-[var(--color-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                      title={`Go back to ${STEP_LABELS[step]}`}
+                    >
+                      {content}
+                    </button>
+                  ) : (
+                    <div
+                      className="flex items-center gap-3 px-1.5 py-1 -mx-1.5"
+                      aria-current={isCurrent ? "step" : undefined}
+                    >
+                      {content}
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -323,4 +362,74 @@ function StepContent({
     default:
       return <WelcomeStep state={state} onAdvance={onAdvance} />;
   }
+}
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  // Avoid hydration mismatch: theme is only known after mount.
+  if (!mounted) return <div className="h-9 w-9" />;
+  const isDark = resolvedTheme === "dark";
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        color: "var(--color-text-muted)",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.background =
+          "var(--color-surface-hover)";
+        (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.background =
+          "var(--color-surface)";
+        (e.currentTarget as HTMLElement).style.color =
+          "var(--color-text-muted)";
+      }}
+    >
+      {isDark ? (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2" />
+          <path d="M12 20v2" />
+          <path d="m4.93 4.93 1.41 1.41" />
+          <path d="m17.66 17.66 1.41 1.41" />
+          <path d="M2 12h2" />
+          <path d="M20 12h2" />
+          <path d="m6.34 17.66-1.41 1.41" />
+          <path d="m19.07 4.93-1.41 1.41" />
+        </svg>
+      ) : (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+        </svg>
+      )}
+    </button>
+  );
 }

@@ -2034,6 +2034,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			userHtmlMapRef.current.clear();
 			lastAnnouncedFilePathRef.current = null;
 			newSessionPendingRef.current = false;
+			// Drop any in-flight warmup session — otherwise the next submit
+			// would reuse the pre-warmed id (handleEditorSubmit reads this
+			// ref before falling back to a fresh createSession), silently
+			// threading the "new" chat into the old session instead of
+			// starting clean. The pre-create effect will re-arm on the next
+			// tick for the new chat.
+			preCreatedSessionRef.current = null;
 			setQueuedMessages([]);
 			requestAnimationFrame(() => {
 				editorRef.current?.focus();

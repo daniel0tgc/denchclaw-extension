@@ -118,19 +118,17 @@ function GmailIcon() {
   );
 }
 
-/** Google Calendar brand mark. */
+/** Google Calendar brand mark (real asset). */
 function GoogleCalendarIcon() {
   return (
-    <svg width="26" height="26" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path d="M148.882 43.618H51.118v112.764h97.764z" fill="#fff" />
-      <path d="M148.882 200 200 148.882l-25.559-7.412-25.559 7.412-4.706 23.412 4.706 27.706Z" fill="#EA4335" />
-      <path d="M0 148.882v40.527C0 195.325 4.675 200 10.59 200h40.528l8.235-25.559-8.235-25.559-27.706-4.706Z" fill="#188038" />
-      <path d="M200 51.118V10.59C200 4.675 195.325 0 189.41 0h-40.528q-4.118 24.941-4.118 40.941.001 16 4.118 30.295Q165.941 75.353 200 51.118" fill="#1967D2" />
-      <path d="M200 51.118h-51.118v97.764H200z" fill="#FBBC04" />
-      <path d="M148.882 148.882H51.118V200h97.764z" fill="#34A853" />
-      <path d="M51.118 148.882V0H10.59C4.675 0 0 4.675 0 10.59v138.292z" fill="#4285F4" />
-      <path d="M69.692 129.376c-4.247-2.871-7.189-7.06-8.826-12.588l7.635-3.14q1.372 5.13 4.714 7.948 3.318 2.817 8.108 2.817 4.88 0 8.347-2.961 3.462-2.96 3.474-7.553 0-4.704-3.634-7.664-3.635-2.961-9.17-2.961h-4.412v-7.558h3.956q4.77 0 8.024-2.576 3.255-2.576 3.255-7.064 0-4.005-2.935-6.386-2.935-2.38-7.43-2.38-4.387 0-6.97 2.33-2.58 2.326-3.74 5.77l-7.553-3.14q1.912-5.41 7.007-9.54 5.09-4.12 13.016-4.13 5.864 0 10.552 2.258 4.69 2.252 7.364 6.258 2.68 4.006 2.676 8.994 0 5.087-2.45 8.614a16.9 16.9 0 0 1-6.01 5.492v.456q4.69 1.965 7.606 5.946 2.924 3.985 2.93 9.506 0 5.532-2.834 9.875a19.7 19.7 0 0 1-7.795 6.847q-4.976 2.5-11.212 2.491-7.22 0-13.23-4.127-.006.005 0 0m47.088-61.465-7.965 5.763-4.165-6.32 14.57-10.518h5.745v58.864h-7.847V76.35q-.006-.006 0-.006 0-.006-.182.006c-.012 0-.156-8.44-.156-8.44" fill="#1A73E8" />
-    </svg>
+    /* eslint-disable-next-line @next/next/no-img-element */
+    <img
+      src="/logos/google-calendar.png"
+      alt=""
+      width={26}
+      height={26}
+      draggable={false}
+    />
   );
 }
 
@@ -494,6 +492,10 @@ export function SetupStep({
   // Gmail). In that case they still need a path forward: the state machine
   // auto-advances through subsequent steps when DC is skipped, so we treat
   // being past `connect-calendar` as "ready for sync".
+  // Continue is live as soon as the two required connections (Dench Cloud
+  // + Gmail) are in place. If calendar isn't connected we silently skip
+  // it on click (see handleContinueToSync). This replaces the old
+  // separate "Skip" affordance on the calendar row.
   const canContinue =
     requiredComplete || state.currentStep === "backfill" || state.currentStep === "complete";
 
@@ -506,6 +508,13 @@ export function SetupStep({
       // refresh to pull the latest state from the server.
       onAdvance(state);
       void onRefresh();
+      return;
+    }
+    // On connect-calendar without a calendar connection, Continue acts
+    // as the (now hidden) Skip button: mark calendar as skipped and
+    // advance to backfill.
+    if (state.currentStep === "connect-calendar" && !calendarConnected) {
+      await handleSkipCalendar();
       return;
     }
     // When on connect-calendar and the user has already connected calendar
@@ -718,25 +727,17 @@ export function SetupStep({
           disabledReason={calendarBlocked ? "Requires Gmail." : undefined}
           actions={
             calendarConnected ? null : state.currentStep === "backfill" ? null : (
-              <div className="flex items-center gap-3">
-                {gmailConnected && (
-                  <button
-                    type="button"
-                    onClick={() => void handleSkipCalendar()}
-                    disabled={advancing || activeToolkit !== null}
-                    className="text-[12.5px] underline-offset-4 transition-colors hover:underline disabled:opacity-50"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    Skip
-                  </button>
-                )}
-                <PrimaryAction
-                  onClick={() => void startConnect("calendar")}
-                  disabled={calendarBlocked || activeToolkit !== null}
-                >
-                  {activeToolkit === "calendar" ? "Authorizing…" : "Connect"}
-                </PrimaryAction>
-              </div>
+              // Calendar is optional: no explicit Skip button — the footer
+              // "Continue" handles the skip path when Gmail is connected
+              // but calendar isn't. Keeps the row to a single primary
+              // action (Fitts's Law) and removes a decision the user
+              // didn't actually need.
+              <PrimaryAction
+                onClick={() => void startConnect("calendar")}
+                disabled={calendarBlocked || activeToolkit !== null}
+              >
+                {activeToolkit === "calendar" ? "Authorizing…" : "Connect"}
+              </PrimaryAction>
             )
           }
         />

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "../ui/button";
 import type { OnboardingState } from "@/lib/denchclaw-state";
 import type { LiveStats } from "./preview-workspace-mock";
 
@@ -23,13 +22,30 @@ type ProgressEvent = {
   error?: string;
 };
 
+// Historically we let users jump in early once enough inbox messages had
+// landed, but the new UX is: finish all four phases (Email, Calendar,
+// Dedupe, Rank) then unlock. Kept as a named constant in case we ever
+// re-introduce an "enough to be useful" shortcut.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const READY_THRESHOLD = 2_000;
 
 /**
- * Step 3 left pane. Kicks off the backfill (if not already started) and
- * subscribes to the existing SSE progress feed. The bulk of the real-time
- * stats render on the right via `liveStats`; the left pane shows the active
- * phase, the latest log line, and the primary "I'm ready" CTA.
+ * Step 3 left pane. Same design philosophy as Steps 1 & 2:
+ *
+ * - No eyebrow label. The right-hand preview and the single visible title
+ *   carry the narrative, so we don't spend attention on a ceremonial
+ *   "Step 3 · Syncing" badge (Hick's Law — one focal point per screen).
+ * - A single primary action using the same accent button we ship on the
+ *   other steps (visual continuity across the flow).
+ * - Progress rendered as a quiet vertical list of phases with per-row
+ *   ticks/spinners instead of the previous chunky numbered timeline; the
+ *   latest status message sits as a muted caption below rather than inside
+ *   a framed card. Keeps the surface calm and reserves visual weight for
+ *   the real deliverable (the People table on the right).
+ *
+ * Functional behavior is unchanged: kick off backfill if not started,
+ * subscribe to SSE, stream `liveStats` up to the wizard, and enable the
+ * CTA once enough data has landed or the run is fully complete.
  */
 export function SyncStep({
   state,
@@ -85,9 +101,9 @@ export function SyncStep({
           companies: data.companiesProcessed ?? 0,
           events: data.eventsProcessed ?? 0,
         });
-        if ((data.messagesProcessed ?? 0) >= READY_THRESHOLD) {
-          setReadyToOpen(true);
-        }
+        // Only unlock the action once every phase has finished — users
+        // kept getting confused when the button went live while rows were
+        // still streaming in, because the right pane looked half-full.
         if (data.phase === "complete") {
           setReadyToOpen(true);
         }
@@ -130,221 +146,198 @@ export function SyncStep({
     }
   }, [onAdvance]);
 
-  const isComplete = latest?.phase === "complete";
+  const phase = latest?.phase ?? "starting";
 
   return (
     <div className="space-y-8">
       <div>
-        <p
-          className="mb-3 text-xs font-semibold uppercase tracking-[0.18em]"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Step 3 · Syncing
-        </p>
         <h1
           className="font-instrument text-[34px] leading-[1.1] tracking-tight"
           style={{ color: "var(--color-text)" }}
         >
-          Building your workspace.
+          Bringing your workspace to life.
         </h1>
         <p
-          className="mt-3 text-[14.5px] leading-relaxed"
+          className="mt-3 text-[13.5px] leading-relaxed"
           style={{ color: "var(--color-text-muted)" }}
         >
-          We&apos;re paginating through your inbox and calendar now. You can
-          jump in as soon as there&apos;s a useful first cut — the rest backfills
-          quietly in the background.
+          Your inbox and calendar are loading on the right. Head in as soon
+          as there&apos;s enough — the rest keeps filling in quietly.
         </p>
       </div>
 
-      <PhaseTimeline phase={latest?.phase ?? "starting"} />
-
-      <div
-        className="rounded-2xl px-5 py-5"
-        style={{
-          background: "var(--color-surface-hover)",
-          border: "1px solid var(--color-border)",
-        }}
-      >
-        <div className="flex items-center gap-2">
-          <PhaseDot phase={latest?.phase ?? "starting"} active={!isComplete} />
-          <span
-            className="text-[11px] font-semibold uppercase tracking-[0.18em]"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            {phaseLabel(latest?.phase)}
-          </span>
-        </div>
-        <p
-          className="mt-2 text-[14px] leading-relaxed"
-          style={{ color: "var(--color-text)" }}
-        >
-          {latest?.message ?? "Warming up the pipes…"}
-        </p>
-      </div>
+      <PhaseList phase={phase} latestMessage={latest?.message} />
 
       {error && (
-        <div
-          className="rounded-xl px-4 py-3 text-[13px]"
-          style={{
-            background: "rgba(239, 68, 68, 0.08)",
-            color: "var(--color-error)",
-            border: "1px solid rgba(239, 68, 68, 0.2)",
-          }}
+        <p
+          className="text-[12.5px]"
+          style={{ color: "var(--color-error)" }}
         >
           {error}
-        </div>
+        </p>
       )}
 
       <div className="flex items-center justify-between gap-3 pt-2">
         <p className="text-[12px]" style={{ color: "var(--color-text-muted)" }}>
           {readyToOpen
-            ? "Enough data loaded — head in whenever you're ready."
-            : "Hold tight. We'll unlock this as soon as the first cut is useful."}
+            ? "All four phases are done — your workspace is ready."
+            : "Hanging out until all four phases finish."}
         </p>
-        <Button
+        <button
+          type="button"
           onClick={() => void handleOpen()}
           disabled={!readyToOpen || completing}
+          className="flex h-10 items-center justify-center rounded-lg px-5 text-[13.5px] font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50"
+          style={{
+            background: "var(--color-accent)",
+            color: "#fff",
+          }}
+          onMouseEnter={(e) => {
+            if (readyToOpen && !completing) {
+              (e.currentTarget as HTMLElement).style.opacity = "0.92";
+            }
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.opacity = "1";
+          }}
         >
-          {completing ? "Finishing…" : "I'm ready"}
-        </Button>
+          {completing ? "Opening workspace…" : "Let's go"}
+        </button>
       </div>
     </div>
   );
 }
 
-function PhaseTimeline({ phase }: { phase: ProgressEvent["phase"] }) {
-  const phases: Array<{ id: ProgressEvent["phase"]; label: string }> = [
-    { id: "gmail", label: "Email" },
-    { id: "calendar", label: "Calendar" },
-    { id: "merging", label: "Dedupe" },
-    { id: "scoring", label: "Rank" },
-  ];
-  const order: ProgressEvent["phase"][] = [
-    "starting",
-    "gmail",
-    "calendar",
-    "merging",
-    "scoring",
-    "complete",
-  ];
-  const currentIdx = order.indexOf(phase);
+// ─────────────────────────────────────────────────────────────────────────
+// Phase list — quiet, list-style status matching the Step 2 row aesthetic.
+// ─────────────────────────────────────────────────────────────────────────
+
+type PhaseDef = {
+  id: ProgressEvent["phase"];
+  label: string;
+  helper: string;
+};
+
+// Ordered phases as the backend reports them. `starting` is intentionally
+// omitted from the visible list — it's the pre-flight state and becomes
+// "Email" the moment data starts moving, which is the first real signal.
+const PHASES: PhaseDef[] = [
+  { id: "gmail", label: "Email", helper: "Paginating through your inbox" },
+  { id: "calendar", label: "Calendar", helper: "Loading meetings and attendees" },
+  { id: "merging", label: "Dedupe", helper: "Merging the same person across sources" },
+  { id: "scoring", label: "Rank", helper: "Scoring who matters to you most" },
+];
+
+const PHASE_ORDER: ProgressEvent["phase"][] = [
+  "starting",
+  "gmail",
+  "calendar",
+  "merging",
+  "scoring",
+  "complete",
+];
+
+function PhaseList({
+  phase,
+  latestMessage,
+}: {
+  phase: ProgressEvent["phase"];
+  latestMessage?: string;
+}) {
+  const currentIdx = PHASE_ORDER.indexOf(phase);
+  const allDone = phase === "complete";
+
   return (
-    <div className="flex items-center gap-2">
-      {phases.map((p, idx) => {
-        const pIdx = order.indexOf(p.id);
-        const done = currentIdx > pIdx || phase === "complete";
-        const active = currentIdx === pIdx;
-        return (
-          <div key={p.id} className="flex flex-1 items-center gap-2">
-            <span
-              className="flex h-5 w-5 items-center justify-center rounded-full text-[9.5px] font-semibold transition-colors"
+    <div>
+      <ul className="divide-y divide-[var(--color-border)]">
+        {PHASES.map((p) => {
+          const pIdx = PHASE_ORDER.indexOf(p.id);
+          const done = allDone || currentIdx > pIdx;
+          const active = !allDone && currentIdx === pIdx;
+          const state: "done" | "active" | "pending" = done
+            ? "done"
+            : active
+              ? "active"
+              : "pending";
+          return (
+            <li
+              key={p.id}
+              className="flex items-center gap-3 py-3"
               style={{
-                background: done
-                  ? "var(--color-accent)"
-                  : active
-                    ? "var(--color-accent-light)"
-                    : "var(--color-surface-hover)",
-                color: done
-                  ? "#fff"
-                  : active
-                    ? "var(--color-accent)"
-                    : "var(--color-text-muted)",
-                border: done
-                  ? "1px solid var(--color-accent)"
-                  : `1px solid var(--color-border)`,
+                opacity: state === "pending" ? 0.55 : 1,
+                transition: "opacity 240ms ease",
               }}
             >
-              {done ? (
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
+              <PhaseMark state={state} />
+              <div className="min-w-0 flex-1">
+                <p
+                  className="text-[13px] font-medium"
+                  style={{ color: "var(--color-text)" }}
                 >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                idx + 1
-              )}
-            </span>
-            <span
-              className="text-[11px] font-medium tracking-tight"
-              style={{
-                color:
-                  done || active
-                    ? "var(--color-text)"
-                    : "var(--color-text-muted)",
-              }}
-            >
-              {p.label}
-            </span>
-            {idx < phases.length - 1 && (
+                  {p.label}
+                </p>
+                <p
+                  className="mt-0.5 truncate text-[11.5px]"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  {active && latestMessage ? latestMessage : p.helper}
+                </p>
+              </div>
               <span
-                className="ml-1 h-[2px] flex-1 rounded-full"
-                style={{
-                  background: done
-                    ? "var(--color-accent)"
-                    : "var(--color-border)",
-                }}
-              />
-            )}
-          </div>
-        );
-      })}
+                className="text-[11px] tabular-nums"
+                style={{ color: "var(--color-text-muted)" }}
+              >
+                {state === "done" ? "Done" : state === "active" ? "Working" : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
 
-function PhaseDot({
-  phase,
-  active,
-}: {
-  phase: ProgressEvent["phase"];
-  active: boolean;
-}) {
-  const color =
-    phase === "error"
-      ? "var(--color-error)"
-      : phase === "complete"
-        ? "var(--color-success)"
-        : "var(--color-accent)";
-  return (
-    <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+function PhaseMark({ state }: { state: "done" | "active" | "pending" }) {
+  if (state === "done") {
+    return (
       <span
-        className="relative h-2 w-2 rounded-full"
-        style={{ background: color }}
-      />
-      {active && (
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-full opacity-60 motion-safe:animate-ping"
-          style={{ background: color }}
-        />
-      )}
-    </span>
-  );
-}
-
-function phaseLabel(phase: ProgressEvent["phase"] | undefined): string {
-  switch (phase) {
-    case "starting":
-      return "Starting";
-    case "gmail":
-      return "Loading email";
-    case "calendar":
-      return "Loading calendar";
-    case "merging":
-      return "Merging duplicates";
-    case "scoring":
-      return "Ranking relationships";
-    case "complete":
-      return "Done";
-    case "error":
-      return "Error";
-    default:
-      return "Working";
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+        style={{ background: "var(--color-accent)", color: "#fff" }}
+        aria-label="Done"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </span>
+    );
   }
+  if (state === "active") {
+    return (
+      <span
+        className="relative flex h-5 w-5 shrink-0 items-center justify-center"
+        aria-label="Working"
+      >
+        <span
+          className="absolute inset-0 rounded-full"
+          style={{
+            border: "2px solid var(--color-border)",
+            borderTopColor: "var(--color-accent)",
+            animation: "syncSpin 900ms linear infinite",
+          }}
+        />
+        <style jsx>{`
+          @keyframes syncSpin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="h-5 w-5 shrink-0 rounded-full"
+      style={{ border: "1.5px solid var(--color-border)" }}
+      aria-label="Pending"
+    />
+  );
 }

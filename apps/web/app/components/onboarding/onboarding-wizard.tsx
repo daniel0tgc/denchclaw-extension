@@ -12,8 +12,9 @@ import { SyncStep } from "./sync-step";
 import { CompleteStep } from "./complete-step";
 import { PreviewPane, type PreviewVariant } from "./preview-pane";
 import { PreviewEditorial } from "./preview-editorial";
+import { PreviewOrbit } from "./preview-orbit";
+import { PreviewPeopleTable } from "./preview-people-table";
 import {
-  PreviewWorkspaceMock,
   type LiveStats,
   type WorkspaceMockStage,
 } from "./preview-workspace-mock";
@@ -214,24 +215,22 @@ export function OnboardingWizard({
       const variant: PreviewVariant = "workspace-mock";
       return {
         previewVariant: variant,
-        previewKey: `setup:${mockStage}`,
-        previewNode: <PreviewWorkspaceMock stage={mockStage} />,
+        previewKey: "setup:orbit",
+        previewNode: <PreviewOrbit />,
       };
     }
     if (activeClientStep === "sync") {
       const variant: PreviewVariant = "workspace-live";
       return {
         previewVariant: variant,
-        previewKey: "sync",
-        previewNode: (
-          <PreviewWorkspaceMock stage="live" liveStats={liveStats} />
-        ),
+        previewKey: "sync:people-table",
+        previewNode: <PreviewPeopleTable liveStats={liveStats} />,
       };
     }
     return {
       previewVariant: "workspace-mock" as PreviewVariant,
       previewKey: "complete",
-      previewNode: <PreviewWorkspaceMock stage="live" liveStats={liveStats} />,
+      previewNode: <PreviewPeopleTable liveStats={liveStats} />,
     };
   }, [activeClientStep, typedIdentity, mockStage, liveStats]);
 

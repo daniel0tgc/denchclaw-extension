@@ -1234,6 +1234,28 @@ export async function runGmailBackfill(opts: GmailSyncOptions): Promise<GmailSyn
     },
   });
 
+  // Best-effort: pull real Google profile photos for every person we
+  // just learned about (via the People API otherContacts endpoint —
+  // same Gmail OAuth scope, no extra consent). Failures here shouldn't
+  // block a successful Gmail sync, so we swallow errors.
+  try {
+    const { syncGooglePhotos } = await import("./gmail-photo-sync");
+    const photoResult = await syncGooglePhotos({
+      connectionId: opts.connectionId,
+      signal: opts.signal,
+    });
+    opts.onProgress?.({
+      phase: "gmail",
+      message: `Synced ${photoResult.photosWritten} profile photos from Google.`,
+      messagesProcessed: cache.messageByGmailId.size,
+      peopleProcessed: cache.peopleByEmail.size,
+      companiesProcessed: cache.companyByDomain.size,
+      threadsProcessed: cache.threadByGmailId.size,
+    });
+  } catch (err) {
+    console.warn("[gmail-sync] photo backfill failed (non-fatal):", err);
+  }
+
   return {
     ok: true,
     messagesProcessed: totalMessages,

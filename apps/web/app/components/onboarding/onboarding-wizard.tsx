@@ -6,43 +6,56 @@ import {
   type OnboardingState,
   type OnboardingStep,
 } from "@/lib/denchclaw-state";
-import { WelcomeStep } from "./welcome-step";
 import { IdentityStep } from "./identity-step";
-import { DenchCloudStep } from "./dench-cloud-step";
-import { ConnectGmailStep } from "./connect-gmail-step";
-import { ConnectCalendarStep } from "./connect-calendar-step";
+import { SetupStep } from "./setup-step";
 import { SyncStep } from "./sync-step";
 import { CompleteStep } from "./complete-step";
+import { PreviewPane, type PreviewVariant } from "./preview-pane";
+import { PreviewEditorial } from "./preview-editorial";
+import {
+  PreviewWorkspaceMock,
+  type LiveStats,
+  type WorkspaceMockStage,
+} from "./preview-workspace-mock";
 import { ProfileSwitcher } from "../workspace/profile-switcher";
 import { CreateWorkspaceDialog } from "../workspace/create-workspace-dialog";
 
-const STEP_LABELS: Record<OnboardingStep, string> = {
-  welcome: "Welcome",
-  identity: "About you",
-  "dench-cloud": "Dench Cloud",
-  "connect-gmail": "Connect Gmail",
-  "connect-calendar": "Connect Calendar",
-  backfill: "Sync your inbox",
-  complete: "All set",
-};
+type ClientStep = "identity" | "setup" | "sync";
 
-const VISIBLE_STEPS: OnboardingStep[] = [
-  "welcome",
-  "identity",
-  "dench-cloud",
-  "connect-gmail",
-  "connect-calendar",
-  "backfill",
+const CLIENT_STEPS: Array<{ id: ClientStep; label: string }> = [
+  { id: "identity", label: "Identity" },
+  { id: "setup", label: "Setup" },
+  { id: "sync", label: "Sync" },
 ];
 
 /**
- * Top-level orchestrator. Owns the in-memory copy of `OnboardingState`,
- * delegates rendering to the per-step component, and refetches state from
- * the server after every transition so a refresh resumes exactly here.
- *
- * `workspaceCount` is rendered server-side so the workspace switcher (only
- * shown when more than one workspace exists) appears immediately on first
- * paint without a fetch flicker.
+ * Maps the server's fine-grained onboarding state (6 steps) onto the client's
+ * compressed 3-step view. `welcome` and `identity` collapse to Step 1. The
+ * three connection steps + dench-cloud fold into a single "Setup" screen.
+ * `backfill` is Step 3. `complete` is its own full-screen landing.
+ */
+function clientStepFor(server: OnboardingStep): ClientStep | "complete" {
+  switch (server) {
+    case "welcome":
+    case "identity":
+      return "identity";
+    case "dench-cloud":
+    case "connect-gmail":
+    case "connect-calendar":
+      return "setup";
+    case "backfill":
+      return "sync";
+    case "complete":
+      return "complete";
+  }
+}
+
+/**
+ * Top-level split-screen orchestrator. The left pane renders the active step;
+ * the right pane renders a crossfading preview that evolves as the user moves
+ * through the flow (editorial → workspace mock → live counters). The navbar
+ * stays minimal (logo + wordmark + theme toggle) and hosts the 3-segment
+ * progress bar center-screen; completed segments are clickable to jump back.
  */
 export function OnboardingWizard({
   initialState,
@@ -57,11 +70,27 @@ export function OnboardingWizard({
   const [refreshing, setRefreshing] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
 
-  // Switching or creating a workspace flips the active workspace server-side;
-  // a full reload re-runs the page server component so it can either redirect
-  // (target workspace already onboarded) or render the wizard for the new
-  // workspace's persisted state. router.refresh() is not enough because
-  // `redirect()` lives in the server component path.
+  // Back-navigation override: lets the user jump to an already-completed
+  // client step without us mutating the authoritative server state. When set,
+  // it takes precedence over what the server says; we clear it whenever the
+  // server advances past the overridden view.
+  const [clientStepOverride, setClientStepOverride] = useState<ClientStep | null>(null);
+
+  // Live state reflected in the right preview pane.
+  const [typedIdentity, setTypedIdentity] = useState<{ name: string; email: string }>(
+    () => ({
+      name: initialState.identity?.name ?? "",
+      email: initialState.identity?.email ?? "",
+    }),
+  );
+  const [mockStage, setMockStage] = useState<WorkspaceMockStage>("empty");
+  const [liveStats, setLiveStats] = useState<LiveStats>({
+    messages: 0,
+    people: 0,
+    companies: 0,
+    events: 0,
+  });
+
   const reloadAfterWorkspaceChange = useCallback(() => {
     window.location.reload();
   }, []);
@@ -79,249 +108,320 @@ export function OnboardingWizard({
     }
   }, []);
 
+  // Compute the active client step (respecting any back-navigation override,
+  // as long as that override is still "behind" the real server step).
+  const serverClientStep = clientStepFor(state.currentStep);
+  const activeClientStep: ClientStep | "complete" = useMemo(() => {
+    if (!clientStepOverride) {return serverClientStep;}
+    if (serverClientStep === "complete") {return "complete";}
+    const currentIdx = CLIENT_STEPS.findIndex((s) => s.id === serverClientStep);
+    const overrideIdx = CLIENT_STEPS.findIndex((s) => s.id === clientStepOverride);
+    if (overrideIdx < currentIdx) {return clientStepOverride;}
+    return serverClientStep;
+  }, [serverClientStep, clientStepOverride]);
+
+  // Clear a stale override once the server catches up.
   useEffect(() => {
-    if (state.currentStep === "complete") {
-      window.location.assign("/");
+    if (!clientStepOverride) {return;}
+    if (serverClientStep === "complete") {
+      setClientStepOverride(null);
+      return;
     }
-  }, [state.currentStep]);
+    const currentIdx = CLIENT_STEPS.findIndex((s) => s.id === serverClientStep);
+    const overrideIdx = CLIENT_STEPS.findIndex((s) => s.id === clientStepOverride);
+    if (overrideIdx >= currentIdx) {setClientStepOverride(null);}
+  }, [serverClientStep, clientStepOverride]);
 
-  const stepIndex = useMemo(
-    () => Math.max(0, VISIBLE_STEPS.indexOf(state.currentStep)),
-    [state.currentStep],
-  );
+  const handleAdvance = useCallback((next: OnboardingState) => {
+    setState(next);
+  }, []);
 
-  const handleAdvance = useCallback(
-    (next: OnboardingState) => {
-      setState(next);
-    },
-    [],
-  );
+  const activeIndex =
+    activeClientStep === "complete"
+      ? CLIENT_STEPS.length - 1
+      : CLIENT_STEPS.findIndex((s) => s.id === activeClientStep);
 
-  // Client-side back-navigation: jump the view to a previously completed step
-  // without touching server state. The user can click "continue" on that step
-  // to resume forward; since the step is already in `completedSteps`, the
-  // server will short-circuit and return us to the furthest real step.
-  const handleJumpToStep = useCallback(
-    (target: OnboardingStep) => {
-      const targetIdx = VISIBLE_STEPS.indexOf(target);
-      const currentIdx = VISIBLE_STEPS.indexOf(state.currentStep);
-      const isCompleted = state.completedSteps.includes(target);
-      if (targetIdx === -1) return;
-      if (targetIdx >= currentIdx && !isCompleted) return;
-      setState((prev) => ({ ...prev, currentStep: target }));
-    },
-    [state.currentStep, state.completedSteps],
-  );
+  // Nielsen's "user control & freedom" — always give the user an escape hatch
+  // from a step they no longer want to be on. We only step back client-side
+  // (the server record of what they've already done stays put); once they
+  // submit again, the server short-circuits and they land back at the
+  // furthest real step.
+  const canGoBack =
+    activeClientStep !== "complete" && activeIndex > 0;
+  const previousStepLabel =
+    activeIndex > 0 ? CLIENT_STEPS[activeIndex - 1]?.label ?? null : null;
+  const handleBack = useCallback(() => {
+    if (!canGoBack) {return;}
+    const targetId = CLIENT_STEPS[activeIndex - 1]?.id;
+    if (!targetId) {return;}
+    setClientStepOverride(targetId);
+  }, [canGoBack, activeIndex]);
+
+  // Keyboard shortcuts so power users have a back affordance even without
+  // pointing at it: Escape (universal "go back" convention) and ⌘/Ctrl-[
+  // (matches browsers / macOS system apps). Disabled while typing into
+  // inputs so Escape keeps its role of dismissing form errors, autocomplete,
+  // etc. inside the step.
+  useEffect(() => {
+    if (!canGoBack) {return;}
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable === true;
+      if (typing) {return;}
+      const isCmdBracket =
+        (event.metaKey || event.ctrlKey) && event.key === "[";
+      if (event.key === "Escape" || isCmdBracket) {
+        event.preventDefault();
+        handleBack();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canGoBack, handleBack]);
+
+  // Decide what the preview pane should render based on the active step and
+  // current connection progress. Keyed so the pane can crossfade between
+  // variants cleanly.
+  const { previewVariant, previewNode, previewKey } = useMemo(() => {
+    if (activeClientStep === "identity") {
+      const variant: PreviewVariant = "editorial";
+      return {
+        previewVariant: variant,
+        previewKey: "identity",
+        previewNode: (
+          <PreviewEditorial
+            typedName={typedIdentity.name}
+            typedEmail={typedIdentity.email}
+          />
+        ),
+      };
+    }
+    if (activeClientStep === "setup") {
+      const variant: PreviewVariant = "workspace-mock";
+      return {
+        previewVariant: variant,
+        previewKey: `setup:${mockStage}`,
+        previewNode: <PreviewWorkspaceMock stage={mockStage} />,
+      };
+    }
+    if (activeClientStep === "sync") {
+      const variant: PreviewVariant = "workspace-live";
+      return {
+        previewVariant: variant,
+        previewKey: "sync",
+        previewNode: (
+          <PreviewWorkspaceMock stage="live" liveStats={liveStats} />
+        ),
+      };
+    }
+    return {
+      previewVariant: "workspace-mock" as PreviewVariant,
+      previewKey: "complete",
+      previewNode: <PreviewWorkspaceMock stage="live" liveStats={liveStats} />,
+    };
+  }, [activeClientStep, typedIdentity, mockStage, liveStats]);
+
+  void previewVariant;
+
+  if (activeClientStep === "complete") {
+    return (
+      <div
+        className="min-h-screen w-full"
+        style={{ background: "var(--color-background)" }}
+      >
+        <header className="flex h-16 items-center justify-between px-6 sm:px-10">
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/dench-workspace-icon.png"
+              alt="DenchClaw"
+              width={36}
+              height={36}
+              className="h-9 w-9 rounded-xl"
+              draggable={false}
+            />
+            <span
+              className="font-instrument text-3xl tracking-tight leading-none"
+              style={{ color: "var(--color-text)" }}
+            >
+              DenchClaw
+            </span>
+          </div>
+          <ThemeToggle />
+        </header>
+        <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-6">
+          <CompleteStep state={state} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div
       className="min-h-screen w-full"
       style={{ background: "var(--color-background)" }}
     >
-      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
-        <ThemeToggle />
-      </div>
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-6 py-10 lg:flex-row lg:gap-16 lg:py-16">
-        {/* Progress rail */}
-        <aside className="lg:w-72 lg:shrink-0">
-          <div className="mb-8">
-            <div className="flex items-center gap-2">
-              <img
-                src="/dench-workspace-icon.png"
-                alt="DenchClaw"
-                width={36}
-                height={36}
-                className="h-9 w-9 rounded-xl"
-                draggable={false}
-              />
-              <span
-                className="font-instrument text-xl tracking-tight"
-                style={{ color: "var(--color-text)" }}
+      {/* Top navbar: logo + wordmark on the left (matches the main workspace
+          heading style), top-bar-landed 3-segment progress center, theme
+          toggle on the right. No border — navbar sits on page background. */}
+      <header className="relative flex h-16 items-center justify-between gap-6 px-6 sm:px-10">
+        {workspaceCount > 1 ? (
+          <ProfileSwitcher
+            activeWorkspaceHint={activeWorkspace}
+            onWorkspaceSwitch={reloadAfterWorkspaceChange}
+            onWorkspaceDelete={reloadAfterWorkspaceChange}
+            onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
+            trigger={({ onClick, switching }) => (
+              <button
+                type="button"
+                onClick={onClick}
+                disabled={switching}
+                className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 -mx-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
+                title="Switch workspace"
               >
-                DenchClaw
-              </span>
-            </div>
-
-            {/* Workspace switcher: each workspace has its own onboarding state,
-                so when more than one exists we let the user jump between them
-                (or hop to one that's already onboarded) without finishing this
-                wizard first. */}
-            {workspaceCount > 1 && (
-              <div className="mt-4">
-                <p
-                  className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em]"
+                <img
+                  src="/dench-workspace-icon.png"
+                  alt="DenchClaw"
+                  width={36}
+                  height={36}
+                  className="h-9 w-9 rounded-xl"
+                  draggable={false}
+                />
+                <span
+                  className="font-instrument text-3xl tracking-tight leading-none"
+                  style={{ color: "var(--color-text)" }}
+                >
+                  DenchClaw
+                </span>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="ml-0.5 shrink-0 transition-colors"
                   style={{ color: "var(--color-text-muted)" }}
                 >
-                  Workspace
-                </p>
-                <ProfileSwitcher
-                  activeWorkspaceHint={activeWorkspace}
-                  onWorkspaceSwitch={reloadAfterWorkspaceChange}
-                  onWorkspaceDelete={reloadAfterWorkspaceChange}
-                  onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
-                  trigger={({ onClick, activeWorkspace: workspaceName, switching }) => (
-                    <button
-                      type="button"
-                      onClick={onClick}
-                      disabled={switching}
-                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] transition-colors disabled:opacity-50"
-                      style={{
-                        background: "var(--color-surface)",
-                        border: "1px solid var(--color-border)",
-                        color: "var(--color-text)",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (switching) return;
-                        (e.currentTarget as HTMLElement).style.background =
-                          "var(--color-surface-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.background =
-                          "var(--color-surface)";
-                      }}
-                      title="Switch workspace"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                      >
-                        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-                      </svg>
-                      <span className="flex-1 truncate font-medium">
-                        {workspaceName ?? "Select workspace"}
-                      </span>
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                      >
-                        <path d="m6 9 6 6 6-6" />
-                      </svg>
-                    </button>
-                  )}
-                />
-              </div>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
             )}
+          />
+        ) : (
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/dench-workspace-icon.png"
+              alt="DenchClaw"
+              width={36}
+              height={36}
+              className="h-9 w-9 rounded-xl"
+              draggable={false}
+            />
+            <span
+              className="font-instrument text-3xl tracking-tight leading-none"
+              style={{ color: "var(--color-text)" }}
+            >
+              DenchClaw
+            </span>
           </div>
+        )}
 
-          <ol className="space-y-1.5">
-            {VISIBLE_STEPS.map((step, idx) => {
-              const isCurrent = step === state.currentStep;
-              const isCompleted = state.completedSteps.includes(step) || idx < stepIndex;
-              const canJump = !isCurrent && (isCompleted || idx < stepIndex);
-              const content = (
-                <>
-                  <span
-                    aria-hidden
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-colors"
-                    style={{
-                      background: isCompleted
-                        ? "var(--color-accent)"
-                        : isCurrent
-                          ? "var(--color-surface-hover)"
-                          : "var(--color-surface)",
-                      color: isCompleted
-                        ? "#fff"
-                        : isCurrent
-                          ? "var(--color-text)"
-                          : "var(--color-text-muted)",
-                      border: isCurrent
-                        ? "1px solid var(--color-accent)"
-                        : "1px solid var(--color-border)",
-                    }}
-                  >
-                    {isCompleted ? (
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    ) : (
-                      idx + 1
-                    )}
-                  </span>
-                  <span
-                    className="text-[13px] transition-colors"
-                    style={{
-                      color: isCurrent
-                        ? "var(--color-text)"
-                        : "var(--color-text-muted)",
-                      fontWeight: isCurrent ? 600 : 500,
-                    }}
-                  >
-                    {STEP_LABELS[step]}
-                  </span>
-                </>
-              );
-              return (
-                <li key={step}>
-                  {canJump ? (
-                    <button
-                      type="button"
-                      onClick={() => handleJumpToStep(step)}
-                      className="group flex w-full items-center gap-3 rounded-lg px-1.5 py-1 -mx-1.5 text-left transition-colors hover:bg-[var(--color-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                      title={`Go back to ${STEP_LABELS[step]}`}
-                    >
-                      {content}
-                    </button>
-                  ) : (
-                    <div
-                      className="flex items-center gap-3 px-1.5 py-1 -mx-1.5"
-                      aria-current={isCurrent ? "step" : undefined}
-                    >
-                      {content}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+        {/* Minimal step indicator, absolutely centered. The back affordance
+            lives with the step body below (Jakob's law — that's where users
+            expect it), so the centered counter here stays visually stable
+            as steps change. */}
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[12px] font-medium tabular-nums tracking-tight"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Step {Math.max(0, activeIndex) + 1} of {CLIENT_STEPS.length}
+        </div>
 
+        <div className="flex items-center gap-2">
           {refreshing && (
-            <p
-              className="mt-6 text-[11px] uppercase tracking-wider"
+            <span
+              className="hidden text-[11px] uppercase tracking-wider sm:inline"
               style={{ color: "var(--color-text-muted)" }}
             >
               Syncing…
-            </p>
+            </span>
           )}
-        </aside>
+          <ThemeToggle />
+        </div>
+      </header>
 
-        {/* Step body */}
-        <main className="flex-1">
-          <div
-            className="mx-auto max-w-xl rounded-3xl"
-            style={{
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-border)",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
-            <div className="px-8 py-10 sm:px-12 sm:py-14">
-              <StepContent state={state} onAdvance={handleAdvance} onRefresh={refresh} />
+      {/* Split-screen body. On lg+, the right pane is a live preview. Below
+          that it collapses to a stacked layout with the preview below the
+          step — this keeps the mock useful but gets out of the way on narrow
+          screens. */}
+      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <main className="flex items-start justify-center px-6 pb-16 pt-6 sm:px-10 lg:items-center lg:pt-0">
+          <div className="w-full max-w-[520px]">
+            {/* Top-of-body back link. Positioned top-left (Jakob's law —
+                matches wizard patterns in Stripe, Linear, Notion), labeled
+                with the actual destination (Peak-End clarity), 32px tall
+                (WCAG 2.5.5 minimum target size), and reachable via Escape
+                or ⌘/Ctrl+[ for keyboard users. Space is reserved when it's
+                absent so the step heading doesn't jump. */}
+            <div className="mb-4 h-8">
+              {canGoBack && previousStepLabel && (
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="group inline-flex h-8 items-center gap-1.5 rounded-md px-2 -ml-2 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  style={{ color: "var(--color-text-muted)" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.color =
+                      "var(--color-text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.color =
+                      "var(--color-text-muted)";
+                  }}
+                  aria-label={`Back to ${previousStepLabel}`}
+                  title="Back (Esc)"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="transition-transform group-hover:-translate-x-0.5"
+                  >
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                  Back to {previousStepLabel}
+                </button>
+              )}
             </div>
+            <StepContent
+              activeClientStep={activeClientStep}
+              state={state}
+              onAdvance={handleAdvance}
+              onRefresh={refresh}
+              onIdentityTyping={setTypedIdentity}
+              onSetupStageChange={setMockStage}
+              onLiveStats={setLiveStats}
+            />
           </div>
         </main>
+
+        <aside
+          className="hidden lg:flex"
+          style={{ borderLeft: "1px solid var(--color-border)" }}
+        >
+          <PreviewPane variantKey={previewKey}>{previewNode}</PreviewPane>
+        </aside>
       </div>
 
       <CreateWorkspaceDialog
@@ -334,33 +434,50 @@ export function OnboardingWizard({
 }
 
 function StepContent({
+  activeClientStep,
   state,
   onAdvance,
   onRefresh,
+  onIdentityTyping,
+  onSetupStageChange,
+  onLiveStats,
 }: {
+  activeClientStep: ClientStep | "complete";
   state: OnboardingState;
   onAdvance: (next: OnboardingState) => void;
   onRefresh: () => Promise<void>;
+  onIdentityTyping: (v: { name: string; email: string }) => void;
+  onSetupStageChange: (stage: WorkspaceMockStage) => void;
+  onLiveStats: (stats: LiveStats) => void;
 }) {
-  switch (state.currentStep) {
-    case "welcome":
-      return <WelcomeStep state={state} onAdvance={onAdvance} />;
+  switch (activeClientStep) {
     case "identity":
-      return <IdentityStep state={state} onAdvance={onAdvance} />;
-    case "dench-cloud":
-      return <DenchCloudStep state={state} onAdvance={onAdvance} />;
-    case "connect-gmail":
-      return <ConnectGmailStep state={state} onAdvance={onAdvance} onRefresh={onRefresh} />;
-    case "connect-calendar":
       return (
-        <ConnectCalendarStep state={state} onAdvance={onAdvance} onRefresh={onRefresh} />
+        <IdentityStep
+          state={state}
+          onAdvance={onAdvance}
+          onTypingChange={onIdentityTyping}
+        />
       );
-    case "backfill":
-      return <SyncStep state={state} onAdvance={onAdvance} />;
+    case "setup":
+      return (
+        <SetupStep
+          state={state}
+          onAdvance={onAdvance}
+          onRefresh={onRefresh}
+          onStageChange={(stage) => onSetupStageChange(stage as WorkspaceMockStage)}
+        />
+      );
+    case "sync":
+      return (
+        <SyncStep
+          state={state}
+          onAdvance={onAdvance}
+          onLiveStats={onLiveStats}
+        />
+      );
     case "complete":
       return <CompleteStep state={state} />;
-    default:
-      return <WelcomeStep state={state} onAdvance={onAdvance} />;
   }
 }
 
@@ -377,28 +494,20 @@ function ThemeToggle() {
       onClick={() => setTheme(isDark ? "light" : "dark")}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      className="flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-      style={{
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-border)",
-        color: "var(--color-text-muted)",
-      }}
+      className="flex h-9 w-9 items-center justify-center rounded-full bg-transparent transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      style={{ color: "var(--color-text-muted)" }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.background =
-          "var(--color-surface-hover)";
         (e.currentTarget as HTMLElement).style.color = "var(--color-text)";
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.background =
-          "var(--color-surface)";
         (e.currentTarget as HTMLElement).style.color =
           "var(--color-text-muted)";
       }}
     >
       {isDark ? (
         <svg
-          width="15"
-          height="15"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -418,8 +527,8 @@ function ThemeToggle() {
         </svg>
       ) : (
         <svg
-          width="15"
-          height="15"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

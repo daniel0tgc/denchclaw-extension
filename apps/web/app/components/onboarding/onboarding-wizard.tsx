@@ -134,12 +134,23 @@ export function OnboardingWizard({
 
   const handleAdvance = useCallback((next: OnboardingState) => {
     setState(next);
+    // Any successful submit from a step means the user is "done" with that
+    // step, so clear the back-navigation override and let them fall through
+    // to whatever the server considers their real current step. Without
+    // this, if you came back to Step 1, pressed Continue, and the server
+    // returned the same (already-past-identity) state, the UI would stay
+    // stuck on Step 1 with no visible effect.
+    setClientStepOverride(null);
   }, []);
 
   const activeIndex =
     activeClientStep === "complete"
       ? CLIENT_STEPS.length - 1
       : CLIENT_STEPS.findIndex((s) => s.id === activeClientStep);
+
+  // Step 1 is a classic single-column sign-up style screen; steps 2+ use
+  // the split-screen with a live preview on the right.
+  const isSingleColumn = activeClientStep === "identity";
 
   // Nielsen's "user control & freedom" — always give the user an escape hatch
   // from a step they no longer want to be on. We only step back client-side
@@ -356,13 +367,32 @@ export function OnboardingWizard({
         </div>
       </header>
 
-      {/* Split-screen body. On lg+, the right pane is a live preview. Below
-          that it collapses to a stacked layout with the preview below the
-          step — this keeps the mock useful but gets out of the way on narrow
-          screens. */}
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <main className="flex items-start justify-center px-6 pb-16 pt-6 sm:px-10 lg:items-center lg:pt-0">
-          <div className="w-full max-w-[520px]">
+      {/* Body. Step 1 (Identity) is a single centered column in the style of
+          a classic auth/sign-up screen — minimal, no preview pane. From
+          Step 2 onward we switch to the split-screen layout so the right
+          pane can show the evolving workspace preview. */}
+      <div
+        className={
+          isSingleColumn
+            ? "relative min-h-[calc(100vh-4rem)]"
+            : "grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+        }
+      >
+        {isSingleColumn && <AuthGridBackdrop />}
+        <main
+          className={
+            isSingleColumn
+              ? "relative flex min-h-[calc(100vh-4rem)] items-center justify-center px-6 pb-16 pt-6 sm:px-10"
+              : "flex items-start justify-center px-6 pb-16 pt-6 sm:px-10 lg:items-center lg:pt-0"
+          }
+        >
+          <div
+            className={
+              isSingleColumn
+                ? "w-full max-w-[400px]"
+                : "w-full max-w-[520px]"
+            }
+          >
             {/* Top-of-body back link. Positioned top-left (Jakob's law —
                 matches wizard patterns in Stripe, Linear, Notion), labeled
                 with the actual destination (Peak-End clarity), 32px tall
@@ -416,12 +446,14 @@ export function OnboardingWizard({
           </div>
         </main>
 
-        <aside
-          className="hidden lg:flex"
-          style={{ borderLeft: "1px solid var(--color-border)" }}
-        >
-          <PreviewPane variantKey={previewKey}>{previewNode}</PreviewPane>
-        </aside>
+        {!isSingleColumn && (
+          <aside
+            className="hidden lg:flex"
+            style={{ borderLeft: "1px solid var(--color-border)" }}
+          >
+            <PreviewPane variantKey={previewKey}>{previewNode}</PreviewPane>
+          </aside>
+        )}
       </div>
 
       <CreateWorkspaceDialog
@@ -479,6 +511,33 @@ function StepContent({
     case "complete":
       return <CompleteStep state={state} />;
   }
+}
+
+/**
+ * Subtle grid background for the single-column auth-style step (Step 1).
+ * CSS repeating linear-gradients so it scales infinitely and respects the
+ * theme via `--color-border`. Purely decorative; sits behind the form.
+ */
+function AuthGridBackdrop() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0"
+      style={{
+        backgroundImage:
+          "linear-gradient(to right, var(--color-border) 1px, transparent 1px), linear-gradient(to bottom, var(--color-border) 1px, transparent 1px)",
+        backgroundSize: "48px 48px",
+        // Soft "hole" in the middle where the form lives — grid stays crisp
+        // toward the edges and fades out behind the content so it never
+        // competes with the text.
+        maskImage:
+          "radial-gradient(ellipse 90% 75% at 50% 50%, transparent 5%, black 100%)",
+        WebkitMaskImage:
+          "radial-gradient(ellipse 90% 75% at 50% 50%, transparent 5%, black 100%)",
+        opacity: 0.7,
+      }}
+    />
+  );
 }
 
 function ThemeToggle() {

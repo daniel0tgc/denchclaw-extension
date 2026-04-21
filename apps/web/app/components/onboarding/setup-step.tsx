@@ -1,9 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
 import type { OnboardingState } from "@/lib/denchclaw-state";
 import { ConnectionCard, type ConnectionStatus } from "./connection-card";
 
@@ -29,6 +26,113 @@ type CallbackPayload = {
 };
 
 type ToolkitKey = "gmail" | "calendar";
+
+/**
+ * Single compact filled CTA used on active connection rows. Solid surface
+ * so there is only ever one high-contrast action visible per screen at a
+ * time (Fitts + clarity of intent). Styled against the project's CSS
+ * variables instead of the shadcn palette, which isn't themed in this app
+ * and renders as a washed-out outline.
+ */
+function PrimaryAction({
+  children,
+  onClick,
+  disabled,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  type?: "button" | "submit";
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-8 items-center justify-center rounded-md px-3 text-[12.5px] font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-45"
+      style={{
+        background: "var(--color-text)",
+        color: "var(--color-background)",
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) {(e.currentTarget as HTMLElement).style.opacity = "0.86";}
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.opacity = "1";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Quiet text-only secondary action (Cancel, Skip). */
+function GhostAction({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="text-[12.5px] underline-offset-4 transition-colors hover:underline disabled:opacity-50"
+      style={{ color: "var(--color-text-muted)" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** DenchClaw workspace mark. Uses the existing asset so it themes correctly. */
+function DenchCloudIcon() {
+  return (
+    /* eslint-disable-next-line @next/next/no-img-element */
+    <img
+      src="/dench-workspace-icon.png"
+      alt=""
+      width={28}
+      height={28}
+      draggable={false}
+      style={{ borderRadius: 6 }}
+    />
+  );
+}
+
+/** Gmail brand mark (Google's official color palette). */
+function GmailIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 256 193" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path d="M58.182 192.05V93.14L27.507 65.077 0 49.504v125.091c0 9.658 7.825 17.455 17.455 17.455h40.727Z" fill="#4285F4" />
+      <path d="M197.818 192.05h40.727c9.659 0 17.455-7.826 17.455-17.455V49.505l-31.156 17.837-26.983 25.798-.043 98.91Z" fill="#34A853" />
+      <path d="m58.182 93.14-4.174-38.655 4.174-36.945L128 69.868l69.818-52.327 4.67 34.14-4.67 41.46L128 145.467l-69.818-52.326Z" fill="#EA4335" />
+      <path d="M197.818 17.538V93.14L256 49.504V26.272c0-21.564-24.61-33.858-41.89-20.89L197.818 17.54Z" fill="#FBBC04" />
+      <path d="M0 49.504l26.759 20.069L58.182 93.14V17.538L41.89 5.382C24.59-7.587 0 4.708 0 26.27v23.233Z" fill="#C5221F" />
+    </svg>
+  );
+}
+
+/** Google Calendar brand mark. */
+function GoogleCalendarIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path d="M148.882 43.618H51.118v112.764h97.764z" fill="#fff" />
+      <path d="M148.882 200 200 148.882l-25.559-7.412-25.559 7.412-4.706 23.412 4.706 27.706Z" fill="#EA4335" />
+      <path d="M0 148.882v40.527C0 195.325 4.675 200 10.59 200h40.528l8.235-25.559-8.235-25.559-27.706-4.706Z" fill="#188038" />
+      <path d="M200 51.118V10.59C200 4.675 195.325 0 189.41 0h-40.528q-4.118 24.941-4.118 40.941.001 16 4.118 30.295Q165.941 75.353 200 51.118" fill="#1967D2" />
+      <path d="M200 51.118h-51.118v97.764H200z" fill="#FBBC04" />
+      <path d="M148.882 148.882H51.118V200h97.764z" fill="#34A853" />
+      <path d="M51.118 148.882V0H10.59C4.675 0 0 4.675 0 10.59v138.292z" fill="#4285F4" />
+      <path d="M69.692 129.376c-4.247-2.871-7.189-7.06-8.826-12.588l7.635-3.14q1.372 5.13 4.714 7.948 3.318 2.817 8.108 2.817 4.88 0 8.347-2.961 3.462-2.96 3.474-7.553 0-4.704-3.634-7.664-3.635-2.961-9.17-2.961h-4.412v-7.558h3.956q4.77 0 8.024-2.576 3.255-2.576 3.255-7.064 0-4.005-2.935-6.386-2.935-2.38-7.43-2.38-4.387 0-6.97 2.33-2.58 2.326-3.74 5.77l-7.553-3.14q1.912-5.41 7.007-9.54 5.09-4.12 13.016-4.13 5.864 0 10.552 2.258 4.69 2.252 7.364 6.258 2.68 4.006 2.676 8.994 0 5.087-2.45 8.614a16.9 16.9 0 0 1-6.01 5.492v.456q4.69 1.965 7.606 5.946 2.924 3.985 2.93 9.506 0 5.532-2.834 9.875a19.7 19.7 0 0 1-7.795 6.847q-4.976 2.5-11.212 2.491-7.22 0-13.23-4.127-.006.005 0 0m47.088-61.465-7.965 5.763-4.165-6.32 14.57-10.518h5.745v58.864h-7.847V76.35q-.006-.006 0-.006 0-.006-.182.006c-.012 0-.156-8.44-.156-8.44" fill="#1A73E8" />
+    </svg>
+  );
+}
 
 /**
  * Step 2. Consolidates Dench Cloud + Gmail + Calendar into a single
@@ -437,12 +541,6 @@ export function SetupStep({
   return (
     <div className="space-y-8">
       <div>
-        <p
-          className="mb-3 text-xs font-semibold uppercase tracking-[0.18em]"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Setup
-        </p>
         <h1
           className="font-instrument text-[34px] leading-[1.1] tracking-tight"
           style={{ color: "var(--color-text)" }}
@@ -450,65 +548,46 @@ export function SetupStep({
           Connect the three things that matter.
         </h1>
         <p
-          className="mt-3 text-[14.5px] leading-relaxed"
+          className="mt-3 text-[13.5px] leading-relaxed"
           style={{ color: "var(--color-text-muted)" }}
         >
-          Dench Cloud powers models and integrations. Gmail fills your People
-          view. Calendar sharpens the ranking. Calendar&apos;s optional; the
-          other two pull their weight.
+          Three quick connections and your workspace starts learning.
         </p>
       </div>
 
-      <div className="space-y-3">
+      <div className="divide-y divide-[var(--color-border)]">
         {/* Dench Cloud */}
         <ConnectionCard
           id="dc-card"
           required
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17.5 19a4.5 4.5 0 1 0 0-9h-1.8A7 7 0 1 0 4 14.9" />
-              <path d="M12 13v8" />
-              <path d="m9 18 3 3 3-3" />
-            </svg>
-          }
+          icon={<DenchCloudIcon />}
           title="Dench Cloud"
-          description="AI models + Composio integrations. Powers Gmail/Calendar sync."
+          description="Runs the models that power Gmail and Calendar sync."
           secondaryLabel={
             denchCloudConnected
-              ? denchCloudStatus?.primaryModel
-                ? `Primary model: ${denchCloudStatus.primaryModel}`
-                : "Connected via your Dench Cloud account."
-              : "AI models + Composio integrations. Powers Gmail/Calendar sync."
+              ? "Connected"
+              : "Runs the models that power Gmail and Calendar sync."
           }
           status={denchCloudStatusValue}
           actions={
             denchCloudLoading ? (
               <span
-                className="inline-block h-8 w-24 animate-pulse rounded-md"
-                style={{ background: "var(--color-surface-hover)" }}
-              />
-            ) : denchCloudConnected ? (
-              <Button variant="outline" size="sm" disabled>
-                Connected
-              </Button>
-            ) : showKeyForm ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
+                className="text-[12px]"
+                style={{ color: "var(--color-text-muted)" }}
+              >
+                Checking…
+              </span>
+            ) : denchCloudConnected ? null : showKeyForm ? (
+              <GhostAction
                 onClick={() => setShowKeyForm(false)}
                 disabled={denchCloudSubmitting}
               >
                 Cancel
-              </Button>
+              </GhostAction>
             ) : (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setShowKeyForm(true)}
-              >
+              <PrimaryAction onClick={() => setShowKeyForm(true)}>
                 Connect
-              </Button>
+              </PrimaryAction>
             )
           }
         />
@@ -523,8 +602,14 @@ export function SetupStep({
             }}
           >
             <div className="space-y-1.5">
-              <Label htmlFor="dench-cloud-key">Dench Cloud API key</Label>
-              <Input
+              <label
+                htmlFor="dench-cloud-key"
+                className="text-[11px] font-medium uppercase tracking-[0.06em]"
+                style={{ color: "var(--color-text-muted)" }}
+              >
+                Dench Cloud API key
+              </label>
+              <input
                 id="dench-cloud-key"
                 type="password"
                 placeholder="dench_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -533,6 +618,22 @@ export function SetupStep({
                 autoComplete="off"
                 autoFocus
                 disabled={denchCloudSubmitting}
+                className="w-full rounded-md px-3 py-2 text-[13px] outline-none transition-[border-color,box-shadow]"
+                style={{
+                  height: 36,
+                  border: "1px solid var(--color-border)",
+                  background: "var(--color-background)",
+                  color: "var(--color-text)",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--color-accent)";
+                  e.currentTarget.style.boxShadow =
+                    "0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--color-border)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               />
               <p
                 className="text-[11.5px]"
@@ -560,9 +661,9 @@ export function SetupStep({
               >
                 Skip — use without Gmail sync
               </button>
-              <Button type="submit" size="sm" disabled={denchCloudSubmitting}>
+              <PrimaryAction type="submit" disabled={denchCloudSubmitting}>
                 {denchCloudSubmitting ? "Validating…" : "Save key"}
-              </Button>
+              </PrimaryAction>
             </div>
           </form>
         )}
@@ -570,19 +671,12 @@ export function SetupStep({
         {/* Gmail */}
         <ConnectionCard
           required
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="20" height="14" x="2" y="5" rx="2" />
-              <path d="m2 7 10 7 10-7" />
-            </svg>
-          }
+          icon={<GmailIcon />}
           title="Gmail"
           description="We read your inbox so People and Companies can appear."
           secondaryLabel={
             gmailConnected
-              ? state.connections?.gmail?.accountEmail ??
-                state.connections?.gmail?.accountLabel ??
-                "Connected."
+              ? formatAccountLabel(state.connections?.gmail?.accountEmail)
               : gmailBlocked
                 ? "Connect Dench Cloud first."
                 : "We read your inbox so People and Companies can appear."
@@ -590,44 +684,25 @@ export function SetupStep({
           status={gmailStatusValue}
           disabledReason={gmailBlocked ? "Requires Dench Cloud." : undefined}
           actions={
-            gmailConnected ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void startConnect("gmail")}
-                disabled={activeToolkit !== null}
-              >
-                Reconnect
-              </Button>
-            ) : (
-              <Button
-                size="sm"
+            gmailConnected ? null : (
+              <PrimaryAction
                 onClick={() => void startConnect("gmail")}
                 disabled={gmailBlocked || activeToolkit !== null}
               >
                 {activeToolkit === "gmail" ? "Authorizing…" : "Connect"}
-              </Button>
+              </PrimaryAction>
             )
           }
         />
 
         {/* Calendar (optional) */}
         <ConnectionCard
-          icon={
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="18" height="18" x="3" y="4" rx="2" />
-              <path d="M16 2v4" />
-              <path d="M8 2v4" />
-              <path d="M3 10h18" />
-            </svg>
-          }
+          icon={<GoogleCalendarIcon />}
           title="Google Calendar"
           description="Meetings sharpen your strongest-connection ranking. Optional."
           secondaryLabel={
             calendarConnected
-              ? state.connections?.calendar?.accountEmail ??
-                state.connections?.calendar?.accountLabel ??
-                "Connected."
+              ? formatAccountLabel(state.connections?.calendar?.accountEmail)
               : calendarBlocked
                 ? "Connect Gmail first."
                 : "Meetings sharpen your strongest-connection ranking. Optional."
@@ -642,39 +717,25 @@ export function SetupStep({
           }
           disabledReason={calendarBlocked ? "Requires Gmail." : undefined}
           actions={
-            calendarConnected ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void startConnect("calendar")}
-                disabled={activeToolkit !== null}
-              >
-                Reconnect
-              </Button>
-            ) : state.currentStep === "backfill" ? (
-              <Button variant="outline" size="sm" disabled>
-                Skipped
-              </Button>
-            ) : (
-              <div className="flex items-center gap-2">
+            calendarConnected ? null : state.currentStep === "backfill" ? null : (
+              <div className="flex items-center gap-3">
                 {gmailConnected && (
                   <button
                     type="button"
                     onClick={() => void handleSkipCalendar()}
                     disabled={advancing || activeToolkit !== null}
-                    className="text-[12px] underline-offset-4 transition-colors hover:underline disabled:opacity-50"
+                    className="text-[12.5px] underline-offset-4 transition-colors hover:underline disabled:opacity-50"
                     style={{ color: "var(--color-text-muted)" }}
                   >
                     Skip
                   </button>
                 )}
-                <Button
-                  size="sm"
+                <PrimaryAction
                   onClick={() => void startConnect("calendar")}
                   disabled={calendarBlocked || activeToolkit !== null}
                 >
                   {activeToolkit === "calendar" ? "Authorizing…" : "Connect"}
-                </Button>
+                </PrimaryAction>
               </div>
             )
           }
@@ -697,18 +758,41 @@ export function SetupStep({
       <div className="flex items-center justify-between gap-3 pt-2">
         <p className="text-[12px]" style={{ color: "var(--color-text-muted)" }}>
           {requiredComplete
-            ? "All set — head to sync when you're ready."
+            ? null
             : denchCloudConnected
               ? "Gmail is required to continue."
               : "Dench Cloud unlocks the other two."}
         </p>
-        <Button
+        <button
+          type="button"
           onClick={() => void handleContinueToSync()}
           disabled={!canContinue || advancing}
+          className="flex h-10 items-center justify-center rounded-lg px-5 text-[13.5px] font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50"
+          style={{
+            background: "var(--color-accent)",
+            color: "#fff",
+          }}
+          onMouseEnter={(e) => {
+            if (!advancing && canContinue) {
+              (e.currentTarget as HTMLElement).style.opacity = "0.92";
+            }
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.opacity = "1";
+          }}
         >
-          {advancing ? "Opening sync…" : "Continue to sync"}
-        </Button>
+          {advancing ? "Opening sync…" : "Continue"}
+        </button>
       </div>
     </div>
   );
+}
+
+/**
+ * Only surface account text when we actually have a real email; otherwise
+ * "Connected." reads better than a raw Composio connection id/label.
+ */
+function formatAccountLabel(value: string | null | undefined): string {
+  if (typeof value === "string" && value.includes("@")) {return value;}
+  return "Connected";
 }

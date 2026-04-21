@@ -1,22 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
 import type { OnboardingState } from "@/lib/denchclaw-state";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Step 1 left pane. Identity capture, rewritten for the split-screen shell:
- * "why" copy moves to the editorial right pane so we can keep the left
- * column tight — just a headline, two fields, and the continue CTA.
- *
- * On submit we call the identity API which records the name/email and then
- * advances the server state to `identity`. If we're coming in from the old
- * `welcome` step (first paint on a brand-new workspace), the state machine
- * will first need a `welcome → identity` transition, so we PUT that first.
+ * Step 1 — minimal, centered sign-up style screen. Uses inline styles tied
+ * to the project's CSS variables so the inputs and primary button pick up
+ * the theme (light + dark) without depending on the shadcn default palette
+ * tokens, which aren't wired into this app's theme.
  */
 export function IdentityStep({
   state,
@@ -57,7 +50,6 @@ export function IdentityStep({
     }
     setSubmitting(true);
     try {
-      // If we're still on the legacy "welcome" bootstrap, first walk forward.
       if (state.currentStep === "welcome") {
         const res = await fetch("/api/onboarding/state", {
           method: "PUT",
@@ -88,82 +80,146 @@ export function IdentityStep({
     }
   }
 
+  const inputStyle: React.CSSProperties = {
+    height: 40,
+    width: "100%",
+    padding: "0 12px",
+    borderRadius: 8,
+    border: "1px solid var(--color-border)",
+    background: "var(--color-surface, var(--color-background))",
+    color: "var(--color-text)",
+    fontSize: 14,
+    outline: "none",
+    transition: "border-color 120ms ease, box-shadow 120ms ease",
+  };
+
   return (
-    <form className="space-y-8" onSubmit={(e) => void handleSubmit(e)}>
-      <div>
-        <p
-          className="mb-3 text-xs font-semibold uppercase tracking-[0.18em]"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Step 1 · About you
-        </p>
+    <form
+      className="flex flex-col items-center gap-7 text-center"
+      onSubmit={(e) => void handleSubmit(e)}
+    >
+      <div className="mb-4 space-y-2">
         <h1
-          className="font-instrument text-[34px] leading-[1.1] tracking-tight"
+          className="whitespace-nowrap font-instrument text-[46px] leading-[1.05] tracking-tight"
           style={{ color: "var(--color-text)" }}
         >
-          Let&apos;s start with your name.
+          Let&apos;s set up your local workspace
         </h1>
         <p
-          className="mt-3 text-[14.5px] leading-relaxed"
+          className="text-[12.5px]"
           style={{ color: "var(--color-text-muted)" }}
         >
-          We&apos;ll use this on your workspace header — and to greet you when
-          things finish syncing.
+          Everything you know about people, finally in one place.
         </p>
       </div>
 
-      <div className="space-y-5">
-        <div className="space-y-2">
-          <Label htmlFor="onboarding-name">Full name</Label>
-          <Input
+      <div className="flex w-full flex-col gap-3.5">
+        <Field label="Full name" htmlFor="onboarding-name">
+          <input
             id="onboarding-name"
             type="text"
-            placeholder="Sarah Chen"
+            placeholder="Vedant"
             value={name}
             onChange={(e) => handleNameChange(e.target.value)}
             autoComplete="name"
             autoFocus
             disabled={submitting}
+            style={inputStyle}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-accent)";
+              e.currentTarget.style.boxShadow =
+                "0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent)";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-border)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="onboarding-email">Work email</Label>
-          <Input
+        </Field>
+        <Field label="Work email" htmlFor="onboarding-email">
+          <input
             id="onboarding-email"
             type="email"
-            placeholder="sarah@acme.com"
+            placeholder="name@company.com"
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             autoComplete="email"
             disabled={submitting}
+            style={inputStyle}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-accent)";
+              e.currentTarget.style.boxShadow =
+                "0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent)";
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = "var(--color-border)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
           />
-          <p className="text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-            Tip: use the same email you&apos;ll connect to Gmail next.
-          </p>
-        </div>
+        </Field>
       </div>
 
       {error && (
-        <div
-          className="rounded-xl px-4 py-3 text-[13px]"
+        <p
+          role="alert"
+          className="w-full rounded-md px-3 py-2 text-left text-[12.5px]"
           style={{
             background: "rgba(239, 68, 68, 0.08)",
-            color: "var(--color-error)",
+            color: "var(--color-error, #ef4444)",
             border: "1px solid rgba(239, 68, 68, 0.2)",
           }}
         >
           {error}
-        </div>
+        </p>
       )}
 
-      <div className="flex items-center justify-between gap-3 pt-2">
-        <p className="text-[12px]" style={{ color: "var(--color-text-muted)" }}>
-          Takes about 2 minutes total.
-        </p>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "Saving…" : "Continue"}
-        </Button>
-      </div>
+      <button
+        type="submit"
+        disabled={submitting}
+        className="flex h-10 w-full items-center justify-center rounded-lg text-[13.5px] font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60"
+        style={{
+          background: "var(--color-accent)",
+          color: "#fff",
+        }}
+        onMouseEnter={(e) => {
+          if (!submitting) (e.currentTarget as HTMLElement).style.opacity = "0.92";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.opacity = "1";
+        }}
+      >
+        {submitting ? "Saving…" : "Continue"}
+      </button>
+
+      <p
+        className="text-[11.5px]"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        Your data stays on this device.
+      </p>
     </form>
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 text-left">
+      <label
+        htmlFor={htmlFor}
+        className="text-[11.5px] font-medium uppercase tracking-[0.06em]"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }

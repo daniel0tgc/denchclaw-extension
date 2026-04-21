@@ -103,16 +103,19 @@ const PAGE_SIZE = 500;
 export async function syncGooglePhotos(opts: PhotoSyncOptions): Promise<PhotoSyncSummary> {
 	const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
 
-	const [peopleFieldMap, emailToEntryId] = await Promise.all([
-		loadPeopleFieldMap(),
-		loadEmailToEntryIdMap(),
-	]);
-
+	// Serialize the DB reads — concurrent duckdb CLI invocations race on
+	// the file lock and silently return empty result sets. Same bug the
+	// Gmail sync hit (see comment in gmail-sync.ts::loadFieldIdMaps).
+	const peopleFieldMap = await loadPeopleFieldMap();
 	const avatarFieldId = peopleFieldMap["Avatar URL"];
 	if (!avatarFieldId) {
-		// Workspace is older than the Avatar URL migration — nothing to do.
 		return { photosWritten: 0, contactsSeen: 0, reachedEnd: true };
 	}
+	const emailFieldId = peopleFieldMap["Email Address"];
+	if (!emailFieldId) {
+		return { photosWritten: 0, contactsSeen: 0, reachedEnd: true };
+	}
+	const emailToEntryId = await loadEmailToEntryIdMap(emailFieldId);
 
 	const slug = await resolveToolSlug({
 		toolkitSlug: "gmail",
@@ -201,24 +204,42 @@ export async function syncGooglePhotos(opts: PhotoSyncOptions): Promise<PhotoSyn
 const PEOPLE_OBJECT_ID = "seed_obj_people_00000000000000";
 
 /**
- * Composio's `GMAIL_GET_PEOPLE` can return the People API payload in
- * a couple of shapes depending on which code path it hit; normalize
- * them here so the caller doesn't have to care.
+ * Composio's `GMAIL_GET_PEOPLE` wraps the People API response in
+ * `other_contacts.otherContacts` (snake_case wrapper), but some code
+ * paths return it at the top level. Normalize both shapes here.
  */
 function extractContacts(payload: unknown): GooglePerson[] {
 	if (Array.isArray(payload)) {return payload as GooglePerson[];}
-	if (payload && typeof payload === "object") {
-		const obj = payload as { otherContacts?: unknown; connections?: unknown };
-		if (Array.isArray(obj.otherContacts)) {return obj.otherContacts as GooglePerson[];}
-		if (Array.isArray(obj.connections)) {return obj.connections as GooglePerson[];}
+	if (!payload || typeof payload !== "object") {return [];}
+	const obj = payload as Record<string, unknown>;
+
+	// Preferred shape: { other_contacts: { otherContacts: [...] } }
+	const oc = obj.other_contacts;
+	if (oc && typeof oc === "object") {
+		const inner = (oc as { otherContacts?: unknown }).otherContacts;
+		if (Array.isArray(inner)) {return inner as GooglePerson[];}
 	}
+
+	// Fallback shapes observed in other Composio paths.
+	if (Array.isArray(obj.otherContacts)) {return obj.otherContacts as GooglePerson[];}
+	if (Array.isArray(obj.connections)) {return obj.connections as GooglePerson[];}
 	return [];
 }
 
 function extractNextPageToken(payload: unknown): string | null {
 	if (!payload || typeof payload !== "object") {return null;}
-	const token = (payload as { nextPageToken?: unknown }).nextPageToken;
-	return typeof token === "string" && token.length > 0 ? token : null;
+	const obj = payload as Record<string, unknown>;
+
+	// Nested under other_contacts (primary Composio shape).
+	const oc = obj.other_contacts;
+	if (oc && typeof oc === "object") {
+		const token = (oc as { nextPageToken?: unknown }).nextPageToken;
+		if (typeof token === "string" && token.length > 0) {return token;}
+	}
+
+	const topToken = obj.nextPageToken;
+	if (typeof topToken === "string" && topToken.length > 0) {return topToken;}
+	return null;
 }
 
 async function loadPeopleFieldMap(): Promise<Record<string, string>> {
@@ -233,12 +254,8 @@ async function loadPeopleFieldMap(): Promise<Record<string, string>> {
 	return out;
 }
 
-async function loadEmailToEntryIdMap(): Promise<Map<string, string>> {
+async function loadEmailToEntryIdMap(emailFieldId: string): Promise<Map<string, string>> {
 	const map = new Map<string, string>();
-	const fieldMap = await loadPeopleFieldMap();
-	const emailFieldId = fieldMap["Email Address"];
-	if (!emailFieldId) {return map;}
-
 	const rows = await duckdbQueryAllAsync<{ entry_id: string; value: string }>(
 		`SELECT entry_id, value FROM entry_fields WHERE field_id = '${emailFieldId}'`,
 	);
@@ -251,24 +268,36 @@ async function loadEmailToEntryIdMap(): Promise<Map<string, string>> {
 }
 
 /**
- * Google returns multiple photo entries per person. We want the PROFILE
- * one (a real photo the user uploaded), not the generic CONTACT one
- * which is usually the letter-on-coloured-background stub Google
- * auto-generates. `default: true` also marks stubs.
+ * Google's People API can return multiple photo entries per person:
+ *
+ *   - `source.type: PROFILE`  → a real photo the person uploaded to
+ *     their Google account. Always the best pick.
+ *   - `source.type: DOMAIN_PROFILE` → same thing from a Workspace
+ *     directory (seen for corporate coworkers).
+ *   - `source.type: CONTACT` → a photo the authenticated user attached
+ *     to that contact themselves.
+ *   - `source.type: OTHER_CONTACT` with `default: true` → Google's
+ *     auto-generated letter-on-colour stub. Looks like an initials
+ *     avatar. We'd rather fall through to our own initials renderer
+ *     than commit to one of those.
+ *
+ * Preference order is real profile/domain/contact → anything non-stub
+ * → nothing.
  */
 function pickBestPhoto(photos: GooglePhoto[]): string | null {
 	if (photos.length === 0) {return null;}
-	// 1st preference: PROFILE source, non-default, has url.
+	const isRealSource = (t?: string) =>
+		t === "PROFILE" || t === "DOMAIN_PROFILE" || t === "CONTACT";
+
 	for (const photo of photos) {
+		if (!photo.url) {continue;}
 		if (photo.default) {continue;}
-		if (photo.metadata?.source?.type === "PROFILE" && photo.url) {
-			return photo.url;
-		}
+		if (isRealSource(photo.metadata?.source?.type)) {return photo.url;}
 	}
-	// 2nd: any non-default photo with a url.
 	for (const photo of photos) {
+		if (!photo.url) {continue;}
 		if (photo.default) {continue;}
-		if (photo.url) {return photo.url;}
+		return photo.url;
 	}
 	return null;
 }

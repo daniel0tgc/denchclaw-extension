@@ -107,6 +107,8 @@ type WorkspaceSidebarProps = {
   /** Rendered inside the "Chats" tab at the top of the sidebar. Host provides
    *  an already-configured <ChatSessionsSidebar embedded /> (or equivalent). */
   chatsPanel?: React.ReactNode;
+  /** Invoked when the user hits the "+" next to the Chats tab. */
+  onNewChatSession?: () => void;
 };
 
 function ThemeToggle() {
@@ -294,6 +296,7 @@ export function WorkspaceSidebar({
   activeCrmObjectName = null,
   onNavigateToCrmObject,
   chatsPanel,
+  onNewChatSession,
 }: WorkspaceSidebarProps) {
 	const width = mobile ? "280px" : (widthProp ?? 260);
 	const isCompact = !mobile && compact;
@@ -664,6 +667,22 @@ export function WorkspaceSidebar({
 						</button>
 					);
 				})}
+				{sidebarTab === "chats" && onNewChatSession && (
+					<button
+						type="button"
+						onClick={onNewChatSession}
+						className="p-1 rounded-md transition-colors cursor-pointer shrink-0"
+						style={{ color: "var(--color-text-muted)" }}
+						onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+						onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+						title="New chat"
+						aria-label="New chat"
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+							<path d="M5 12h14" /><path d="M12 5v14" />
+						</svg>
+					</button>
+				)}
 			</div>
 		)}
 

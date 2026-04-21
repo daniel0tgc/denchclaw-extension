@@ -185,27 +185,42 @@ export function CalendarView({
               description="Connect Google Calendar in onboarding to import events."
             />
           ) : (
-            <div className="px-6 py-4">
+            <div className="px-6 py-2">
               {grouped.map(([day, dayEvents]) => (
-                <section key={day} className="mb-6 last:mb-0">
+                <section key={day} className="mb-4 last:mb-0">
                   <h3
-                    className="sticky top-[57px] z-[1] mb-2 px-1 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]"
+                    className="sticky top-[57px] z-[1] mb-1 px-1 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em]"
                     style={{ color: "var(--color-text-muted)", background: "var(--color-background)" }}
                   >
                     {day}
                   </h3>
-                  <ul className="space-y-2">
-                    {dayEvents.map((event) => (
-                      <EventListItem
+                  <ul
+                    className="overflow-hidden rounded-lg"
+                    style={{
+                      border: "1px solid var(--color-border)",
+                      background: "var(--color-surface)",
+                    }}
+                  >
+                    {dayEvents.map((event, idx) => (
+                      <div
                         key={event.id}
-                        event={event}
-                        expanded={expandedId === event.id}
-                        onToggle={() =>
-                          setExpandedId((prev) => (prev === event.id ? null : event.id))
-                        }
-                        onOpenPerson={onOpenPerson}
-                        onOpenCompany={onOpenCompany}
-                      />
+                        style={{
+                          borderBottom:
+                            idx === dayEvents.length - 1
+                              ? "none"
+                              : "1px solid var(--color-border)",
+                        }}
+                      >
+                        <EventListItem
+                          event={event}
+                          expanded={expandedId === event.id}
+                          onToggle={() =>
+                            setExpandedId((prev) => (prev === event.id ? null : event.id))
+                          }
+                          onOpenPerson={onOpenPerson}
+                          onOpenCompany={onOpenCompany}
+                        />
+                      </div>
                     ))}
                   </ul>
                 </section>

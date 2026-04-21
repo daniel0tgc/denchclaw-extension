@@ -61,8 +61,8 @@ export function KeyboardShortcutsHelp({
           style={{ borderBottom: "1px solid var(--color-border)" }}
         >
           <h2
-            className="font-instrument tracking-tight"
-            style={{ color: "var(--color-text)", fontSize: "1.25rem" }}
+            className="tracking-tight"
+            style={{ color: "var(--color-text)", fontSize: "1rem", fontWeight: 600 }}
           >
             Keyboard shortcuts
           </h2>

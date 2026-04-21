@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PersonAvatar } from "../person-avatar";
+import { SenderAvatar } from "../sender-avatar";
 import { formatAbsoluteDate, formatRelativeDate } from "../format-relative-date";
 import { MessageBody } from "./message-body";
 import { AttachmentStrip } from "./attachment-strip";
@@ -77,10 +77,12 @@ export function MessageCard({
         }}
         className="w-full flex items-start gap-3 px-4 py-3 text-left cursor-pointer transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       >
-        <PersonAvatar
-          src={sender?.avatar_url}
+        <SenderAvatar
+          avatarUrl={sender?.avatar_url}
           name={senderName}
+          email={senderEmail}
           seed={senderEmail ?? message.id}
+          senderType={message.sender_type ?? null}
           size="md"
         />
         <div className="min-w-0 flex-1">

@@ -90,16 +90,13 @@ export function ThreadList({
       {groups.map((group) => (
         <section key={group.label}>
           <h3
-            className="sticky top-0 z-10 px-4 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] italic"
+            className="sticky top-0 z-10 px-4 py-1.5 font-semibold uppercase"
             style={{
               color: "var(--color-text-muted)",
               background: "var(--color-bg)",
               borderBottom: "1px solid var(--color-border)",
-              fontFamily: '"Instrument Serif", serif',
-              letterSpacing: "0.02em",
-              textTransform: "none",
-              fontStyle: "italic",
-              fontSize: "11px",
+              letterSpacing: "0.16em",
+              fontSize: "10px",
             }}
           >
             {group.label}

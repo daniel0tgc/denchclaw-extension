@@ -305,7 +305,7 @@ function QueueItem({
 			{editing ? (
 				<textarea
 					ref={inputRef}
-					className="flex-1 text-[13px] leading-[1.45] min-w-0 resize-none rounded-md px-2 py-1 outline-none"
+					className="font-bookerly flex-1 text-[14px] leading-[1.5] min-w-0 resize-none rounded-md px-2 py-1 outline-none"
 					style={{
 						color: "var(--color-text-secondary)",
 						background: "var(--color-bg)",
@@ -343,7 +343,7 @@ function QueueItem({
 						</div>
 					)}
 					<p
-						className="text-[13px] leading-[1.45] line-clamp-1 min-w-0"
+						className="font-bookerly text-[14px] leading-[1.5] line-clamp-1 min-w-0"
 						style={{ color: "var(--color-text-secondary)" }}
 					>
 						{msg.text || `${msg.attachedFiles.length} ${msg.attachedFiles.length === 1 ? "file" : "files"}`}

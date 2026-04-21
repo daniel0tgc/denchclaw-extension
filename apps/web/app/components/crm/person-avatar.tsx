@@ -20,6 +20,7 @@ export function PersonAvatar({
   seed,
   size = "md",
   className = "",
+  onError,
 }: {
   src?: string | null;
   name?: string | null;
@@ -27,6 +28,9 @@ export function PersonAvatar({
   seed?: string | null;
   size?: "sm" | "md" | "lg" | "xl";
   className?: string;
+  /** Called once if the image 404s or errors out — lets parents mount
+   *  their own fallback (e.g. try a different provider). */
+  onError?: () => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const theme = avatarFromName(name ?? null, seed ?? undefined);
@@ -57,7 +61,10 @@ export function PersonAvatar({
           height={px}
           decoding="async"
           loading="lazy"
-          onError={() => setImgFailed(true)}
+          onError={() => {
+            setImgFailed(true);
+            onError?.();
+          }}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
         />
       ) : (

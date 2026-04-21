@@ -1,7 +1,7 @@
 "use client";
 
 import type { MouseEvent } from "react";
-import { PersonAvatar } from "../person-avatar";
+import { SenderAvatar } from "../sender-avatar";
 import { formatAbsoluteDate, formatRelativeDate } from "../format-relative-date";
 import type { Thread } from "./types";
 
@@ -140,10 +140,12 @@ export function ThreadListRow({
 
       {/* Avatar + sender */}
       <span className="inline-flex items-center gap-2 min-w-0 max-w-[180px]">
-        <PersonAvatar
-          src={sender.avatar_url}
+        <SenderAvatar
+          avatarUrl={sender.avatar_url}
           name={sender.name}
+          email={sender.email}
           seed={sender.email ?? thread.id}
+          senderType={thread.primary_sender_type}
           size="sm"
         />
         <span
@@ -181,15 +183,11 @@ export function ThreadListRow({
           />
         )}
         <span
-          className="font-instrument truncate"
+          className="truncate"
           style={{
             color: "var(--color-text)",
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: read ? 400 : 600,
-            fontStyle:
-              thread.primary_sender_type && thread.primary_sender_type !== "Person"
-                ? "italic"
-                : "normal",
           }}
         >
           {thread.subject?.trim() || "(no subject)"}

@@ -50,11 +50,12 @@ export function ConversationHeader({
         )}
         <div className="min-w-0 flex-1">
           <h1
-            className="font-instrument tracking-tight"
+            className="tracking-tight"
             style={{
               color: "var(--color-text)",
-              fontSize: "clamp(1.5rem, 2.5vw, 2rem)",
-              lineHeight: 1.15,
+              fontSize: "clamp(1.25rem, 2vw, 1.5rem)",
+              lineHeight: 1.25,
+              fontWeight: 600,
               wordBreak: "break-word",
             }}
             title={headline}

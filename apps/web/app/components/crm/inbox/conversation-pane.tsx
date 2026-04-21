@@ -43,17 +43,14 @@ export function ConversationPane({
         style={{ background: "var(--color-main-bg)" }}
       >
         <span
-          className="font-instrument italic text-2xl"
-          style={{ color: "var(--color-text-muted)" }}
+          className="text-lg"
+          style={{ color: "var(--color-text)", fontWeight: 500 }}
         >
           Pick a thread
         </span>
         <p
-          className="mt-2 text-[13px] max-w-xs"
-          style={{
-            color: "var(--color-text-muted)",
-            fontFamily: '"Bookerly", Georgia, serif',
-          }}
+          className="mt-1.5 text-[13px] max-w-xs"
+          style={{ color: "var(--color-text-muted)" }}
         >
           Click any conversation in the list to read it here. Use{" "}
           <kbd className="rounded border px-1.5 py-0.5 text-[11px]">j</kbd> /{" "}

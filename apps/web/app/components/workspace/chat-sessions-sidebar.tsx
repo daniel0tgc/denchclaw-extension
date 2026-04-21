@@ -606,50 +606,58 @@ export function ChatSessionsSidebar({
 
 	const content = (
 		<div className="flex-1 min-h-0 relative">
-			<div className="absolute inset-0 overflow-y-auto" style={{ paddingTop: headerHeight }}>
+			<div
+				className="absolute inset-0 overflow-y-auto"
+				// Embedded mode has no sticky header — the host (sidebar tab row)
+				// already provides the "Chats" label and the + New action, so
+				// reserving extra top padding leaves a weird empty strip above
+				// the list.
+				style={embedded ? undefined : { paddingTop: headerHeight }}
+			>
 				{renderContent()}
 			</div>
 
-			{/* Header */}
-			<div
-				className={`absolute top-0 left-0 right-0 z-10 backdrop-blur-md ${embedded ? "" : "border-b"}`}
-				style={{
-					borderColor: embedded ? undefined : "var(--color-border)",
-					background: "color-mix(in srgb, var(--color-bg) 80%, transparent)",
-				}}
-			>
-				<div className="flex items-center justify-between px-3" style={{ height: headerHeight }}>
-					{onCollapse ? (
+			{!embedded && (
+				<div
+					className="absolute top-0 left-0 right-0 z-10 backdrop-blur-md border-b"
+					style={{
+						borderColor: "var(--color-border)",
+						background: "color-mix(in srgb, var(--color-bg) 80%, transparent)",
+					}}
+				>
+					<div className="flex items-center justify-between px-3" style={{ height: headerHeight }}>
+						{onCollapse ? (
+							<button
+								type="button" onClick={onCollapse}
+								className="p-1 rounded-md transition-colors hover:bg-black/5"
+								style={{ color: "var(--color-text-muted)" }}
+								title="Hide chat sidebar"
+							>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M15 3v18" />
+								</svg>
+							</button>
+						) : <span />}
 						<button
-							type="button" onClick={onCollapse}
-							className="p-1 rounded-md transition-colors hover:bg-black/5"
+							type="button" onClick={onNewSession}
+							className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
 							style={{ color: "var(--color-text-muted)" }}
-							title="Hide chat sidebar"
+							onMouseEnter={(e) => {
+								(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+							}}
+							onMouseLeave={(e) => {
+								(e.currentTarget as HTMLElement).style.background = "transparent";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
+							}}
+							title="New chat"
 						>
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-								<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M15 3v18" />
-							</svg>
+							<PlusIcon />
+							New
 						</button>
-					) : <span />}
-					<button
-						type="button" onClick={onNewSession}
-						className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
-						style={{ color: "var(--color-text-muted)" }}
-						onMouseEnter={(e) => {
-							(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
-							(e.currentTarget as HTMLElement).style.color = "var(--color-text)";
-						}}
-						onMouseLeave={(e) => {
-							(e.currentTarget as HTMLElement).style.background = "transparent";
-							(e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
-						}}
-						title="New chat"
-					>
-						<PlusIcon />
-						New
-					</button>
+					</div>
 				</div>
-			</div>
+			)}
 		</div>
 	);
 

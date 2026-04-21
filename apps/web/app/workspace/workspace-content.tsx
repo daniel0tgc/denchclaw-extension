@@ -1904,7 +1904,22 @@ function WorkspacePageInner() {
     "calendar_event",
     "interaction",
   ]), []);
+  // The file-tree version: hides the hardcoded CRM tables AND any
+  // object-typed node (task, deal, ...) because those already get their
+  // own entry in the sidebar's CRM nav. Keeping them in the file tree
+  // too is duplicate chrome the user has to scroll past.
   const enhancedTree = useMemo(
+    () =>
+      tree.filter(
+        (node) =>
+          !CRM_HIDDEN_TREE_PATHS.has(node.path) && node.type !== "object",
+      ),
+    [tree, CRM_HIDDEN_TREE_PATHS],
+  );
+  // The sidebar-nav version: only strips the hardcoded CRM tables (which
+  // have their own dedicated pages) so custom objects like `task` still
+  // show up under "Home" as dynamic CRM entries.
+  const sidebarNavTree = useMemo(
     () => tree.filter((node) => !CRM_HIDDEN_TREE_PATHS.has(node.path)),
     [tree, CRM_HIDDEN_TREE_PATHS],
   );
@@ -2792,9 +2807,10 @@ function WorkspacePageInner() {
     setTabState((prev) => closeTab(prev, tabId));
   }, []);
 
-  // Custom CRM tables surfaced in the sidebar's CRM section. Derived from the
-  // already-watched workspace tree so adds/renames/deletes propagate live via SSE.
-  const customCrmObjects = useMemo(() => collectCrmObjectNodes(enhancedTree), [enhancedTree]);
+  // Custom CRM tables surfaced in the sidebar's CRM section. Derived from
+  // the sidebar-scoped tree (which still contains object nodes) rather
+  // than the file-tree-scoped one (which strips them).
+  const customCrmObjects = useMemo(() => collectCrmObjectNodes(sidebarNavTree), [sidebarNavTree]);
 
   const sidebarCommonProps = {
     activePath: null,
@@ -2823,6 +2839,7 @@ function WorkspacePageInner() {
     customCrmObjects,
     activeCrmObjectName: content.kind === "object" ? content.data.object.name : null,
     onNavigateToCrmObject: handleNavigateToObject,
+    onNewChatSession: () => openPermanentBlankChatTab(),
     chatsPanel: (
       <ChatSessionsSidebar
         embedded

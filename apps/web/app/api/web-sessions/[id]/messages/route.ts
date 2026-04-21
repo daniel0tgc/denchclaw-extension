@@ -91,7 +91,16 @@ export async function POST(
       if (session) {
         session.updatedAt = Date.now();
         if (newCount > 0) {session.messageCount += newCount;}
-        if (title) {session.title = title;}
+        if (title) {
+          session.title = title;
+        } else if (!session.title || session.title === "New Chat") {
+          // Derive a title from the first user message so the sidebar
+          // stops showing "New Chat" the moment the user hits send.
+          // Proper AI-generated titles can later overwrite this via the
+          // `title` field — this is just the fallback.
+          const derived = deriveTitleFromMessages(lines);
+          if (derived) {session.title = derived;}
+        }
         writeFileSync(indexPath, JSON.stringify(index, null, 2));
       }
     }
@@ -100,4 +109,42 @@ export async function POST(
   }
 
   return Response.json({ ok: true });
+}
+
+/**
+ * Best-effort title extraction: pull the first user message's text and
+ * trim it to a ~60-char one-liner. Strips attachment sentinels and
+ * collapses whitespace so titles read like normal prose.
+ */
+function deriveTitleFromMessages(lines: string[]): string | null {
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.role !== "user") {continue;}
+      let text = "";
+      if (typeof parsed.content === "string") {
+        text = parsed.content;
+      } else if (Array.isArray(parsed.parts)) {
+        // ai-sdk UIMessage shape — concat all text parts.
+        text = parsed.parts
+          .filter((p: unknown): p is { type: string; text: string } =>
+            typeof p === "object" &&
+            p !== null &&
+            (p as { type?: string }).type === "text" &&
+            typeof (p as { text?: string }).text === "string",
+          )
+          .map((p) => p.text)
+          .join(" ");
+      }
+      const cleaned = text
+        .replace(/\[Attached files:[^\]]*\]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!cleaned) {continue;}
+      return cleaned.length > 60 ? cleaned.slice(0, 60).trimEnd() + "…" : cleaned;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }

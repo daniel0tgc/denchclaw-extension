@@ -155,12 +155,11 @@ function ProfileThreadListItem({
         <div className="min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span
-              className="font-instrument truncate"
+              className="truncate"
               style={{
                 color: "var(--color-text)",
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: 600,
-                fontStyle: senderTypeColor ? "italic" : "normal",
               }}
             >
               {thread.subject?.trim() || "(no subject)"}

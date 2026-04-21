@@ -94,11 +94,10 @@ export function EventListItem({
 
   return (
     <li
-      className="rounded-xl border overflow-hidden"
+      className="overflow-hidden"
       style={{
-        borderColor: expanded ? "var(--color-accent)" : "var(--color-border)",
-        background: "var(--color-surface)",
-        transition: "border-color 120ms ease",
+        background: expanded ? "var(--color-surface-hover)" : "transparent",
+        transition: "background 120ms ease",
       }}
     >
       {/* Row trigger — div+role="button" so we can nest interactive
@@ -116,7 +115,7 @@ export function EventListItem({
             onToggle();
           }
         }}
-        className="w-full px-4 py-3 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors"
+        className="group/event w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors"
         onMouseEnter={(e) => {
           if (expanded) {return;}
           (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
@@ -126,74 +125,78 @@ export function EventListItem({
           (e.currentTarget as HTMLElement).style.background = "transparent";
         }}
       >
-        <div className="flex items-baseline justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <p
-              className="truncate text-[14px] font-medium"
-              style={{ color: "var(--color-text)" }}
-            >
-              {event.title?.trim() || "(no title)"}
-            </p>
-            <p
-              className="mt-0.5 text-[12px]"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              {timeRange}
-              {event.start_at && (
-                <>
-                  {timeRange && " · "}
-                  {formatRelativeDate(event.start_at)}
-                </>
-              )}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {event.meeting_type && (
-              <span
-                className="rounded-full px-2 py-0.5 text-[11px]"
-                style={{
-                  background: "var(--color-surface-hover)",
-                  color: "var(--color-text-muted)",
-                }}
-              >
-                {event.meeting_type}
-              </span>
-            )}
-            <Chevron expanded={expanded} />
-          </div>
+        {/* Left: time column — the anchor a calendar row actually needs.
+            tabular-nums keeps times aligned vertically down the list.
+            "11:00 AM – 11:30 AM" is 19 chars, so we reserve enough width
+            to fit a full 12h range without clipping the title. */}
+        <div
+          className="text-[12px] tabular-nums shrink-0 whitespace-nowrap"
+          style={{ color: "var(--color-text-muted)", width: "11rem" }}
+        >
+          {timeRange || (event.start_at ? formatRelativeDate(event.start_at) : "")}
         </div>
-        {collapsedAttendees.length > 0 && (
-          <div className="mt-2.5 flex items-center gap-1">
-            {collapsedAttendees.map((person) => (
-              <button
-                key={person.id}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenPerson?.(person.id);
-                }}
-                disabled={!onOpenPerson}
-                title={person.name ?? person.email ?? undefined}
-                className="disabled:cursor-default"
-              >
-                <PersonAvatar
-                  src={person.avatar_url}
-                  name={person.name}
-                  seed={person.email ?? person.id}
-                  size="sm"
-                />
-              </button>
-            ))}
-            {overflow > 0 && (
-              <span
-                className="ml-1 text-[11px]"
-                style={{ color: "var(--color-text-muted)" }}
-              >
-                +{overflow}
-              </span>
-            )}
-          </div>
-        )}
+
+        {/* Middle: title + meeting type inline, attendees right-aligned. */}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <p
+            className="truncate text-[13.5px]"
+            style={{ color: "var(--color-text)", fontWeight: 500 }}
+          >
+            {event.title?.trim() || "(no title)"}
+          </p>
+          {event.meeting_type && (
+            <span
+              className="shrink-0 rounded-full px-1.5 py-0 text-[10px] uppercase tracking-[0.06em]"
+              style={{
+                background: "var(--color-surface-hover)",
+                color: "var(--color-text-muted)",
+                fontWeight: 600,
+              }}
+            >
+              {event.meeting_type}
+            </span>
+          )}
+        </div>
+
+        {/* Right: attendee avatars + chevron. */}
+        <div className="flex shrink-0 items-center gap-2">
+          {collapsedAttendees.length > 0 && (
+            <div className="flex items-center -space-x-1.5">
+              {collapsedAttendees.slice(0, 4).map((person) => (
+                <button
+                  key={person.id}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenPerson?.(person.id);
+                  }}
+                  disabled={!onOpenPerson}
+                  title={person.name ?? person.email ?? undefined}
+                  className="disabled:cursor-default rounded-full"
+                  style={{
+                    boxShadow: "0 0 0 2px var(--color-background)",
+                  }}
+                >
+                  <PersonAvatar
+                    src={person.avatar_url}
+                    name={person.name}
+                    seed={person.email ?? person.id}
+                    size="sm"
+                  />
+                </button>
+              ))}
+              {overflow > 0 && (
+                <span
+                  className="ml-1 text-[11px] tabular-nums"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  +{overflow}
+                </span>
+              )}
+            </div>
+          )}
+          <Chevron expanded={expanded} />
+        </div>
       </div>
 
       {/* Inline detail — animates open via the grid-rows trick. */}

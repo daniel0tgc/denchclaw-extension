@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { access, readdir as readdirAsync } from "node:fs/promises";
-import { execSync, exec, spawn } from "node:child_process";
+import { execSync, exec, execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve, normalize, relative, isAbsolute as isNodeAbsolute } from "node:path";
 import { homedir } from "node:os";
@@ -13,6 +13,7 @@ import {
 } from "./workspace-paths";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 async function pathExistsAsync(path: string): Promise<boolean> {
   try {
@@ -1306,12 +1307,10 @@ export async function duckdbQueryOnFileAsyncStrict<T = Record<string, unknown>>(
     throw new Error("DuckDB CLI binary not found");
   }
 
-  const escapedSql = sql.replace(/'/g, "'\\''");
-  const { stdout } = await execAsync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+  const { stdout } = await execFileAsync(bin, ["-json", dbFilePath, sql], {
     encoding: "utf-8",
     timeout: 15_000,
     maxBuffer: 10 * 1024 * 1024,
-    shell: "/bin/sh",
   });
 
   const trimmed = stdout.trim();

@@ -824,6 +824,10 @@ type ChatPanelProps = {
 	onBack?: () => void;
 	/** Hide the header action buttons (when they're rendered elsewhere, e.g. tab bar). */
 	hideHeaderActions?: boolean;
+	/** Optional content rendered at the start of the chat header bar (e.g. layout toggles). */
+	headerLeftSlot?: React.ReactNode;
+	/** Optional content rendered at the end of the chat header bar (e.g. layout toggles). */
+	headerRightSlot?: React.ReactNode;
 	/** Called whenever the panel's runtime state changes. */
 	onRuntimeStateChange?: (state: ChatPanelRuntimeState) => void;
 	/** Called when the conversation advances and the hosting tab should persist. */
@@ -893,6 +897,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			subagentLabel,
 			onBack,
 			hideHeaderActions,
+			headerLeftSlot,
+			headerRightSlot,
 			onRuntimeStateChange,
 			onConversationActivity,
 			gatewaySessionKey,
@@ -972,10 +978,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+		// Ref mirror of queuedMessages, so callbacks that close over state
+		// (like handleEditorSubmit) can read the latest value without
+		// adding it as a useCallback dep and invalidating memoisation.
+		const queuedMessagesRef = useRef<QueuedMessage[]>([]);
+		useEffect(() => { queuedMessagesRef.current = queuedMessages; }, [queuedMessages]);
+		// Ref to handleStop for the same reason — used by the interrupt
+		// path when the user hits enter while streaming with a queued backlog.
+		const handleStopRef = useRef<(() => Promise<void>) | null>(null);
+		// Ref to the LATEST handleEditorSubmit so the async interrupt path
+		// calls the current version (with up-to-date isStreaming etc.) rather
+		// than a stale useCallback closure.
+		const handleEditorSubmitRef = useRef<
+			| ((
+					text: string,
+					mentionedFiles: Array<{ name: string; path: string }>,
+					html: string,
+					overrideAttachments?: AttachedFile[],
+			  ) => Promise<void>)
+			| null
+		>(null);
+		// Live mirror of isStreaming so the interrupt loop can poll for the
+		// "ready" transition without re-renders.
+		const isStreamingRef = useRef(false);
 		const [rawView, _setRawView] = useState(false);
 		const [cloudState, setCloudState] = useState<ChatCloudState | null>(null);
 		// ── Hero state (new chat screen) ──
 		const greeting = "What can I help with?";
+
+		// Optimistic user message + pre-created session ref are declared
+		// AFTER the `useChat` hook below (where `messages` is defined).
 
 		const handlePromptClick = useCallback((prompt: string) => {
 			editorRef.current?.setText(prompt);
@@ -1038,10 +1070,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const { messages, sendMessage, status, stop, error, setMessages } =
 			useChat({ transport });
 
+		// Optimistic user message: when the user submits while in the hero
+		// state, we show their message immediately even before createSession
+		// or sendMessage resolve. Cleared once real messages appear.
+		const [optimisticUserText, setOptimisticUserText] = useState<string | null>(null);
+		useEffect(() => {
+			if (messages.length > 0 && optimisticUserText !== null) {
+				setOptimisticUserText(null);
+			}
+		}, [messages.length, optimisticUserText]);
+
+		// Track an in-flight pre-created session so we don't fire it twice.
+		const preCreatedSessionRef = useRef<Promise<string> | null>(null);
+
 		const isStreaming =
 			status === "streaming" ||
 			status === "submitted" ||
 			isReconnecting;
+		useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
 		// Keep cloud catalog + primary model in sync (hero, session switches, and after
 		// completed turns — agent tools may change agents.defaults.model.primary).
@@ -1672,7 +1718,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					? overrideAttachments.filter((f) => !f.uploading && f.path)
 					: attachedFiles.filter((f) => !f.uploading && f.path);
 				const hasFiles = readyFiles.length > 0;
+
+				// Blank input + pending queue + streaming agent:
+				// "release" the first queued message now (interrupt the current
+				// turn). Lets the user hit Enter on an empty input to push the
+				// next queued item through immediately.
 				if (!hasText && !hasMentions && !hasFiles) {
+					if (isStreaming && queuedMessagesRef.current.length > 0) {
+						const [nextQueued, ...rest] = queuedMessagesRef.current;
+						setQueuedMessages(rest);
+						void (async () => {
+							await handleStopRef.current?.();
+							// Wait for the useChat status to actually settle back
+							// to "ready" — otherwise the recursive submit sees
+							// isStreaming === true and re-queues the message.
+							const deadline = Date.now() + 2000;
+							while (Date.now() < deadline && isStreamingRef.current) {
+								await new Promise((r) => setTimeout(r, 30));
+							}
+							await handleEditorSubmitRef.current?.(
+								nextQueued.text,
+								nextQueued.mentionedFiles,
+								nextQueued.html,
+								nextQueued.attachedFiles,
+							);
+						})();
+					}
 					return;
 				}
 
@@ -1691,7 +1762,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 				onConversationActivity?.();
 
-				// Queue the message if the agent is still running.
+				// Queue the message if the agent is still running. To release
+				// a queued message early (interrupt the current turn), submit
+				// an empty Enter — handled above.
 				if (isStreaming) {
 					if (!overrideAttachments) {
 						setAttachedFiles([]);
@@ -1726,7 +1799,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						titleSource.length > 60
 							? titleSource.slice(0, 60) + "..."
 							: titleSource;
-					sessionId = await createSession(title);
+
+					// Show the user's message immediately so they see something
+					// happen even if createSession is slow (cold-start dev compile
+					// can take 5-10s on the first hit).
+					if (userText) {
+						setOptimisticUserText(userText);
+					}
+
+					// Reuse a session that may already be in flight from the
+					// pre-create-on-mount warmup. Fall back to a fresh call.
+					sessionId = await (preCreatedSessionRef.current ?? createSession(title));
+					preCreatedSessionRef.current = null;
 					setCurrentSessionId(sessionId);
 					sessionIdRef.current = sessionId;
 					onActiveSessionChange?.(sessionId);
@@ -1811,6 +1895,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				setMessages,
 			],
 		);
+
+		// Keep the ref in sync so the interrupt path can call the latest
+		// handleEditorSubmit (the useCallback above is re-memoized when deps
+		// change, notably `isStreaming`).
+		useEffect(() => { handleEditorSubmitRef.current = handleEditorSubmit; }, [handleEditorSubmit]);
 
 		// ── Queue flush: send the next queued message once the stream finishes ──
 		const prevFlushStatusRef = useRef(status);
@@ -2012,6 +2101,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			void stop();
 		}, [stop]);
 
+		// Keep the ref in sync so handleEditorSubmit can call stop without
+		// depending on handleStop (would create a dependency cycle).
+		useEffect(() => { handleStopRef.current = handleStop; }, [handleStop]);
+
 		// ── Queue handlers ──
 
 		const removeQueuedMessage = useCallback((id: string) => {
@@ -2125,7 +2218,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		});
 		const showStreamActivity = isStreaming && !!streamActivityLabel;
 
-		const showHeroState = messages.length === 0 && !isSubagentMode && !loadingSession;
+		const showHeroState =
+			messages.length === 0 &&
+			!isSubagentMode &&
+			!loadingSession &&
+			optimisticUserText === null;
+
+		// Warm up the session in the background while the user is still on
+		// the hero screen, so the first submit doesn't pay for createSession
+		// (which can be slow on cold-start dev compiles). Pre-creates only
+		// when the panel is visible and there's no session yet.
+		useEffect(() => {
+			if (
+				!visible ||
+				currentSessionId ||
+				isSubagentMode ||
+				isGatewayMode ||
+				loadingSession ||
+				preCreatedSessionRef.current ||
+				messages.length > 0
+			) {
+				return;
+			}
+			preCreatedSessionRef.current = createSession("New Chat");
+		}, [visible, currentSessionId, isSubagentMode, isGatewayMode, loadingSession, messages.length, createSession]);
 
 		// ── Input bar content (shared between hero and bottom positions) ──
 
@@ -2275,9 +2391,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const inputBarContainer = (onDragOverHandler: React.DragEventHandler, onDragLeaveHandler: React.DragEventHandler, onDropHandler: React.DragEventHandler) => (
 			<div
 				data-chat-drop-target=""
-				className={`${compact ? "rounded-2xl" : "rounded-3xl"} overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow,border-color] duration-150 ease-out focus-within:border-[var(--color-border-strong)]! data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!`}
+				className={`${compact ? "rounded-2xl" : "rounded-3xl"} overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.08)] transition-[outline,box-shadow,border-color] duration-150 ease-out focus-within:border-[var(--color-border-strong)]! data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.08)]!`}
 				style={{
-					background: "var(--color-surface)",
+					background: "color-mix(in srgb, var(--color-surface) 75%, transparent)",
+					backdropFilter: "blur(16px) saturate(180%)",
+					WebkitBackdropFilter: "blur(16px) saturate(180%)",
 					borderColor: "var(--color-border)",
 				}}
 				onDragOver={onDragOverHandler}
@@ -2329,13 +2447,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		return (
 			<div
-				className="h-full min-h-0 flex flex-col overflow-hidden"
+				className="@container relative h-full min-h-0 flex flex-col overflow-hidden"
 				style={{ background: "var(--color-main-bg)" }}
 			>
 				{/* Header — sticky glass bar */}
 				<header
-					className={`${compact ? "px-3 py-2" : "px-3 py-2 md:px-6 md:py-3"} flex shrink-0 items-center ${isSubagentMode ? "gap-3" : "justify-between"} z-20`}
+					className={`${compact ? "px-3" : "px-3 md:px-6"} h-10 flex shrink-0 items-center gap-2 ${isSubagentMode ? "" : "justify-between"} z-20`}
 				>
+				{headerLeftSlot && <div className="flex items-center shrink-0">{headerLeftSlot}</div>}
 				{isSubagentMode ? (
 					<>
 						<button
@@ -2364,10 +2483,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					<div className="min-w-0 flex-1">
 						{currentSessionId ? (
 							<h2
-								className="text-sm font-semibold"
+								className="text-sm font-semibold truncate"
 								style={{
 									color: "var(--color-text)",
 								}}
+								title={sessionTitle || "Chat Session"}
 							>
 								{sessionTitle || "Chat Session"}
 							</h2>
@@ -2399,10 +2519,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						{currentSessionId && onDeleteSession && (
 							<DropdownMenu>
 								<DropdownMenuTrigger
-									className="p-1.5 rounded-lg"
+									className="p-1.5 rounded-lg cursor-pointer transition-colors"
 									style={{ color: "var(--color-text-muted)" }}
 									title="More options"
 									aria-label="More options"
+									onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+									onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
 								>
 									<svg
 										width="16"
@@ -2434,6 +2556,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					)}
 					</>
 				)}
+				{headerRightSlot && <div className="flex items-center shrink-0">{headerRightSlot}</div>}
 				</header>
 
 				{/* v3: removed legacy file-scoped session tab strip — single chat session is now the source of truth */}
@@ -2441,7 +2564,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				<div
 					ref={scrollContainerRef}
 					className="min-h-0 min-w-0 flex-1 overflow-y-auto"
-					style={{ scrollbarGutter: "stable" }}
+					style={{
+						scrollbarGutter: "stable",
+						// Reserve space at the bottom so the last message can scroll
+						// up above the floating input bar (which sits absolutely on
+						// top of this scroll area).
+						paddingBottom: showHeroState ? 0 : 140,
+					}}
 				>
 				{/* Messages */}
 				<div
@@ -2472,8 +2601,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							{/* Hero greeting */}
 							{greeting && (
 								<h1
-									className="text-3xl md:text-5xl font-light tracking-normal font-instrument mb-6 md:mb-10 text-center px-4"
-									style={{ color: "var(--color-text)" }}
+									className="font-bookerly font-medium mb-2 md:mb-3 text-center px-4"
+									style={{
+										color: "var(--color-text)",
+										fontSize: "clamp(1.5rem, 3.5cqw + 0.85rem, 3rem)",
+										letterSpacing: "-0.03em",
+									}}
 								>
 									{greeting}
 								</h1>
@@ -2489,6 +2622,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								compact={!!compact}
 								onPromptClick={handlePromptClick}
 							/>
+						</div>
+					) : optimisticUserText !== null && messages.length === 0 ? (
+						<div className={`${compact ? "" : "max-w-2xl mx-auto"} py-3`}>
+							<div className="flex justify-end py-2">
+								<div
+									className="max-w-[85%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap break-words"
+									style={{
+										background: "var(--color-surface-hover)",
+										color: "var(--color-text)",
+									}}
+								>
+									{optimisticUserText}
+								</div>
+							</div>
+							<div className="py-3 min-w-0">
+								<div
+									className="inline-flex max-w-full items-center gap-1.5 px-1 py-1.5 dench-shimmer"
+									style={{ color: "var(--color-text-muted)" }}
+								>
+									{/* eslint-disable-next-line @next/next/no-img-element */}
+									<img src="/dench-workspace-icon.png" alt="" width={14} height={14} className="rounded-sm" />
+									<span className="text-xs truncate">Preparing response…</span>
+								</div>
+							</div>
 						</div>
 					) : messages.length === 0 ? (
 						<div className="flex items-center justify-center h-full min-h-[60vh]">
@@ -2514,20 +2671,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							>
 								{JSON.stringify(messages, null, 2)}
 							</pre>
-						) : messages.map((message, i) => (
-							<ChatMessage
-								key={message.id}
-								message={message}
-								isStreaming={isStreaming && i === messages.length - 1}
-								onSubagentClick={onSubagentClick}
-								onFilePathClick={onFilePathClick}
-								onComposioAction={onComposioAction}
-								sessionId={currentSessionId}
-								voicePlaybackEnabled={voicePlaybackEnabled}
-								userHtmlMap={userHtmlMapRef.current}
-								copyable
-							/>
-						))}
+						) : (() => {
+							// Dedupe by id: keep the LAST occurrence of each id so the most
+							// recent state (e.g. streamed assistant message) wins over an
+							// older copy that came in via SSE reconnect or session reload.
+							const seen = new Set<string>();
+							const uniqueMessages: typeof messages = [];
+							for (let i = messages.length - 1; i >= 0; i--) {
+								const m = messages[i];
+								if (!seen.has(m.id)) {
+									seen.add(m.id);
+									uniqueMessages.unshift(m);
+								}
+							}
+							return uniqueMessages.map((message, i) => (
+								<ChatMessage
+									key={message.id}
+									message={message}
+									isStreaming={isStreaming && i === uniqueMessages.length - 1}
+									onSubagentClick={onSubagentClick}
+									onFilePathClick={onFilePathClick}
+									onComposioAction={onComposioAction}
+									sessionId={currentSessionId}
+									voicePlaybackEnabled={voicePlaybackEnabled}
+									userHtmlMap={userHtmlMapRef.current}
+									copyable
+								/>
+							));
+						})()}
 						{showStreamActivity && (
 							<div className="py-3 min-w-0">
 								<div
@@ -2587,34 +2758,49 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				)}
 				</div>
 
-				{/* Scroll to bottom button */}
-				{showScrollButton && !showHeroState && (
-					<div className="flex justify-center pointer-events-none" style={{ marginTop: -80, marginBottom: 4, position: "relative", zIndex: 20 }}>
-						<button
-							type="button"
-							onClick={scrollToBottom}
-							className="pointer-events-auto w-8 h-8 rounded-full flex items-center justify-center shadow-md border backdrop-blur-xl transition-colors"
-							style={{
-								background: "color-mix(in srgb, var(--color-surface) 70%, transparent)",
-								borderColor: "var(--color-border)",
-								color: "var(--color-text-muted)",
-							}}
-							title="Scroll to bottom"
-						>
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-								<path d="M12 5v14" />
-								<path d="m19 12-7 7-7-7" />
-							</svg>
-						</button>
-					</div>
-				)}
-
-				{/* Input bar at bottom (hidden when hero state is active) */}
+				{/* Bottom fade — gradient from solid chat bg at the bottom to
+				    transparent above so message text fades cleanly behind the
+				    input pill instead of cutting off abruptly. */}
 				{!showHeroState && (
 					<div
-						className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-0 md:px-6 md:pb-5"} shrink-0 z-20`}
+						className="absolute inset-x-0 bottom-0 pointer-events-none z-10"
+						style={{
+							height: 140,
+							background: "linear-gradient(to top, var(--color-main-bg) 0%, var(--color-main-bg) 35%, color-mix(in srgb, var(--color-main-bg) 60%, transparent) 70%, transparent 100%)",
+						}}
+					/>
+				)}
+
+				{/* Input bar — floats over the scroll area so messages can scroll
+				    underneath. The blur lives on the input pill itself, not on
+				    this wrapper, so the chat background shows through cleanly. */}
+				{!showHeroState && (
+					<div
+						className={`${compact ? "px-3 py-2" : "px-3 pb-3 pt-3 @md:px-6 @md:pb-5"} absolute inset-x-0 bottom-0 z-20 pointer-events-none`}
 					>
-						<div className={compact ? "" : "max-w-[720px] mx-auto"}>
+						<div className={`${compact ? "" : "max-w-[720px] mx-auto"} pointer-events-auto relative`}>
+							{/* Scroll to bottom button — anchored above this pill so it
+							    moves up with the queue when the pill grows. */}
+							{showScrollButton && (
+								<div className="absolute inset-x-0 -top-10 flex justify-center pointer-events-none z-30">
+									<button
+										type="button"
+										onClick={scrollToBottom}
+										className="pointer-events-auto w-8 h-8 rounded-full flex items-center justify-center shadow-md border transition-colors"
+										style={{
+											background: "var(--color-surface)",
+											borderColor: "var(--color-border)",
+											color: "var(--color-text-muted)",
+										}}
+										title="Scroll to bottom"
+									>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+											<path d="M12 5v14" />
+											<path d="m19 12-7 7-7-7" />
+										</svg>
+									</button>
+								</div>
+							)}
 							{inputBarContainer(handleInputDragOver, handleInputDragLeave, handleInputDrop)}
 						</div>
 					</div>

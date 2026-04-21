@@ -62,6 +62,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../components/ui/context-menu";
 import { resolveActiveViewSyncDecision } from "./object-view-active-view";
 import { resetWorkspaceStateOnSwitch } from "./workspace-switch";
 import { TabBar } from "../components/workspace/tab-bar";
@@ -744,7 +751,7 @@ function WorkspacePageInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Sidebar collapse state (desktop only).
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
   const [mobileRightPanelOpen, setMobileRightPanelOpen] = useState(false);
   // File tree (right panel's left column) is now always available, independently
   // togglable from the right-panel collapse so users can hide it on CRM/page tabs
@@ -1003,7 +1010,10 @@ function WorkspacePageInner() {
     setActiveSubagentKey(null);
   }, [activeSubagentKey, openSessionChatTab, subagents]);
 
-  const openTabForNode = useCallback((node: { path: string; name: string; type: string }) => {
+  const openTabForNode = useCallback((
+    node: { path: string; name: string; type: string },
+    options?: { preview?: boolean },
+  ) => {
     const isObject = node.type === "object";
     const title = isObject
       ? displayObjectName(node.name)
@@ -1014,7 +1024,7 @@ function WorkspacePageInner() {
       title,
       path: node.path,
     };
-    setTabState((prev) => openTab(prev, tab, { preview: true }));
+    setTabState((prev) => openTab(prev, tab, { preview: options?.preview ?? true }));
   }, []);
 
   // Resizable sidebar widths (desktop only; persisted in localStorage).
@@ -1039,8 +1049,8 @@ function WorkspacePageInner() {
       setRightPanelWidth(clamp(nRight, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX));
     }
     const collapsed = window.localStorage.getItem(STORAGE_RIGHT_PANEL_COLLAPSED);
-    if (collapsed === "1") {
-      setRightPanelCollapsed(true);
+    if (collapsed === "0") {
+      setRightPanelCollapsed(false);
     }
     const treeCollapsed = window.localStorage.getItem(STORAGE_FILE_TREE_COLLAPSED);
     if (treeCollapsed === "1") {
@@ -1522,6 +1532,20 @@ function WorkspacePageInner() {
     [],
   );
 
+  // Open the right panel and widen it so the chat stays at its min width.
+  // Used when the user clicks something that needs the right panel to be visible.
+  const ensureRightPanelOpenWide = useCallback(() => {
+    if (typeof window === "undefined") {
+      setRightPanelCollapsed(false);
+      return;
+    }
+    const CHAT_MIN = 420;
+    const ideal = window.innerWidth - leftSidebarWidth - CHAT_MIN;
+    const wideTarget = clamp(ideal, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX);
+    setRightPanelCollapsed(false);
+    setRightPanelWidth((current) => Math.max(current, wideTarget));
+  }, [leftSidebarWidth]);
+
   const handleNavigate = useCallback(
     (
       target:
@@ -1534,13 +1558,22 @@ function WorkspacePageInner() {
         | "crm-inbox"
         | "crm-calendar",
     ) => {
+      // Make sure the right panel is open and wide enough to actually use
+      // when the user clicks one of the data tabs (People, Companies, etc.).
+      // Without this, clicking a tab does nothing visible if the panel is
+      // collapsed.
+      ensureRightPanelOpenWide();
+
       // People / Companies render through the standard ObjectView pipeline
       // (same path as `?path=<custom-object>`), so the toolbar, table, saved
       // views, and column controls match every other CRM object.
       if (target === "crm-people" || target === "crm-companies") {
         const objectName = target === "crm-people" ? "people" : "company";
         const node = resolveCrmObjectNode(tree, objectName);
-        openTabForNode(node);
+        // preview: false → each left-sidebar click opens a NEW persistent
+        // tab instead of replacing the existing preview tab. If the tab is
+        // already open, openTab() switches to it.
+        openTabForNode(node, { preview: false });
         void loadContent(node);
         return;
       }
@@ -1553,11 +1586,11 @@ function WorkspacePageInner() {
         "crm-inbox": { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
         "crm-calendar": { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
       }[target];
-      openTabForNode({ path: config.path, name: config.name, type: "folder" });
+      openTabForNode({ path: config.path, name: config.name, type: "folder" }, { preview: false });
       setActivePath(config.path);
       setContent({ kind: config.kind });
     },
-    [openTabForNode, tree, loadContent],
+    [openTabForNode, tree, loadContent, ensureRightPanelOpenWide],
   );
 
   const handleComposioActionFromChat = useCallback((action: ComposioChatAction) => {
@@ -2437,10 +2470,11 @@ function WorkspacePageInner() {
       }
       const node = findObjectNode(tree);
       if (node) {
+        ensureRightPanelOpenWide();
         handleNodeSelect(node);
       }
     },
-    [tree, handleNodeSelect],
+    [tree, handleNodeSelect, ensureRightPanelOpenWide],
   );
 
   /**
@@ -2847,7 +2881,7 @@ function WorkspacePageInner() {
         )
       ) : (
         <div
-          className={`sidebar-animate flex shrink-0 flex-col relative z-10 ${leftSidebarCollapsed ? "overflow-hidden" : ""}`}
+          className="sidebar-animate flex shrink-0 flex-col relative z-10 overflow-hidden"
           style={{
             width: leftSidebarCollapsed ? 0 : leftSidebarWidth,
             minWidth: leftSidebarCollapsed ? 0 : leftSidebarWidth,
@@ -2886,7 +2920,7 @@ function WorkspacePageInner() {
 
 
       {/* ── Center: chat panel ── */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative" style={{ background: "var(--color-main-bg)" }}>
+      <main className="flex-1 flex flex-col min-w-[420px] overflow-hidden relative" style={{ background: "var(--color-main-bg)" }}>
         {/* Mobile top bar */}
         {isMobile && (
           <div
@@ -2945,49 +2979,6 @@ function WorkspacePageInner() {
           </div>
         )}
 
-        {/* Thin top strip, shown only when a sidebar is collapsed, hosts the expand toggles
-            so they never overlap the chat content. */}
-        {!isMobile && (leftSidebarCollapsed || rightPanelCollapsed) && (
-          <div className="h-10 shrink-0 flex items-center justify-between px-2">
-            <div className="flex items-center">
-              {leftSidebarCollapsed && (
-                <button
-                  type="button"
-                  onClick={() => setLeftSidebarCollapsed(false)}
-                  className="p-1.5 rounded-md transition-colors cursor-pointer"
-                  style={{ color: "var(--color-text-muted)" }}
-                  title="Show sidebar (⌘B)"
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="18" height="18" x="3" y="3" rx="2" />
-                    <path d="M9 3v18" />
-                  </svg>
-                </button>
-              )}
-            </div>
-            <div className="flex items-center">
-              {rightPanelCollapsed && (
-                <button
-                  type="button"
-                  onClick={() => setRightPanelCollapsed(false)}
-                  className="p-1.5 rounded-md transition-colors cursor-pointer"
-                  style={{ color: "var(--color-text-muted)" }}
-                  title="Show right panel (⌘⇧B)"
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="18" height="18" x="3" y="3" rx="2" />
-                    <path d="M15 3v18" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Chat panel stack — always visible, never replaced by content */}
         <div className="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ background: "var(--color-main-bg)" }}>
           {mainChatTabs.map((tab) => {
@@ -2996,6 +2987,40 @@ function WorkspacePageInner() {
               ? subagents.find((entry) => entry.childSessionKey === tab.sessionKey)
               : null;
             const isVisible = tab.id === visibleMainChatTabId;
+            const showLeftToggle = !isMobile && leftSidebarCollapsed;
+            const showRightToggle = !isMobile && rightPanelCollapsed;
+            const headerLeftSlot = showLeftToggle ? (
+              <button
+                type="button"
+                onClick={() => setLeftSidebarCollapsed(false)}
+                className="p-1.5 rounded-md transition-colors cursor-pointer"
+                style={{ color: "var(--color-text-muted)" }}
+                title="Show sidebar (⌘B)"
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M9 3v18" />
+                </svg>
+              </button>
+            ) : undefined;
+            const headerRightSlot = showRightToggle ? (
+              <button
+                type="button"
+                onClick={() => setRightPanelCollapsed(false)}
+                className="p-1.5 rounded-md transition-colors cursor-pointer"
+                style={{ color: "var(--color-text-muted)" }}
+                title="Show right panel (⌘⇧B)"
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <path d="M15 3v18" />
+                </svg>
+              </button>
+            ) : undefined;
             return (
               <div
                 key={tab.id}
@@ -3019,6 +3044,8 @@ function WorkspacePageInner() {
                   subagentLabel={subagent?.label}
                   onBack={tab.sessionKey && !isGateway ? handleBackFromSubagent : undefined}
                   hideHeaderActions={false}
+                  headerLeftSlot={headerLeftSlot}
+                  headerRightSlot={headerRightSlot}
                   onRuntimeStateChange={(runtime) => handleChatRuntimeStateChange(tab.id, runtime)}
                   gatewaySessionKey={isGateway ? tab.sessionKey : undefined}
                   gatewaySessionId={isGateway ? tab.sessionId : undefined}
@@ -3087,8 +3114,8 @@ function WorkspacePageInner() {
                           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <polyline points="11 17 6 12 11 7" />
-                            <polyline points="18 17 13 12 18 7" />
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
                           </svg>
                         </button>
                       </div>
@@ -3141,11 +3168,14 @@ function WorkspacePageInner() {
                 )}
 
                 {/* Content column: unified tab strip + (entry detail | content | placeholder) */}
-                <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
                   <div
-                    className="flex items-center gap-1 px-2 h-10 shrink-0 border-b overflow-x-auto"
+                    className="flex items-center h-10 shrink-0 border-b min-w-0"
                     style={{ borderColor: "var(--color-border)" }}
                   >
+                    {/* Tab strip — scrolls horizontally when narrow. Collapse button
+                        is rendered as a sibling so it is always visible. */}
+                    <div className="no-scrollbar flex-1 flex items-center gap-1 px-2 min-w-0 h-full overflow-x-auto">
                     {fileTreeCollapsed && (
                       <button
                         type="button"
@@ -3157,55 +3187,81 @@ function WorkspacePageInner() {
                         onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                          <polyline points="13 17 18 12 13 7" />
-                          <polyline points="6 17 11 12 6 7" />
+                          <path d="M4 4h5l2 2h9a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
                         </svg>
                       </button>
                     )}
-                    {contentTabs.map((tab) => {
+                    {contentTabs.map((tab, tabIdx) => {
                       const isActive = tab.id === activeContentTabId;
+                      const hasTabsToRight = tabIdx < contentTabs.length - 1;
+                      const hasOtherTabs = contentTabs.length > 1;
                       return (
-                        <div
-                          key={tab.id}
-                          className="flex items-center rounded-md shrink-0"
-                          style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleContentTabActivate(tab.id)}
-                            className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
-                            style={{
-                              color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
-                              fontStyle: tab.preview ? "italic" : "normal",
-                            }}
-                            title={tab.title}
-                          >
-                            <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
-                              <TabIcon tab={tab} />
-                            </span>
-                            <span>{tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
-                            className="p-0.5 rounded-md mr-0.5 cursor-pointer"
-                            style={{ color: "var(--color-text-muted)" }}
-                            title="Close tab"
-                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
-                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                          >
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                            </svg>
-                          </button>
-                        </div>
+                        <ContextMenu key={tab.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              className="flex items-center rounded-md shrink-0"
+                              style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleContentTabActivate(tab.id)}
+                                className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
+                                style={{
+                                  color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
+                                  fontStyle: tab.preview ? "italic" : "normal",
+                                }}
+                                title={tab.title}
+                              >
+                                <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
+                                  <TabIcon tab={tab} />
+                                </span>
+                                <span>{tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
+                                className="p-0.5 rounded-md mr-0.5 cursor-pointer"
+                                style={{ color: "var(--color-text-muted)" }}
+                                title="Close tab"
+                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
+                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            <ContextMenuItem onSelect={() => handleContentTabClose(tab.id)}>
+                              Close
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onSelect={() => handleTabCloseOthers(tab.id)}
+                              disabled={!hasOtherTabs}
+                            >
+                              Close other tabs
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onSelect={() => handleTabCloseToRight(tab.id)}
+                              disabled={!hasTabsToRight}
+                            >
+                              Close tabs to the right
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem onSelect={handleTabCloseAll}>
+                              Close all tabs
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
                       );
                     })}
-                    <div className="flex-1" />
+                    </div>
+                    {/* Always-visible collapse button, outside the scrollable tab strip. */}
                     <button
                       type="button"
                       onClick={() => setRightPanelCollapsed(true)}
-                      className="p-1.5 rounded-md cursor-pointer shrink-0"
+                      className="p-1.5 mr-1 rounded-md cursor-pointer shrink-0"
                       style={{ color: "var(--color-text-muted)" }}
                       title="Hide right panel (⌘⇧B)"
                       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
@@ -3321,8 +3377,8 @@ function WorkspacePageInner() {
                           title="Hide files"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <polyline points="11 17 6 12 11 7" />
-                            <polyline points="18 17 13 12 18 7" />
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
                           </svg>
                         </button>
                       </div>
@@ -4357,12 +4413,11 @@ function ObjectView({
   return (
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       {/* Unified toolbar — title + count, view switcher, search, filter, views, settings, refresh, +Add.
-          Do NOT add `overflow-hidden` here: the title's `truncate` plus
-          `flex-shrink-0` on the right cluster already contain horizontal
-          overflow, and clipping this row would also clip every dropdown
-          anchored inside it (icon picker, views, filter, settings). */}
+          Use `flex-wrap` so when the right panel is narrow the items wrap to
+          a second row instead of overlapping each other. `overflow-x-auto`
+          would also clip vertically (CSS quirk) and hide dropdown menus. */}
       <div
-        className="px-4 py-1.5 flex items-center gap-3 flex-shrink-0 min-w-0"
+        className="px-4 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 flex-shrink-0 min-w-0"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
         {/* Left: icon picker + title + count (shrinks first when space is tight) */}
@@ -4411,10 +4466,10 @@ function ObjectView({
         {/* Middle: icon-only view switcher */}
         <ViewTypeSwitcher value={currentViewType} onChange={handleViewTypeChange} />
 
-        <div className="flex-1 min-w-0" />
-
-        {/* Right: search, filter, views, settings, refresh, +Add */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        {/* Right: search, filter, views, settings, refresh, +Add.
+            `ml-auto` pushes this cluster to the right edge whether the row
+            wraps or not. */}
+        <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
           {/* Search input — hidden on narrow widths so the rest of the toolbar fits */}
           <div
             className="hidden md:flex items-center gap-1.5 h-7 px-2 rounded-md focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow"

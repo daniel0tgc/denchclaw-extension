@@ -21,7 +21,6 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
-import { ChatHistoryPopover } from "./workspace/chat-history-popover";
 import type {
 	SidebarGatewaySession,
 	SidebarSubagentInfo,
@@ -2391,7 +2390,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const inputBarContainer = (onDragOverHandler: React.DragEventHandler, onDragLeaveHandler: React.DragEventHandler, onDropHandler: React.DragEventHandler) => (
 			<div
 				data-chat-drop-target=""
-				className={`${compact ? "rounded-2xl" : "rounded-3xl"} overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.08)] transition-[outline,box-shadow,border-color] duration-150 ease-out focus-within:border-[var(--color-border-strong)]! data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.08)]!`}
+				className={`${compact ? "rounded-2xl" : "rounded-3xl"} overflow-hidden border shadow-[0_0_32px_rgba(0,0,0,0.07)] transition-[outline,box-shadow,border-color] duration-150 ease-out focus-within:border-[var(--color-border-strong)]! data-drag-hover:outline-2 data-drag-hover:outline-dashed data-drag-hover:outline-(--color-accent) data-drag-hover:-outline-offset-2 data-drag-hover:shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-accent)_15%,transparent),0_0_32px_rgba(0,0,0,0.07)]!`}
 				style={{
 					background: "color-mix(in srgb, var(--color-surface) 75%, transparent)",
 					backdropFilter: "blur(16px) saturate(180%)",
@@ -2452,7 +2451,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			>
 				{/* Header — sticky glass bar */}
 				<header
-					className={`${compact ? "px-3" : "px-3 md:px-6"} h-10 flex shrink-0 items-center gap-2 ${isSubagentMode ? "" : "justify-between"} z-20`}
+					className={`${compact ? "pl-4 pr-2" : "pl-4 pr-2"} h-10 flex shrink-0 items-center gap-2 ${isSubagentMode ? "" : "justify-between"} z-20`}
 				>
 				{headerLeftSlot && <div className="flex items-center shrink-0">{headerLeftSlot}</div>}
 				{isSubagentMode ? (
@@ -2495,26 +2494,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					</div>
 					{!hideHeaderActions && (
 					<div className="flex items-center gap-1 shrink-0">
-						{onSelectHistorySession && onNewChatSession && (
-							<ChatHistoryPopover
-								sessions={historySessions ?? []}
-								activeSessionId={currentSessionId}
-								streamingSessionIds={historyStreamingSessionIds}
-								subagents={historySubagents}
-								activeSubagentKey={historyActiveSubagentKey}
-								loading={historyLoading}
-								gatewaySessions={historyGatewaySessions}
-								activeGatewaySessionKey={historyActiveGatewaySessionKey}
-								onSelectSession={onSelectHistorySession}
-								onNewSession={onNewChatSession}
-								onSelectSubagent={onSelectHistorySubagent}
-								onSelectGatewaySession={onSelectHistoryGatewaySession}
-								onRenameSession={onRenameHistorySession}
-								onDeleteSession={onDeleteHistorySession}
-								onStopSession={onStopHistorySession}
-								onStopSubagent={onStopHistorySubagent}
-								compact={!!compact}
-							/>
+						{onNewChatSession && (
+							<button
+								type="button"
+								onClick={onNewChatSession}
+								className="p-1.5 rounded-lg cursor-pointer transition-colors"
+								style={{ color: "var(--color-text-muted)" }}
+								title="New chat"
+								aria-label="New chat"
+								onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+								onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+							>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+									<path d="M5 12h14" /><path d="M12 5v14" />
+								</svg>
+							</button>
 						)}
 						{currentSessionId && onDeleteSession && (
 							<DropdownMenu>

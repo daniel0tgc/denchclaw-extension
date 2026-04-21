@@ -104,6 +104,9 @@ type WorkspaceSidebarProps = {
   onNavigateToCrmObject?: (objectName: string) => void;
   /** Client-side search function from useSearchIndex for instant results. */
   searchFn?: (query: string, limit?: number) => SearchIndexItem[];
+  /** Rendered inside the "Chats" tab at the top of the sidebar. Host provides
+   *  an already-configured <ChatSessionsSidebar embedded /> (or equivalent). */
+  chatsPanel?: React.ReactNode;
 };
 
 function ThemeToggle() {
@@ -290,10 +293,14 @@ export function WorkspaceSidebar({
   customCrmObjects,
   activeCrmObjectName = null,
   onNavigateToCrmObject,
+  chatsPanel,
 }: WorkspaceSidebarProps) {
 	const width = mobile ? "280px" : (widthProp ?? 260);
 	const isCompact = !mobile && compact;
 	const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+	// Top-level tab: "home" shows the workspace / CRM / bottom nav. "chats"
+	// swaps the body with a chat history list provided by the host.
+	const [sidebarTab, setSidebarTab] = useState<"home" | "chats">("home");
 
 	const crmNavItems = [
 		{
@@ -391,8 +398,31 @@ export function WorkspaceSidebar({
 				borderColor: "var(--color-border)",
 			}}
 		>
+			{/* Expand button — kept at the top of compact mode so the
+			    "open the sidebar" affordance mirrors the position of the
+			    collapse button in expanded mode (both live in the topbar
+			    row), making the toggle feel like the same control. */}
+			{onToggleCompact && (
+				<div className="flex items-center justify-center h-[44px] shrink-0">
+					<button
+						type="button"
+						onClick={onToggleCompact}
+						className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
+						style={{ color: "var(--color-text-muted)" }}
+						onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
+						onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+						title="Expand sidebar"
+					>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+						<rect width="18" height="18" x="3" y="3" rx="2" />
+						<path d="M15 3v18" />
+					</svg>
+					</button>
+				</div>
+			)}
+
 			{/* Header: workspace switcher (icon-only). Click opens dropdown to switch workspaces. */}
-			<div className="flex items-center justify-center h-[44px] shrink-0">
+			<div className="flex items-center justify-center pb-0.5 shrink-0">
 				<ProfileSwitcher
 					activeWorkspaceHint={activeWorkspace ?? null}
 					onWorkspaceSwitch={() => { onWorkspaceChanged?.(); }}
@@ -417,27 +447,6 @@ export function WorkspaceSidebar({
 					)}
 				/>
 			</div>
-
-			{/* Expand button — primary discoverability hint for compact mode. */}
-			{onToggleCompact && (
-				<div className="flex justify-center pb-0.5">
-					<button
-						type="button"
-						onClick={onToggleCompact}
-						className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
-						style={{ color: "var(--color-text-muted)" }}
-						onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-						onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-						title="Expand sidebar"
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-							<rect width="18" height="18" x="3" y="3" rx="2" />
-							<path d="M15 3v18" />
-							<path d="m8 9 3 3-3 3" />
-						</svg>
-					</button>
-				</div>
-			)}
 
 			{/* CRM nav (icons only). */}
 			{onNavigate && (
@@ -618,13 +627,52 @@ export function WorkspaceSidebar({
 					>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 							<rect width="18" height="18" x="3" y="3" rx="2" />
-							<path d="M15 3v18" />
-							<path d="m11 9-3 3 3 3" />
+							<path d="M9 3v18" />
 						</svg>
 					</button>
 				)}
 			</div>
 
+		{/* Tab switcher: Home (workspace nav) vs. Chats (session history) */}
+		{chatsPanel && (
+			<div className="px-2 pt-1 pb-1 flex items-center gap-1">
+				{([
+					{ id: "home", label: "Home" },
+					{ id: "chats", label: "Chats" },
+				] as const).map((tab) => {
+					const active = sidebarTab === tab.id;
+					return (
+						<button
+							key={tab.id}
+							type="button"
+							onClick={() => setSidebarTab(tab.id)}
+							className="flex-1 px-2 py-1 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+							style={{
+								color: active ? "var(--color-text)" : "var(--color-text-muted)",
+								background: active ? "var(--color-surface-hover)" : "transparent",
+							}}
+							onMouseEnter={(e) => {
+								if (active) return;
+								(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+							}}
+							onMouseLeave={(e) => {
+								if (active) return;
+								(e.currentTarget as HTMLElement).style.background = "transparent";
+							}}
+						>
+							{tab.label}
+						</button>
+					);
+				})}
+			</div>
+		)}
+
+		{sidebarTab === "chats" && chatsPanel ? (
+			<div className="flex-1 min-h-0 flex flex-col relative">
+				{chatsPanel}
+			</div>
+		) : (
+			<>
 		{onNavigate && (
 			<div className="px-2 pt-1 pb-1">
 				<div
@@ -714,6 +762,8 @@ export function WorkspaceSidebar({
 					</button>
 				))}
 			</div>
+		)}
+			</>
 		)}
 
 		<div className="px-2 py-1.5 flex items-center justify-between">

@@ -54,7 +54,7 @@ import {
 } from "@/lib/object-filters";
 import { UnicodeSpinner } from "../components/unicode-spinner";
 import { ToastProvider } from "../components/workspace/toast";
-import { type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
+import { ChatSessionsSidebar, type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
 import { RightPanel } from "../components/workspace/right-panel";
 import {
   DropdownMenu,
@@ -2823,6 +2823,31 @@ function WorkspacePageInner() {
     customCrmObjects,
     activeCrmObjectName: content.kind === "object" ? content.data.object.name : null,
     onNavigateToCrmObject: handleNavigateToObject,
+    chatsPanel: (
+      <ChatSessionsSidebar
+        embedded
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        streamingSessionIds={streamingSessionIds}
+        subagents={subagents}
+        activeSubagentKey={activeSubagentKey}
+        loading={sessionsLoading}
+        gatewaySessions={gatewaySessions}
+        activeGatewaySessionKey={activeGatewaySessionKey}
+        onSelectSession={(sessionId) => {
+          const session = sessions.find((entry) => entry.id === sessionId);
+          openSessionChatTab(sessionId, session?.title);
+        }}
+        onNewSession={() => openPermanentBlankChatTab()}
+        onSelectSubagent={handleSelectSubagent}
+        onSelectGatewaySession={(sessionKey, sessionId) => {
+          const gs = gatewaySessions.find((s) => s.sessionKey === sessionKey);
+          openGatewayChatTab(sessionKey, sessionId, gs?.channel, gs?.title);
+        }}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
+      />
+    ),
   };
 
   // Shared props for the chat-panel header history dropdown.
@@ -3180,7 +3205,7 @@ function WorkspacePageInner() {
                       <button
                         type="button"
                         onClick={() => setFileTreeCollapsed(false)}
-                        className="p-1 rounded-md cursor-pointer shrink-0"
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer shrink-0 text-[12px] font-medium"
                         style={{ color: "var(--color-text-muted)" }}
                         title="Show files (⌘E)"
                         onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
@@ -3189,6 +3214,7 @@ function WorkspacePageInner() {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <path d="M4 4h5l2 2h9a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
                         </svg>
+                        Files
                       </button>
                     )}
                     {contentTabs.map((tab, tabIdx) => {
@@ -3338,8 +3364,17 @@ function WorkspacePageInner() {
                       </div>
                     </>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center">
-                      <p className="text-sm text-center px-6" style={{ color: "var(--color-text-muted)" }}>
+                    // Empty-state placeholder — centered in the content
+                    // column (the visible area to the right of the file tree),
+                    // since that's where the user is actually looking when
+                    // nothing is open. Centering across the whole right panel
+                    // would make the text appear pushed left into the file
+                    // tree boundary, which reads as off-center to the user.
+                    <div className="flex-1 min-w-0 flex items-center justify-center">
+                      <p
+                        className="text-sm text-center px-6 max-w-xs"
+                        style={{ color: "var(--color-text-muted)" }}
+                      >
                         Select a file or open a page from the sidebar
                       </p>
                     </div>

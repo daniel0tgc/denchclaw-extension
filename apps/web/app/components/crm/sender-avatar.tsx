@@ -46,6 +46,33 @@ function extractDomain(email: string | null | undefined): string | null {
 	return email.slice(at + 1).trim().toLowerCase() || null;
 }
 
+/**
+ * Hosts whose images Google / Gravatar will 429 or hotlink-block when
+ * fetched with a non-Google Referer. Route those through our image
+ * proxy so the request picks up server-side caching + no-Referer.
+ */
+const PROXIED_HOSTS = new Set<string>([
+	"lh3.googleusercontent.com",
+	"lh4.googleusercontent.com",
+	"lh5.googleusercontent.com",
+	"lh6.googleusercontent.com",
+	"lh3.google.com",
+	"www.gravatar.com",
+	"secure.gravatar.com",
+]);
+
+function viaProxyIfNeeded(url: string): string {
+	try {
+		const parsed = new URL(url);
+		if (PROXIED_HOSTS.has(parsed.hostname)) {
+			return `/api/crm/photos/proxy?url=${encodeURIComponent(url)}`;
+		}
+	} catch {
+		// not a parseable URL — let it through as-is
+	}
+	return url;
+}
+
 function extractLocalPart(email: string | null | undefined): string | null {
 	if (!email) {return null;}
 	const at = email.lastIndexOf("@");
@@ -133,7 +160,7 @@ export function SenderAvatar(props: {
 	if (cleanedAvatarUrl && !primaryFailed) {
 		return (
 			<PersonAvatar
-				src={cleanedAvatarUrl}
+				src={viaProxyIfNeeded(cleanedAvatarUrl)}
 				name={name}
 				seed={seed ?? email}
 				size={size}

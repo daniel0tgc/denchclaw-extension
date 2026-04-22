@@ -102,11 +102,23 @@ function normalizeInputKinds(input: unknown, supportsImages: boolean): Array<"te
   return [...kinds];
 }
 
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === url.length ? url : url.slice(0, end);
+}
+
 export function normalizeDenchGatewayUrl(value: string | undefined): string {
   const raw = (value || DEFAULT_DENCH_CLOUD_GATEWAY_URL).trim();
   const withProtocol =
     raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
-  return withProtocol.replace(/\/+$/, "").replace(/\/v1$/u, "");
+  let base = stripTrailingSlashes(withProtocol);
+  if (base.endsWith("/v1")) {
+    base = stripTrailingSlashes(base.slice(0, -3));
+  }
+  return base;
 }
 
 export function buildDenchGatewayApiBaseUrl(gatewayUrl: string | undefined): string {

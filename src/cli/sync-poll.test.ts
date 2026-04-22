@@ -86,7 +86,9 @@ describe("kickoffSyncPoll", () => {
     expect(result).toEqual({ kind: "ok", status: 200 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const firstCall = fetchMock.mock.calls[0];
-    if (!firstCall) {throw new Error("fetch not called");}
+    if (!firstCall) {
+      throw new Error("fetch not called");
+    }
     const [url, init] = firstCall;
     expect(url).toBe("http://127.0.0.1:3100/api/sync/poll-tick");
     expect((init as RequestInit).method).toBe("POST");
@@ -105,7 +107,9 @@ describe("kickoffSyncPoll", () => {
 
     expect(result).toEqual({ kind: "ok", status: 200 });
     const firstCall = fetchMock.mock.calls[0];
-    if (!firstCall) {throw new Error("fetch not called");}
+    if (!firstCall) {
+      throw new Error("fetch not called");
+    }
     const [, init] = firstCall;
     expect(((init as RequestInit).headers as Record<string, string>).authorization).toBe(
       "Bearer dc-from-env",
@@ -122,7 +126,9 @@ describe("kickoffSyncPoll", () => {
     await kickoffSyncPoll({ stateDir, port: 3100 });
 
     const firstCall = fetchMock.mock.calls[0];
-    if (!firstCall) {throw new Error("fetch not called");}
+    if (!firstCall) {
+      throw new Error("fetch not called");
+    }
     const [, init] = firstCall;
     expect(((init as RequestInit).headers as Record<string, string>).authorization).toBe(
       "Bearer dc-from-profile",

@@ -192,6 +192,20 @@ describe("buildWorkspaceSyncParams core behavior", () => {
     expect(params.get("pageSize")).toBe("25");
   });
 
+  it("drops object-view params when activePath changes (prevents stale view across tables)", () => {
+    const current = new URLSearchParams(
+      "path=tableA&view=Active&filters=e30%3D&cols=name,status&viewType=kanban&sort=W10%3D&page=2&pageSize=25&search=acme",
+    );
+    const params = buildWorkspaceSyncParams(
+      defaultState({ activePath: "tableB" }),
+      current,
+    );
+    expect(params.get("path")).toBe("tableB");
+    for (const k of ["view", "filters", "cols", "viewType", "sort", "page", "pageSize", "search"]) {
+      expect(params.has(k)).toBe(false);
+    }
+  });
+
   it("does not carry object-view params in chat mode", () => {
     const current = new URLSearchParams("viewType=kanban&search=acme");
     const params = buildWorkspaceSyncParams(

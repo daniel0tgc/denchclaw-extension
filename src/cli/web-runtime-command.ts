@@ -9,6 +9,7 @@ import { stylePromptMessage } from "../terminal/prompt-style.js";
 import { theme } from "../terminal/theme.js";
 import { VERSION } from "../version.js";
 import { applyCliProfileEnv } from "./profile.js";
+import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
 import {
   installWebRuntimeLaunchAgent,
   uninstallWebRuntimeLaunchAgent,
@@ -30,7 +31,6 @@ import {
   stopManagedWebRuntime,
   waitForWebRuntime,
 } from "./web-runtime.js";
-import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
 import {
   discoverWorkspaceDirs,
   syncManagedSkills,

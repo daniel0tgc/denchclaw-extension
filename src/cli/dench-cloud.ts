@@ -125,13 +125,36 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
-export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-opus-4.6";
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "kimi-k2.5";
 export const DENCH_COMPOSIO_WRAPPER_TOOLS = [
   "dench_search_integrations",
   "dench_execute_integrations",
 ] as const;
 
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
+  {
+    id: "kimi-k2.5",
+    stableId: "moonshotai.kimi-k2.5",
+    displayName: "Kimi K2.5",
+    provider: "moonshot",
+    transportProvider: "bedrock",
+    api: "openai-responses",
+    input: ["text", "image"],
+    reasoning: true,
+    contextWindow: 262000,
+    maxTokens: 64000,
+    supportsStreaming: true,
+    supportsImages: true,
+    supportsResponses: true,
+    supportsReasoning: true,
+    cost: {
+      input: markupCost(0.6),
+      output: markupCost(3),
+      cacheRead: 0,
+      cacheWrite: 0,
+      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+    },
+  },
   {
     id: "claude-opus-4.6",
     stableId: "anthropic.claude-opus-4-6-v1",

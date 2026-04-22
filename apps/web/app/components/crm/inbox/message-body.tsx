@@ -164,19 +164,31 @@ function SandboxedHtmlBody({ html }: { html: string }) {
 // ---------------------------------------------------------------------------
 
 function stripScripts(html: string): string {
-  return (
-    html
-      // <script>...</script> blocks (greedy enough for nested attempts).
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
-      // Orphan <script> open/close tags.
-      .replace(/<\/?script\b[^>]*>/gi, "")
-      // Inline event handlers — onclick, onload, onerror, onmouseover, etc.
+  let out = html;
+  let prev = "";
+  // Repeat until stable so nested / split patterns (e.g. `<scr<script>ipt>`)
+  // cannot leave executable fragments. Closing tag allows whitespace before `>`.
+  while (out !== prev) {
+    prev = out;
+    out = out
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, "")
+      .replace(/<script\b[^>]*\/>/gi, "")
+      .replace(/<\/?script\b[^>]*>/gi, "");
+  }
+  prev = "";
+  while (out !== prev) {
+    prev = out;
+    out = out
       .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, "")
       .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, "")
-      .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "")
-      // javascript: URLs in href / src / etc.
-      .replace(/javascript\s*:/gi, "")
-  );
+      .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "");
+  }
+  prev = "";
+  while (out !== prev) {
+    prev = out;
+    out = out.replace(/javascript\s*:/gi, "");
+  }
+  return out;
 }
 
 function buildMeasureScript(token: string): string {

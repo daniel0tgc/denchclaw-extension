@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { access, readdir as readdirAsync } from "node:fs/promises";
-import { execSync, exec, execFile, spawn } from "node:child_process";
+import { execSync, execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve, normalize, relative, isAbsolute as isNodeAbsolute } from "node:path";
 import { homedir } from "node:os";
@@ -12,7 +12,6 @@ import {
   type WorkspacePathKind,
 } from "./workspace-paths";
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 async function pathExistsAsync(path: string): Promise<boolean> {
@@ -831,13 +830,10 @@ export function duckdbQuery<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    // Escape single quotes in SQL for shell safety
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const result = execSync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+    const result = execFileSync(bin, ["-json", db, sql], {
       encoding: "utf-8",
       timeout: 10_000,
       maxBuffer: 10 * 1024 * 1024, // 10 MB
-      shell: "/bin/sh",
     });
 
     const trimmed = result.trim();
@@ -872,12 +868,10 @@ export async function duckdbQueryAsync<T = Record<string, unknown>>(
   let lastErr = "";
   while (attempt < MAX_RETRIES) {
     try {
-      const escapedSql = sql.replace(/'/g, "'\\''");
-      const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      const { stdout } = await execFileAsync(bin, ["-json", db, sql], {
         encoding: "utf-8",
         timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
       });
       const trimmed = stdout.trim();
       if (!trimmed || trimmed === "[]") {return [];}
@@ -930,12 +924,10 @@ export function duckdbQueryAll<T = Record<string, unknown>>(
 
   for (const db of dbPaths) {
     try {
-      const escapedSql = sql.replace(/'/g, "'\\''");
-      const result = execSync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      const result = execFileSync(bin, ["-json", db, sql], {
         encoding: "utf-8",
         timeout: 10_000,
         maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
       });
       const trimmed = result.trim();
       if (!trimmed || trimmed === "[]") {continue;}
@@ -974,12 +966,10 @@ export async function duckdbQueryAllAsync<T = Record<string, unknown>>(
 
   for (const db of dbPaths) {
     try {
-      const escapedSql = sql.replace(/'/g, "'\\''");
-      const { stdout } = await execAsync(`'${bin}' -json '${db}' '${escapedSql}'`, {
+      const { stdout } = await execFileAsync(bin, ["-json", db, sql], {
         encoding: "utf-8",
         timeout: 10_000,
         maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
       });
       const trimmed = stdout.trim();
       if (!trimmed || trimmed === "[]") {continue;}
@@ -1012,17 +1002,16 @@ export function findDuckDBForObject(objectName: string): string | null {
   const bin = resolveDuckdbBin();
   if (!bin) {return null;}
 
-  // Build the SQL then apply the same shell-escape as duckdbQuery:
-  // replace every ' with '\'' so the single-quoted shell arg stays valid.
+  // SQL-escape object name for DuckDB string literals (not shell).
   const sql = `SELECT id FROM objects WHERE name = '${objectName.replace(/'/g, "''")}' LIMIT 1`;
-  const escapedSql = sql.replace(/'/g, "'\\''");
 
   for (const db of dbPaths) {
     try {
-      const result = execSync(
-        `'${bin}' -json '${db}' '${escapedSql}'`,
-        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024, shell: "/bin/sh" },
-      );
+      const result = execFileSync(bin, ["-json", db, sql], {
+        encoding: "utf-8",
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+      });
       const trimmed = result.trim();
       if (trimmed && trimmed !== "[]") {return db;}
     } catch {
@@ -1042,14 +1031,14 @@ export async function findDuckDBForObjectAsync(objectName: string): Promise<stri
   if (!bin) {return null;}
 
   const sql = `SELECT id FROM objects WHERE name = '${objectName.replace(/'/g, "''")}' LIMIT 1`;
-  const escapedSql = sql.replace(/'/g, "'\\''");
 
   for (const db of dbPaths) {
     try {
-      const { stdout } = await execAsync(
-        `'${bin}' -json '${db}' '${escapedSql}'`,
-        { encoding: "utf-8", timeout: 5_000, maxBuffer: 1024 * 1024, shell: "/bin/sh" },
-      );
+      const { stdout } = await execFileAsync(bin, ["-json", db, sql], {
+        encoding: "utf-8",
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+      });
       const trimmed = stdout.trim();
       if (trimmed && trimmed !== "[]") {return db;}
     } catch {
@@ -1086,11 +1075,9 @@ export function duckdbExecOnFile(dbFilePath: string, sql: string): boolean {
   if (!bin) {return false;}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    execSync(`'${bin}' '${dbFilePath}' '${escapedSql}'`, {
+    execFileSync(bin, [dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 10_000,
-      shell: "/bin/sh",
     });
     return true;
   } catch {
@@ -1251,12 +1238,10 @@ export function duckdbQueryOnFile<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const result = execSync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+    const result = execFileSync(bin, ["-json", dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 15_000,
       maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
     });
 
     const trimmed = result.trim();
@@ -1276,12 +1261,10 @@ export async function duckdbQueryOnFileAsync<T = Record<string, unknown>>(
   if (!bin) {return [];}
 
   try {
-    const escapedSql = sql.replace(/'/g, "'\\''");
-    const { stdout } = await execAsync(`'${bin}' -json '${dbFilePath}' '${escapedSql}'`, {
+    const { stdout } = await execFileAsync(bin, ["-json", dbFilePath, sql], {
       encoding: "utf-8",
       timeout: 15_000,
       maxBuffer: 10 * 1024 * 1024,
-      shell: "/bin/sh",
     });
 
     const trimmed = stdout.trim();

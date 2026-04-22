@@ -8,7 +8,31 @@ import { trackServer, writePersonInfo } from "@/lib/telemetry";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Linear-time email shape check (avoids polynomial ReDoS in naive regex validators). */
+function isPlausibleEmail(email: string): boolean {
+  if (email.length === 0 || email.length > 254) {
+    return false;
+  }
+  const at = email.indexOf("@");
+  if (at <= 0 || email.lastIndexOf("@") !== at) {
+    return false;
+  }
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (local.length === 0 || local.length > 64) {
+    return false;
+  }
+  if (domain.length === 0 || domain.length > 253 || !domain.includes(".")) {
+    return false;
+  }
+  for (let i = 0; i < email.length; i += 1) {
+    const c = email.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 10 || c === 13) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export async function GET() {
   const state = readOnboardingState();
@@ -29,7 +53,7 @@ export async function POST(req: Request) {
   if (!name) {
     return Response.json({ error: "`name` is required." }, { status: 400 });
   }
-  if (!EMAIL_RE.test(email)) {
+  if (!isPlausibleEmail(email)) {
     return Response.json({ error: "`email` must be a valid address." }, { status: 400 });
   }
 

@@ -45,7 +45,7 @@ const validState = {
       supportsImages: true,
       supportsResponses: true,
       supportsReasoning: false,
-      cost: { input: 6.75, output: 33.75, cacheRead: 0, cacheWrite: 0, marginPercent: 0.35 },
+      cost: { input: 6.75, output: 33.75, cacheRead: 0, cacheWrite: 0 },
     },
   ],
   recommendedModelId: "claude-opus-4.6",

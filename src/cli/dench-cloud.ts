@@ -1,12 +1,10 @@
 export const DEFAULT_DENCH_CLOUD_GATEWAY_URL = "https://gateway.merseoriginals.com";
-export const DEFAULT_DENCH_CLOUD_MARGIN_PERCENT = 0.35;
 
 export type DenchCloudCatalogCost = {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  marginPercent?: number;
 };
 
 export type DenchCloudCatalogModel = {
@@ -36,14 +34,6 @@ export type DenchCloudCatalogLoadResult = {
 };
 
 type UnknownRecord = Record<string, unknown>;
-
-function roundUsd(value: number): number {
-  return Number(value.toFixed(8));
-}
-
-function markupCost(value: number): number {
-  return roundUsd(value * (1 + DEFAULT_DENCH_CLOUD_MARGIN_PERCENT));
-}
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" ? (value as UnknownRecord) : undefined;
@@ -143,6 +133,8 @@ export const DENCH_COMPOSIO_WRAPPER_TOOLS = [
   "dench_execute_integrations",
 ] as const;
 
+// Fallback list used only when the live gateway catalog is unreachable.
+// Live pricing always comes from the gateway's /v1/public/models response.
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
   {
     id: "kimi-k2.5",
@@ -160,11 +152,10 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     supportsResponses: true,
     supportsReasoning: true,
     cost: {
-      input: markupCost(0.6),
-      output: markupCost(3),
+      input: 0.81,
+      output: 4.05,
       cacheRead: 0,
       cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
     },
   },
   {
@@ -175,19 +166,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "bedrock",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 200000,
-    maxTokens: 64000,
+    reasoning: true,
+    contextWindow: 971000,
+    maxTokens: 128000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(5),
-      output: markupCost(25),
-      cacheRead: 0,
-      cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+      input: 6.75,
+      output: 33.75,
+      cacheRead: 0.675,
+      cacheWrite: 8.4375,
     },
   },
   {
@@ -198,19 +188,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "openai",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 128000,
+    reasoning: true,
+    contextWindow: 971000,
     maxTokens: 128000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(2.5),
-      output: markupCost(15),
-      cacheRead: 0,
+      input: 3.375,
+      output: 20.25,
+      cacheRead: 0.3375,
       cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
     },
   },
   {
@@ -221,19 +210,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "bedrock",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 200000,
+    reasoning: true,
+    contextWindow: 971000,
     maxTokens: 64000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(3),
-      output: markupCost(15),
-      cacheRead: 0,
-      cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+      input: 4.05,
+      output: 20.25,
+      cacheRead: 0.405,
+      cacheWrite: 5.0625,
     },
   },
 ];
@@ -283,7 +271,6 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
   const outputCost = readNumber(costRecord, "output") ?? 0;
   const cacheRead = readNumber(costRecord, "cacheRead", "cache_read") ?? 0;
   const cacheWrite = readNumber(costRecord, "cacheWrite", "cache_write") ?? 0;
-  const marginPercent = readNumber(costRecord, "marginPercent", "margin_percent");
 
   return {
     id: publicId,
@@ -305,7 +292,6 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
       output: outputCost,
       cacheRead,
       cacheWrite,
-      ...(marginPercent !== undefined ? { marginPercent } : {}),
     },
   };
 }

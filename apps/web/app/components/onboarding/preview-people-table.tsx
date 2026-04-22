@@ -255,43 +255,21 @@ function PersonRow({
 function RealPerson({ person }: { person: ApiPerson }) {
   const displayName = person.name?.trim() || person.email || "Unknown";
   const company = person.company_name ?? deriveCompanyFromEmail(person.email);
-  const initials = getInitials(displayName);
-  const tint = deriveTint(person.id || displayName);
   const strength = clamp(person.strength_score ?? 0, 0, 100);
   const lastTouch = formatRelative(person.last_interaction_at);
   const subtitle = person.job_title?.trim() || person.email || "";
 
   return (
     <>
-      <div className="flex items-center gap-2.5 min-w-0">
-        {person.avatar_url ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={person.avatar_url}
-            alt=""
-            width={28}
-            height={28}
-            draggable={false}
-            className="h-7 w-7 shrink-0 rounded-full object-cover"
-          />
-        ) : (
-          <span
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
-            style={{ background: tint }}
-          >
-            {initials}
-          </span>
-        )}
-        <div className="min-w-0">
-          <p className="truncate text-[12.5px] font-medium" style={{ color: "var(--color-text)" }}>
-            {displayName}
+      <div className="min-w-0">
+        <p className="truncate text-[12.5px] font-medium" style={{ color: "var(--color-text)" }}>
+          {displayName}
+        </p>
+        {subtitle && (
+          <p className="truncate text-[10.5px]" style={{ color: "var(--color-text-muted)" }}>
+            {subtitle}
           </p>
-          {subtitle && (
-            <p className="truncate text-[10.5px]" style={{ color: "var(--color-text-muted)" }}>
-              {subtitle}
-            </p>
-          )}
-        </div>
+        )}
       </div>
 
       <p className="truncate text-[12px]" style={{ color: "var(--color-text-secondary)" }}>
@@ -317,21 +295,15 @@ function RealPerson({ person }: { person: ApiPerson }) {
 function PlaceholderPerson() {
   return (
     <>
-      <div className="flex items-center gap-2.5 min-w-0">
+      <div className="min-w-0">
         <span
-          className="block h-7 w-7 shrink-0 rounded-full"
+          className="block h-2.5 w-32 rounded"
           style={{ background: "var(--color-surface-hover)" }}
         />
-        <div className="min-w-0 flex-1">
-          <span
-            className="block h-2.5 w-32 rounded"
-            style={{ background: "var(--color-surface-hover)" }}
-          />
-          <span
-            className="mt-1 block h-2 w-20 rounded"
-            style={{ background: "var(--color-surface-hover)", opacity: 0.7 }}
-          />
-        </div>
+        <span
+          className="mt-1 block h-2 w-20 rounded"
+          style={{ background: "var(--color-surface-hover)", opacity: 0.7 }}
+        />
       </div>
       <span
         className="block h-2.5 w-20 rounded"
@@ -371,31 +343,6 @@ function StrengthBar({ value }: { value: number }) {
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {return "?";}
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-// Stable pastel picker — hash the id into one of N presets so the same
-// person gets the same color on every render.
-const TINT_PALETTE = [
-  "#f97316", "#6366f1", "#10b981", "#ec4899", "#f59e0b",
-  "#14b8a6", "#8b5cf6", "#ef4444", "#0ea5e9", "#a855f7",
-  "#f43f5e", "#22c55e",
-];
-function deriveTint(key: string): string {
-  let h = 0;
-  for (let i = 0; i < key.length; i += 1) {
-    h = (h * 31 + key.charCodeAt(i)) | 0;
-  }
-  const idx = Math.abs(h) % TINT_PALETTE.length;
-  return TINT_PALETTE[idx];
-}
 
 function deriveCompanyFromEmail(email: string | null): string | null {
   if (!email) {return null;}

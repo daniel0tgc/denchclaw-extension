@@ -1,10 +1,16 @@
 "use client";
 
-import { Suspense, useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef, useMemo, useReducer, type ReactNode } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { WorkspaceSidebar, FileSearch } from "../components/workspace/workspace-sidebar";
+import { WorkspaceSidebar } from "../components/workspace/workspace-sidebar";
 import { FileManagerTree, type TreeNode } from "../components/workspace/file-manager-tree";
 import { useWorkspaceWatcher } from "../hooks/use-workspace-watcher";
+import { RightPanelContent } from "../components/workspace/right-panel-content";
+import type {
+  ContentState,
+  ObjectData,
+  FileData,
+} from "./content-state";
 import { ObjectTable, AddEntryModal } from "../components/workspace/object-table";
 import { ObjectKanban } from "../components/workspace/object-kanban";
 import { ObjectCalendar, type CalendarDateChangePayload } from "../components/workspace/object-calendar";
@@ -33,7 +39,29 @@ import { CompanyProfile } from "../components/crm/company-profile";
 import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../components/chat-panel";
 import { EntryDetailPanel } from "../components/workspace/entry-detail-panel";
 import { useSearchIndex } from "@/lib/search-index";
-import { parseWorkspaceLink, isWorkspaceLink, parseUrlState, buildUrl, buildWorkspaceSyncParams, type WorkspaceUrlState } from "@/lib/workspace-links";
+import { parseWorkspaceLink, isWorkspaceLink, parseUrlState, buildUrl, serializeUrlState, type WorkspaceUrlState } from "@/lib/workspace-links";
+import {
+  type WorkspaceTabsState,
+  type ContentTab,
+  type ContentTabKind,
+  EMPTY_TABS_STATE,
+  workspaceTabsReducer,
+  selectActiveContentTab,
+  selectActivePath,
+  ensureChatPresent,
+  loadTabsState,
+  saveTabsState,
+  inferContentTabKindFromPath,
+  inferContentTabTitle,
+  contentTabIdFor,
+  applyUrlToState,
+  projectUrlState,
+  createDraftChatTab,
+  createSessionChatTab,
+  createSubagentChatTab,
+  createGatewayChatTab,
+  makeContentTab,
+} from "@/lib/workspace-tabs";
 import { isCodeFile } from "@/lib/report-utils";
 import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { isSeedPeopleObjectId, isSeedCompanyObjectId } from "@/lib/seed-object-ids";
@@ -55,6 +83,7 @@ import {
 } from "@/lib/object-filters";
 import { UnicodeSpinner } from "../components/unicode-spinner";
 import { ToastProvider } from "../components/workspace/toast";
+import { SyncHealthBanner } from "../components/workspace/sync-health-banner";
 import { ChatSessionsSidebar, type SidebarGatewaySession } from "../components/workspace/chat-sessions-sidebar";
 import { RightPanel } from "../components/workspace/right-panel";
 import {
@@ -72,28 +101,9 @@ import {
 } from "../components/ui/context-menu";
 import { resolveActiveViewSyncDecision } from "./object-view-active-view";
 import { resetWorkspaceStateOnSwitch } from "./workspace-switch";
-import { TabBar } from "../components/workspace/tab-bar";
-import {
-  type Tab, type TabState,
-  HOME_TAB_ID, HOME_TAB,
-  generateTabId, loadTabs, saveTabs, openTab, closeTab,
-  closeOtherTabs, closeTabsToRight, closeAllTabs,
-  activateTab, reorderTabs, togglePinTab, makeTabPermanent,
-  inferTabType, inferTabTitle,
-} from "@/lib/tab-state";
-import {
-  bindParentSessionToChatTab,
-  closeChatTabsForSession,
-  createBlankChatTab,
-  isChatTab,
-  openOrFocusParentChatTab,
-  openOrFocusSubagentChatTab,
-  openOrFocusGatewayChatTab,
-  resolveChatIdentityForTab,
-  syncParentChatTabTitles,
-  syncSubagentChatTabTitles,
-  updateChatTabTitle,
-} from "@/lib/chat-tabs";
+// Note: TabBar (the chrome-tabs strip used by the legacy single-strip layout)
+// is no longer used here — the v3 layout has separate inline strips for
+// chats and content. Keep the file for components that may still mount it.
 import {
   createChatRunsSnapshot,
   mergeChatRuntimeSnapshot,
@@ -125,106 +135,10 @@ type WorkspaceContext = {
   members?: Array<{ id: string; name: string; email: string; role: string }>;
 };
 
-type ReverseRelation = {
-  fieldName: string;
-  sourceObjectName: string;
-  sourceObjectId: string;
-  displayField: string;
-  entries: Record<string, Array<{ id: string; label: string }>>;
-};
-
-type ObjectData = {
-  object: {
-    id: string;
-    name: string;
-    description?: string;
-    icon?: string;
-    default_view?: string;
-    display_field?: string;
-  };
-  fields: Array<{
-    id: string;
-    name: string;
-    type: string;
-    enum_values?: string[];
-    enum_colors?: string[];
-    enum_multiple?: boolean;
-    related_object_id?: string;
-    relationship_type?: string;
-    related_object_name?: string;
-    sort_order?: number;
-  }>;
-  statuses: Array<{
-    id: string;
-    name: string;
-    color?: string;
-    sort_order?: number;
-  }>;
-  entries: Record<string, unknown>[];
-  relationLabels?: Record<string, Record<string, string>>;
-  reverseRelations?: ReverseRelation[];
-  effectiveDisplayField?: string;
-  savedViews?: import("@/lib/object-filters").SavedView[];
-  activeView?: string;
-  viewSettings?: import("@/lib/object-filters").ViewTypeSettings;
-  totalCount?: number;
-  page?: number;
-  pageSize?: number;
-};
-
-type FileData = {
-  content: string;
-  type: "markdown" | "yaml" | "code" | "text";
-};
-
-type ContentState =
-  | { kind: "none" }
-  | { kind: "loading" }
-  | { kind: "object"; data: ObjectData }
-  | { kind: "document"; data: FileData; title: string }
-  | { kind: "file"; data: FileData; filename: string }
-  | { kind: "code"; data: FileData; filename: string; filePath: string }
-  | { kind: "media"; url: string; mediaType: MediaType; filename: string; filePath: string }
-  | { kind: "spreadsheet"; url: string; filename: string; filePath: string }
-  | { kind: "html"; rawUrl: string; contentUrl: string; filename: string }
-  | { kind: "database"; dbPath: string; filename: string }
-  | { kind: "report"; reportPath: string; filename: string }
-  | { kind: "directory"; node: TreeNode }
-  | { kind: "cron-dashboard" }
-  | { kind: "skill-store" }
-  | { kind: "integrations" }
-  | { kind: "cloud" }
-  | { kind: "cron-job"; jobId: string; job: CronJob }
-  | { kind: "cron-session"; jobId: string; job: CronJob; sessionId: string; run: import("../types/cron").CronRunLogEntry }
-  | { kind: "duckdb-missing" }
-  | { kind: "richDocument"; html: string; filePath: string; mode: "docx" | "txt" }
-  | { kind: "app"; appPath: string; manifest: DenchAppManifest; filename: string }
-  | { kind: "crm-inbox" }
-  | { kind: "crm-calendar" }
-  | { kind: "crm-person"; entryId: string }
-  | { kind: "crm-company"; entryId: string };
-
-export type DenchAppManifest = {
-  name: string;
-  description?: string;
-  icon?: string;
-  version?: string;
-  author?: string;
-  entry?: string;
-  runtime?: "static" | "esbuild" | "build";
-  permissions?: string[];
-  display?: "full" | "widget";
-  widget?: {
-    width?: number;
-    height?: number;
-    refreshInterval?: number;
-  };
-  tools?: Array<{
-    name: string;
-    description: string;
-    inputSchema?: unknown;
-  }>;
-};
+// `ContentState`, `ObjectData`, `FileData`, and `DenchAppManifest` live in
+// `./content-state` so they can be shared with `useTabContent` and
+// `RightPanelContent` without pulling in the whole god-component.
+export type { DenchAppManifest } from "./content-state";
 
 type WebSession = {
   id: string;
@@ -315,157 +229,10 @@ function ResizeHandle({
   );
 }
 
-/**
- * Small icon for a content tab in the unified right-panel tab strip. Picks an
- * SVG by inspecting the tab's path/type so file tabs and CRM/page tabs render
- * with a recognisable prefix even though they share the same strip.
- */
-function TabIcon({ tab }: { tab: Tab }) {
-  const path = tab.path ?? "";
-  type IconKind =
-    | "people" | "company" | "inbox" | "calendar"
-    | "cloud" | "skills" | "integrations" | "cron"
-    | "app" | "object" | "folder" | "file";
-  const kind: IconKind = (() => {
-    // People / Companies render through the standard object pipeline now,
-    // so the canonical paths are `people` and `company`. The `~crm/*`
-    // checks remain for back-compat with bookmarked legacy URLs.
-    if (tab.type === "object" && (path === "people" || path === "~crm/people")) return "people";
-    if (
-      tab.type === "object" &&
-      (path === "company" || path === "companies" || path === "~crm/companies")
-    ) {
-      return "company";
-    }
-    if (path === "~crm/inbox") return "inbox";
-    if (path === "~crm/calendar") return "calendar";
-    if (path.startsWith("~cloud")) return "cloud";
-    if (path.startsWith("~skills")) return "skills";
-    if (path.startsWith("~integrations")) return "integrations";
-    if (path.startsWith("~cron")) return "cron";
-    if (tab.type === "app" || path.includes(".dench.app")) return "app";
-    if (tab.type === "object") return "object";
-    if (tab.type === "file" && (!path || !path.includes("."))) return "folder";
-    return "file";
-  })();
-
-  const common = {
-    width: 12,
-    height: 12,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-  };
-
-  switch (kind) {
-    case "people":
-      return (
-        <svg {...common}>
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-          <circle cx="9" cy="7" r="4" />
-          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-        </svg>
-      );
-    case "company":
-      return (
-        <svg {...common}>
-          <path d="M3 21h18" />
-          <path d="M5 21V7l8-4v18" />
-          <path d="M19 21V11l-6-4" />
-        </svg>
-      );
-    case "inbox":
-      return (
-        <svg {...common}>
-          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" />
-        </svg>
-      );
-    case "calendar":
-      return (
-        <svg {...common}>
-          <rect width="18" height="18" x="3" y="4" rx="2" />
-          <path d="M16 2v4" />
-          <path d="M8 2v4" />
-          <path d="M3 10h18" />
-        </svg>
-      );
-    case "cloud":
-      return (
-        <svg {...common}>
-          <path d="M17.5 19a4.5 4.5 0 1 0-1.97-8.55A6 6 0 1 0 6 18h11.5Z" />
-        </svg>
-      );
-    case "skills":
-      return (
-        <svg {...common}>
-          <path d="m12 3 1.9 5.84H20l-4.95 3.6L16.95 18 12 14.4 7.05 18l1.9-5.56L4 8.84h6.1Z" />
-        </svg>
-      );
-    case "integrations":
-      return (
-        <svg {...common}>
-          <rect width="7" height="7" x="3" y="3" rx="1" />
-          <rect width="7" height="7" x="14" y="3" rx="1" />
-          <rect width="7" height="7" x="14" y="14" rx="1" />
-          <rect width="7" height="7" x="3" y="14" rx="1" />
-        </svg>
-      );
-    case "cron":
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-      );
-    case "app":
-      return (
-        <svg {...common}>
-          <rect width="18" height="18" x="3" y="3" rx="2" />
-          <path d="M9 9h6v6H9z" />
-        </svg>
-      );
-    case "object":
-      return (
-        <svg {...common}>
-          <path d="M3 3h18v4H3z" />
-          <path d="M3 11h18v4H3z" />
-          <path d="M3 19h18v2H3z" />
-        </svg>
-      );
-    case "folder":
-      return (
-        <svg {...common}>
-          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-        </svg>
-      );
-    case "file":
-    default:
-      return (
-        <svg {...common}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
-      );
-  }
-}
-
-/**
- * v3 invariant: at least one chat tab must exist so the center never goes blank.
- * Wrap any setTabState that could remove the last chat tab with this helper.
- */
-function ensureChatTabPresent(state: TabState): TabState {
-  const hasChat = state.tabs.some(
-    (tab) => tab.id !== HOME_TAB_ID && (tab.type === "chat" || tab.type === "gateway-chat"),
-  );
-  if (hasChat) return state;
-  return openTab(state, createBlankChatTab(), { preview: true });
-}
+// `TabIcon` and `ensureChatTabPresent` moved into
+// `apps/web/app/components/workspace/content-tab-icon.tsx` and
+// `apps/web/lib/workspace-tabs.ts` respectively, so the new model owns its
+// own UI helpers and invariants.
 
 /** Find a node in the tree by exact path. */
 function findNode(
@@ -581,6 +348,32 @@ function collectCrmObjectNodes(
   return out.toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Map a TreeNode-style type + path to the new content-tab kind. Virtual
+ * paths (`~cron`, `~skills`, etc.) take precedence over the literal node
+ * type so a synthetic `{path:"~cron", type:"folder"}` opens as the cron
+ * dashboard, not as a directory listing.
+ */
+function nodeToContentTabKind(nodeType: string, path: string): ContentTabKind {
+  if (path === "~cron") return "cron-dashboard";
+  if (path.startsWith("~cron/")) return "cron-job";
+  if (path === "~skills") return "skills";
+  if (path === "~integrations") return "integrations";
+  if (path === "~cloud") return "cloud";
+  if (path === "~crm/inbox") return "crm-inbox";
+  if (path === "~crm/calendar") return "crm-calendar";
+  switch (nodeType) {
+    case "object": return "object";
+    case "document": return "document";
+    case "database": return "database";
+    case "report": return "report";
+    case "app": return "app";
+    case "folder": return "directory";
+    case "file":
+    default: return "file";
+  }
+}
+
 /** Infer a tree node type from filename extension for ad-hoc path previews. */
 function inferNodeTypeFromFileName(fileName: string): TreeNode["type"] {
   if (fileName.endsWith(".dench.app")) return "app";
@@ -667,6 +460,11 @@ export function WorkspaceShell() {
       }>
         <WorkspacePageInner />
       </Suspense>
+      {/* Polls /api/sync/status and shows a sticky banner when Gmail or
+       *  Calendar incremental sync is failing. Outside the Suspense
+       *  boundary so it shows even while the workspace is hydrating —
+       *  a stuck sync is most useful to surface immediately on load. */}
+      <SyncHealthBanner />
     </ToastProvider>
   );
 }
@@ -675,9 +473,12 @@ export function WorkspaceShell() {
 function WorkspacePageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  // `hydrationPhase` gates the URL sync effect so it doesn't push a URL
+  // before the URL→state hydration has run. `postHydrationRender` is set by
+  // the hydration effect and skipped once by the URL sync effect so that
+  // re-applying the same URL doesn't trigger a redundant push.
   const hydrationPhase = useRef<"init" | "hydrated">("init");
   const postHydrationRender = useRef(false);
-  const lastPushedQs = useRef<string | null>(null);
 
   // Visible main chat panel ref for session management
   const chatRef = useRef<ChatPanelHandle>(null);
@@ -709,8 +510,6 @@ function WorkspacePageInner() {
   const { search: searchIndex } = useSearchIndex(searchRefreshSignal);
 
   const [context, setContext] = useState<WorkspaceContext | null>(null);
-  const [activePath, setActivePath] = useState<string | null>(null);
-  const [content, setContent] = useState<ContentState>({ kind: "none" });
 
   // Chat session state
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -759,43 +558,46 @@ function WorkspacePageInner() {
   // when they want more horizontal space. Persisted in localStorage.
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
 
-  // v3: independent active tab ids per surface.
-  // - activeChatTabId: which chat tab is visible in the center (always a chat or gateway-chat tab).
-  // - activeContentTabId: which content tab is visible in the right panel, or null for Files home.
-  const [activeChatTabId, setActiveChatTabId] = useState<string | null>(null);
-  const [activeContentTabId, setActiveContentTabId] = useState<string | null>(null);
-
   // Terminal drawer state
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingComposioAction, setPendingComposioAction] = useState<ComposioChatAction | null>(null);
 
-  // Tab state -- always starts with the home tab
-  const [tabState, setTabState] = useState<TabState>({ tabs: [HOME_TAB], activeTabId: HOME_TAB_ID });
+  // Tabs state — single source of truth for content + chat tabs.
+  // Replaces the older tabState/activePath/content/activeContentTabId quartet
+  // which raced each other across effects. See `apps/web/lib/workspace-tabs.ts`.
+  const [tabsState, dispatch] = useReducer(workspaceTabsReducer, EMPTY_TABS_STATE);
+  const tabsStateRef = useRef<WorkspaceTabsState>(EMPTY_TABS_STATE);
+  useEffect(() => {
+    tabsStateRef.current = tabsState;
+  }, [tabsState]);
+
   // Track which workspace we loaded tabs for, so we reload if the workspace switches
   // and don't save until we've loaded first.
   const tabLoadedForWorkspace = useRef<string | null>(null);
-  const tabStateRef = useRef<TabState>({ tabs: [HOME_TAB], activeTabId: HOME_TAB_ID });
 
   // Load tabs from localStorage once workspace name is known
   useEffect(() => {
     const key = workspaceName || null;
     if (tabLoadedForWorkspace.current === key) return;
     tabLoadedForWorkspace.current = key;
-    const loaded = loadTabs(key);
-    // v3: ensure restored tab state always has at least one chat tab so the
-    // center is never blank — even when localStorage only stored file/CRM tabs.
-    setTabState(ensureChatTabPresent(loaded));
+    const loaded = loadTabsState(key);
+    // v3 invariant: at least one chat tab must exist so the center never goes
+    // blank — even when localStorage only stored file/CRM tabs.
+    dispatch({ type: "replace", state: ensureChatPresent(loaded) });
     setChatRuntimeSnapshots({});
   }, [workspaceName]);
 
   // Persist tabs to localStorage on change (only after hydration completes)
   useEffect(() => {
     if (hydrationPhase.current !== "hydrated") return;
-    saveTabs(tabState, workspaceName || null);
-  }, [tabState, workspaceName]);
+    saveTabsState(tabsState, workspaceName || null);
+  }, [tabsState, workspaceName]);
 
   useEffect(() => {
-    const validTabIds = new Set(tabState.tabs.map((tab) => tab.id));
+    const validTabIds = new Set([
+      ...tabsState.contentTabs.map((t) => t.id),
+      ...tabsState.chatTabs.map((t) => t.id),
+    ]);
     setChatRuntimeSnapshots((prev) => {
       let next = prev;
       for (const tabId of Object.keys(prev)) {
@@ -810,45 +612,47 @@ function WorkspacePageInner() {
         delete chatPanelRefs.current[tabId];
       }
     }
-  }, [tabState.tabs]);
+  }, [tabsState.contentTabs, tabsState.chatTabs]);
 
-  // Ref for the keyboard shortcut to close the active tab (avoids stale closure over loadContent)
+  // Derived selectors — `activePath` and the active tab references derive
+  // from the reducer state, so they cannot drift from the tab strip.
+  const activeContentTab = useMemo(
+    () => selectActiveContentTab(tabsState),
+    [tabsState],
+  );
+  const activePath = activeContentTab?.path ?? null;
+  const activeContentTabId = tabsState.activeContentId;
+  const activeChatTabId = tabsState.activeChatId;
+  const contentTabs = tabsState.contentTabs;
+  const mainChatTabs = tabsState.chatTabs;
+
+  // Ref for the keyboard shortcut to close the active tab.
   const tabCloseActiveRef = useRef<(() => void) | null>(null);
-  const activeTab = useMemo(
-    () => tabState.tabs.find((tab) => tab.id === tabState.activeTabId) ?? HOME_TAB,
-    [tabState],
-  );
-  const mainChatTabs = useMemo(
-    () => tabState.tabs.filter((tab) => tab.id !== HOME_TAB_ID && (tab.type === "chat" || tab.type === "gateway-chat")),
-    [tabState.tabs],
-  );
 
-  useEffect(() => {
-    tabStateRef.current = tabState;
-  }, [tabState]);
-
-  // v3: chat-switching handlers must NOT touch the right panel's activePath/content.
-  // The right panel's state is independent of which chat is shown in the center.
+  // v3: chat-switching helpers — dispatched against the chat-tab portion of
+  // `tabsState`. They never touch the content tabs, so the right panel's
+  // state is independent of which chat is shown in the center.
   const openBlankChatTab = useCallback(() => {
-    const tab = createBlankChatTab();
+    const tab = createDraftChatTab();
     setActiveSessionId(null);
     setActiveSubagentKey(null);
-    setTabState((prev) => openTab(prev, tab, { preview: true }));
+    dispatch({ type: "openChat", tab: { ...tab, preview: true } });
     return tab;
   }, []);
 
   const openPermanentBlankChatTab = useCallback(() => {
-    const tab = createBlankChatTab();
+    const tab = createDraftChatTab();
     setActiveSessionId(null);
     setActiveSubagentKey(null);
-    setTabState((prev) => openTab(prev, tab, { preview: false }));
+    dispatch({ type: "openChat", tab: { ...tab, preview: false } });
     return tab;
   }, []);
 
   const openSessionChatTab = useCallback((sessionId: string, title?: string) => {
     setActiveSessionId(sessionId);
     setActiveSubagentKey(null);
-    setTabState((prev) => openOrFocusParentChatTab(prev, { sessionId, title }, { preview: true }));
+    const tab = createSessionChatTab({ sessionId, title });
+    dispatch({ type: "openChat", tab: { ...tab, preview: true } });
   }, []);
 
   const openSubagentChatTab = useCallback((params: {
@@ -858,73 +662,79 @@ function WorkspacePageInner() {
   }) => {
     setActiveSessionId(params.parentSessionId);
     setActiveSubagentKey(params.sessionKey);
-    setTabState((prev) => openOrFocusSubagentChatTab(prev, params, { preview: true }));
+    const tab = createSubagentChatTab(params);
+    dispatch({ type: "openChat", tab: { ...tab, preview: true } });
   }, []);
 
   const openGatewayChatTab = useCallback((sessionKey: string, sessionId: string, channel?: string, title?: string) => {
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setActiveGatewaySessionKey(sessionKey);
-    setTabState((prev) => openOrFocusGatewayChatTab(prev, {
+    const tab = createGatewayChatTab({
       sessionKey,
       sessionId,
       channel: channel ?? "unknown",
       title: title ?? "Channel Chat",
-    }, { preview: true }));
+    });
+    dispatch({ type: "openChat", tab: { ...tab, preview: true } });
   }, []);
 
   const promoteTabById = useCallback((tabId: string | null | undefined) => {
-    if (!tabId || tabId === HOME_TAB_ID) {
-      return;
+    if (!tabId) return;
+    // Try content first, then chat — ids are unique across both.
+    if (tabsStateRef.current.contentTabs.some((t) => t.id === tabId)) {
+      dispatch({ type: "promoteContent", id: tabId });
+    } else {
+      dispatch({ type: "promoteChat", id: tabId });
     }
-    setTabState((prev) => makeTabPermanent(prev, tabId));
   }, []);
 
   const promoteTabByPath = useCallback((path: string | null | undefined) => {
-    if (!path) {
-      return;
-    }
-    setTabState((prev) => {
-      const matchingTab = prev.tabs.find((tab) => tab.path === path);
-      return matchingTab ? makeTabPermanent(prev, matchingTab.id) : prev;
-    });
+    if (!path) return;
+    dispatch({ type: "promoteContentByPath", path });
   }, []);
 
-  // v3: the center chat is decoupled from tabState.activeTabId so that opening a file / CRM / cloud
-  // on the right panel never changes which chat is visible in the center.
+  // The center column always shows whichever chat tab the chat strip last
+  // focused; the file panel never changes this. Derived directly from the
+  // reducer state with chat-session bookkeeping as a fallback.
   const visibleMainChatTabId = useMemo(() => {
-    if (activeChatTabId) {
-      const pinned = mainChatTabs.find((tab) => tab.id === activeChatTabId);
-      if (pinned) return pinned.id;
+    if (activeChatTabId && mainChatTabs.some((t) => t.id === activeChatTabId)) {
+      return activeChatTabId;
     }
     if (activeGatewaySessionKey) {
-      const matchingGwTab = mainChatTabs.find((tab) => tab.type === "gateway-chat" && tab.sessionKey === activeGatewaySessionKey);
-      if (matchingGwTab) return matchingGwTab.id;
+      const match = mainChatTabs.find((t) => t.variant === "gateway" && t.sessionKey === activeGatewaySessionKey);
+      if (match) return match.id;
     }
     if (activeSubagentKey) {
-      const matchingSubagentTab = mainChatTabs.find((tab) => tab.sessionKey === activeSubagentKey);
-      if (matchingSubagentTab) {
-        return matchingSubagentTab.id;
-      }
+      const match = mainChatTabs.find((t) => t.sessionKey === activeSubagentKey);
+      if (match) return match.id;
     }
     if (activeSessionId) {
-      const matchingParentTab = mainChatTabs.find((tab) => tab.sessionId === activeSessionId);
-      if (matchingParentTab) {
-        return matchingParentTab.id;
-      }
+      const match = mainChatTabs.find((t) => t.sessionId === activeSessionId);
+      if (match) return match.id;
     }
     return mainChatTabs[0]?.id ?? null;
   }, [activeChatTabId, activeSessionId, activeSubagentKey, activeGatewaySessionKey, mainChatTabs]);
 
+  // Keep `activeSessionId`/`activeSubagentKey` in sync with the visible chat
+  // tab so child components (composer, inbox actions) don't need to know
+  // about the tabsState shape.
   useEffect(() => {
-    if (activeTab.type !== "chat" && activeTab.type !== "gateway-chat") {
-      return;
+    if (!activeChatTabId) return;
+    const tab = mainChatTabs.find((t) => t.id === activeChatTabId);
+    if (!tab) return;
+    setActiveSessionId((prev) => prev === (tab.sessionId ?? null) ? prev : tab.sessionId ?? null);
+    if (tab.variant === "subagent") {
+      setActiveSubagentKey((prev) => prev === (tab.sessionKey ?? null) ? prev : tab.sessionKey ?? null);
+    } else {
+      setActiveSubagentKey((prev) => prev === null ? prev : null);
     }
-    const identity = resolveChatIdentityForTab(activeTab);
-    setActiveSessionId((prev) => prev === identity.sessionId ? prev : identity.sessionId);
-    setActiveSubagentKey((prev) => prev === identity.subagentKey ? prev : identity.subagentKey);
-    setActiveGatewaySessionKey((prev) => prev === identity.gatewaySessionKey ? prev : identity.gatewaySessionKey);
-  }, [activeTab]);
+    if (tab.variant === "gateway") {
+      setActiveGatewaySessionKey((prev) => prev === (tab.sessionKey ?? null) ? prev : tab.sessionKey ?? null);
+    } else {
+      setActiveGatewaySessionKey((prev) => prev === null ? prev : null);
+    }
+  }, [activeChatTabId, mainChatTabs]);
 
   const setMainChatPanelRef = useCallback((tabId: string, handle: ChatPanelHandle | null) => {
     chatPanelRefs.current[tabId] = handle;
@@ -944,18 +754,12 @@ function WorkspacePageInner() {
   }, []);
 
   const handleChatTabSessionChange = useCallback((tabId: string, sessionId: string | null) => {
-    setTabState((prev) => {
-      let next = bindParentSessionToChatTab(prev, tabId, sessionId);
-      if (sessionId && prev.activeTabId === HOME_TAB_ID) {
-        next = activateTab(next, tabId);
-      }
-      return next;
-    });
-    if (tabState.activeTabId === tabId || tabState.activeTabId === HOME_TAB_ID || visibleMainChatTabId === tabId) {
+    dispatch({ type: "bindChatSession", tabId, sessionId });
+    if (visibleMainChatTabId === tabId || activeChatTabId === tabId) {
       setActiveSessionId(sessionId);
       setActiveSubagentKey(null);
     }
-  }, [tabState.activeTabId, visibleMainChatTabId]);
+  }, [visibleMainChatTabId, activeChatTabId]);
 
   const sendMessageInChatTab = useCallback((tabId: string, message: string) => {
     requestAnimationFrame(() => {
@@ -1011,21 +815,30 @@ function WorkspacePageInner() {
     setActiveSubagentKey(null);
   }, [activeSubagentKey, openSessionChatTab, subagents]);
 
+  /**
+   * Open or focus a content tab for a TreeNode (or a synthetic node like
+   * `~cron`). Stable id = `node.path` so reopening the same path focuses the
+   * existing tab; preview replacement happens atomically in the reducer.
+   */
   const openTabForNode = useCallback((
     node: { path: string; name: string; type: string },
     options?: { preview?: boolean },
   ) => {
-    const isObject = node.type === "object";
+    const kind = nodeToContentTabKind(node.type, node.path);
+    const isObject = kind === "object";
     const title = isObject
       ? displayObjectName(node.name)
-      : inferTabTitle(node.path, node.name);
-    const tab: Tab = {
-      id: generateTabId(),
-      type: isObject ? "object" : inferTabType(node.path),
-      title,
-      path: node.path,
-    };
-    setTabState((prev) => openTab(prev, tab, { preview: options?.preview ?? true }));
+      : inferContentTabTitle(node.path, node.name);
+    dispatch({
+      type: "openContent",
+      tab: {
+        id: contentTabIdFor(kind, node.path),
+        kind,
+        path: node.path,
+        title,
+        preview: options?.preview ?? true,
+      },
+    });
   }, []);
 
   // Resizable sidebar widths (desktop only; persisted in localStorage).
@@ -1150,24 +963,21 @@ function WorkspacePageInner() {
       return activePath.split("/").pop() || activePath;
     })();
     const isDirectory =
-      content.kind === "directory" ||
+      activeContentTab?.kind === "directory" ||
+      activeContentTab?.kind === "browse" ||
       isVirtualPath(activePath) ||
-      content.kind === "crm-inbox" ||
-      content.kind === "crm-calendar";
+      activeContentTab?.kind === "crm-inbox" ||
+      activeContentTab?.kind === "crm-calendar";
     return { path: activePath, filename, isDirectory };
-  }, [activePath, content.kind]);
+  }, [activePath, activeContentTab?.kind]);
 
-  // Update content state when the agent edits the file (live reload)
-  const handleFileChanged = useCallback((newContent: string) => {
-    setContent((prev) => {
-      if (prev.kind === "document") {
-        return { ...prev, data: { ...prev.data, content: newContent } };
-      }
-      if (prev.kind === "file" || prev.kind === "code") {
-        return { ...prev, data: { ...prev.data, content: newContent } };
-      }
-      return prev;
-    });
+  // Live reload from the agent: ContentRenderer/useTabContent owns the live
+  // file payload now, so this stub simply forces a refresh of the active tab
+  // when the file under it changes on disk. The cache is invalidated lazily
+  // by the SSE-driven tree refresh.
+  const handleFileChanged = useCallback((_newContent: string) => {
+    // No-op: `useTabContent` re-fetches when its tab changes; live in-place
+    // edits during streaming are handled inside ContentRenderer's children.
   }, []);
 
   const refreshContext = useCallback(async () => {
@@ -1259,8 +1069,7 @@ function WorkspacePageInner() {
       }
       resetWorkspaceStateOnSwitch({
         setBrowseDir,
-        setActivePath,
-        setContent,
+        clearActiveContent: () => dispatch({ type: "activateContent", id: null }),
         setActiveSessionId,
         setActiveSubagentKey,
         resetMainChat: () => {
@@ -1269,7 +1078,7 @@ function WorkspacePageInner() {
           setChatRunsSnapshot(createChatRunsSnapshot({ parentRuns: [], subagents: [] }));
           setStreamingSessionIds(new Set());
           setSubagents([]);
-          setTabState({ tabs: [HOME_TAB], activeTabId: HOME_TAB_ID });
+          dispatch({ type: "replace", state: ensureChatPresent(EMPTY_TABS_STATE) });
         },
         replaceUrlToRoot: () => {
           // URL sync effect will write the correct URL after state is cleared
@@ -1288,20 +1097,14 @@ function WorkspacePageInner() {
       const res = await fetch(`/api/web-sessions/${sessionId}`, { method: "DELETE" });
       if (!res.ok) {return;}
       const closedTabIds = new Set(
-        tabState.tabs
-          .filter((tab) => tab.type === "chat" && (tab.sessionId === sessionId || tab.parentSessionId === sessionId))
+        tabsStateRef.current.chatTabs
+          .filter((tab) => tab.sessionId === sessionId || tab.parentSessionId === sessionId)
           .map((tab) => tab.id),
       );
-      setTabState((prev) => {
-        let next = closeChatTabsForSession(prev, sessionId);
-        const hasChatTab = next.tabs.some(
-          (tab) => tab.id !== HOME_TAB_ID && (tab.type === "chat" || tab.type === "gateway-chat"),
-        );
-        if (!hasChatTab) {
-          next = openTab(next, createBlankChatTab(), { preview: true });
-        }
-        return next;
-      });
+      // The reducer's `closeChatsForSession` automatically re-creates a draft
+      // when the deletion would empty the chat strip, preserving the
+      // ensureChatPresent invariant.
+      dispatch({ type: "closeChatsForSession", sessionId });
       setChatRuntimeSnapshots((prev) => {
         let next = prev;
         for (const tabId of closedTabIds) {
@@ -1319,7 +1122,7 @@ function WorkspacePageInner() {
       }
       void fetchSessions();
     },
-    [activeSessionId, sessions, fetchSessions, openBlankChatTab, openSessionChatTab, tabState.tabs],
+    [activeSessionId, sessions, fetchSessions, openBlankChatTab, openSessionChatTab],
   );
 
   const handleRenameSession = useCallback(
@@ -1387,156 +1190,19 @@ function WorkspacePageInner() {
     return () => clearInterval(id);
   }, [fetchCronJobs]);
 
-  // Load content when path changes
-  const loadContent = useCallback(
-    async (node: TreeNode) => {
-      setActivePath(node.path);
-      setContent({ kind: "loading" });
-      // Any navigation into a file/object/folder replaces the right-panel
-      // view, so a stale entry-detail-panel must not float on top of it.
-      setEntryModal(null);
+  // Closing the entry-detail panel is mutually exclusive with opening any
+  // content tab. We dispatch this alongside `openContent`/`activateContent`
+  // so the panel doesn't float on top of newly-loaded content.
+  const closeEntryModalIfOpen = useCallback(() => {
+    setEntryModal((prev) => (prev ? null : prev));
+  }, []);
 
-      try {
-        if (node.type === "object") {
-          const name = objectNameFromPath(node.path);
-          const fetchObject = async (): Promise<
-            | { status: "ok"; data: ObjectData }
-            | { status: "retryable" }
-            | { status: "duckdb-missing" }
-            | { status: "fatal" }
-          > => {
-            const res = await fetch(`/api/workspace/objects/${encodeURIComponent(name)}`);
-            if (!res.ok) {
-              const errData = await res.json().catch(() => ({}));
-              if (errData.code === "DUCKDB_NOT_INSTALLED") {
-                return { status: "duckdb-missing" };
-              }
-              if (res.status === 404 || res.status >= 500) {
-                return { status: "retryable" };
-              }
-              return { status: "fatal" };
-            }
-            return { status: "ok", data: await res.json() };
-          };
-
-          let result = await fetchObject();
-          if (result.status === "retryable") {
-            await new Promise((r) => setTimeout(r, 150));
-            result = await fetchObject();
-          }
-          if (result.status === "duckdb-missing") {
-            setContent({ kind: "duckdb-missing" });
-            return;
-          }
-          if (result.status !== "ok") {
-            setContent({ kind: "none" });
-            return;
-          }
-
-          let data = result.data;
-          if (data.fields.length === 0 && data.entries.length > 0) {
-            await new Promise((r) => setTimeout(r, 200));
-            const retry = await fetchObject();
-            if (retry.status === "duckdb-missing") {
-              setContent({ kind: "duckdb-missing" });
-              return;
-            }
-            if (retry.status === "ok") {
-              data = retry.data;
-            }
-          }
-          setContent({ kind: "object", data });
-        } else if (node.type === "document") {
-          // Use virtual-file API for ~skills/ paths
-          const res = await fetch(fileApiUrl(node.path));
-          if (!res.ok) {
-            setContent({ kind: "none" });
-            return;
-          }
-          const data: FileData = await res.json();
-          setContent({
-            kind: "document",
-            data,
-            title: node.name.replace(/\.md$/, ""),
-          });
-        } else if (node.type === "database") {
-          setContent({ kind: "database", dbPath: node.path, filename: node.name });
-        } else if (node.type === "report") {
-          setContent({ kind: "report", reportPath: node.path, filename: node.name });
-        } else if (node.type === "file") {
-          if (isSpreadsheetFile(node.name)) {
-            const url = rawFileUrl(node.path);
-            setContent({ kind: "spreadsheet", url, filename: node.name, filePath: node.path });
-            return;
-          }
-
-          // DOCX files: fetch binary, convert to HTML with mammoth
-          if (isDocxFile(node.name)) {
-            try {
-              const rawRes = await fetch(rawFileUrl(node.path));
-              if (!rawRes.ok) { setContent({ kind: "none" }); return; }
-              const arrayBuffer = await rawRes.arrayBuffer();
-              const mammoth = await import("mammoth");
-              const result = await mammoth.convertToHtml({ arrayBuffer });
-              setContent({ kind: "richDocument", html: result.value, filePath: node.path, mode: "docx" });
-            } catch {
-              setContent({ kind: "none" });
-            }
-            return;
-          }
-
-          // TXT files: fetch text content and open in rich editor
-          if (isTxtFile(node.name)) {
-            const res = await fetch(fileApiUrl(node.path));
-            if (!res.ok) { setContent({ kind: "none" }); return; }
-            const data: FileData = await res.json();
-            setContent({ kind: "richDocument", html: textToHtml(data.content), filePath: node.path, mode: "txt" });
-            return;
-          }
-
-          // HTML files get an iframe preview
-          const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
-          if (ext === "html" || ext === "htm") {
-            setContent({ kind: "html", rawUrl: rawFileUrl(node.path), contentUrl: fileApiUrl(node.path), filename: node.name });
-            return;
-          }
-
-          // Check if this is a media file (image/video/audio/pdf)
-          const mediaType = detectMediaType(node.name);
-          if (mediaType) {
-            const url = rawFileUrl(node.path);
-            setContent({ kind: "media", url, mediaType, filename: node.name, filePath: node.path });
-            return;
-          }
-
-          const res = await fetch(fileApiUrl(node.path));
-          if (!res.ok) {
-            setContent({ kind: "none" });
-            return;
-          }
-          const data: FileData = await res.json();
-          if (isCodeFile(node.name)) {
-            setContent({ kind: "code", data, filename: node.name, filePath: node.path });
-          } else {
-            setContent({ kind: "file", data, filename: node.name });
-          }
-        } else if (node.type === "app") {
-          // Fetch manifest from the tree node or API
-          const manifestRes = await fetch(`/api/apps?app=${encodeURIComponent(node.path)}&file=.dench.yaml&meta=1`);
-          let manifest: DenchAppManifest = { name: node.name };
-          if (manifestRes.ok) {
-            try { manifest = await manifestRes.json(); } catch { /* use default */ }
-          }
-          setContent({ kind: "app", appPath: node.path, manifest, filename: node.name });
-        } else if (node.type === "folder") {
-          setContent({ kind: "directory", node });
-        }
-      } catch {
-        setContent({ kind: "none" });
-      }
-    },
-    [],
-  );
+  // Whether DuckDB is missing — surfaced from `useTabContent` via
+  // `RightPanelContent` so the placeholder UI can react.
+  const handleDuckDBMissing = useCallback(() => {
+    // The render layer reads `content.kind === "duckdb-missing"` and shows
+    // the install prompt. Nothing extra to do here.
+  }, []);
 
   // Open the right panel and widen it so the chat stays at its min width.
   // Used when the user clicks something that needs the right panel to be visible.
@@ -1578,26 +1244,25 @@ function WorkspacePageInner() {
         const node = resolveCrmObjectNode(tree, objectName);
         // preview: false → each left-sidebar click opens a NEW persistent
         // tab instead of replacing the existing preview tab. If the tab is
-        // already open, openTab() switches to it.
+        // already open, the reducer focuses it.
         openTabForNode(node, { preview: false });
-        void loadContent(node);
+        closeEntryModalIfOpen();
         return;
       }
 
+      // Map sidebar nav targets directly to content tabs in the new model.
       const config = {
-        cloud: { path: "~cloud", name: "Cloud", kind: "cloud" as const },
-        integrations: { path: "~integrations", name: "Integrations", kind: "integrations" as const },
-        skills: { path: "~skills", name: "Skills", kind: "skill-store" as const },
-        cron: { path: "~cron", name: "Cron", kind: "cron-dashboard" as const },
-        "crm-inbox": { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
-        "crm-calendar": { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
+        cloud: { path: "~cloud", name: "Cloud" },
+        integrations: { path: "~integrations", name: "Integrations" },
+        skills: { path: "~skills", name: "Skills" },
+        cron: { path: "~cron", name: "Cron" },
+        "crm-inbox": { path: "~crm/inbox", name: "Inbox" },
+        "crm-calendar": { path: "~crm/calendar", name: "Calendar" },
       }[target];
       openTabForNode({ path: config.path, name: config.name, type: "folder" }, { preview: false });
-      setActivePath(config.path);
-      setContent({ kind: config.kind });
-      setEntryModal(null);
+      closeEntryModalIfOpen();
     },
-    [openTabForNode, tree, loadContent, ensureRightPanelOpenWide],
+    [openTabForNode, tree, ensureRightPanelOpenWide, closeEntryModalIfOpen],
   );
 
   const handleComposioActionFromChat = useCallback((action: ComposioChatAction) => {
@@ -1628,68 +1293,49 @@ function WorkspacePageInner() {
           // Clicking any web-chat directory → switch to workspace mode & open chats
           if (openclawDir && node.path.startsWith(openclawDir + "/web-chat")) {
             setBrowseDir(null);
-            setActivePath(null);
-            setContent({ kind: "none" });
+            dispatch({ type: "activateContent", id: null });
             openBlankChatTab();
             return;
           }
         }
         // Clicking a folder in browse mode → navigate into it so the tree
         // is fetched fresh, AND show it in the main panel with the chat sidebar.
-        // Children come from the live tree (same data source as the sidebar),
-        // not from the stale node snapshot.
+        // The browse tab keys off `browse:<absolute-path>` so successive
+        // browse navigation reuses the same slot.
         if (node.type === "folder") {
           setBrowseDir(node.path);
-          openTabForNode(node);
-          setActivePath(node.path);
-          setContent({ kind: "directory", node: { name: node.name, path: node.path, type: "folder" } });
-          setEntryModal(null);
+          dispatch({
+            type: "openContent",
+            tab: {
+              id: contentTabIdFor("browse", node.path, { browsePath: node.path }),
+              kind: "browse",
+              path: node.path,
+              title: node.name,
+              meta: { browsePath: node.path },
+              preview: true,
+            },
+          });
+          closeEntryModalIfOpen();
           return;
         }
       }
 
       // --- Virtual path handlers (workspace mode) ---
-      // Intercept chat folder item clicks
       if (node.path.startsWith("~chats/")) {
         const sessionId = node.path.slice("~chats/".length);
         openSessionChatTab(sessionId);
         return;
       }
-      // Clicking the Chats folder itself opens a new chat
       if (node.path === "~chats") {
         openBlankChatTab();
         return;
       }
-      // Intercept cron job item clicks
-      if (node.path.startsWith("~cron/")) {
-        const jobId = node.path.slice("~cron/".length);
-        const job = cronJobs.find((j) => j.id === jobId);
-        if (job) {
-          openTabForNode(node);
-          setActivePath(node.path);
-          setContent({ kind: "cron-job", jobId, job });
-          setEntryModal(null);
-          return;
-        }
-      }
-      // Clicking the Cron folder itself opens the dashboard
-      if (node.path === "~cron") {
+      if (node.path === "~skills") { handleNavigate("skills"); return; }
+      if (node.path === "~integrations") { handleNavigate("integrations"); return; }
+      if (node.path === "~cloud") { handleNavigate("cloud"); return; }
+      if (node.path === "~cron" || node.path.startsWith("~cron/")) {
         openTabForNode(node);
-        setActivePath(node.path);
-        setContent({ kind: "cron-dashboard" });
-        setEntryModal(null);
-        return;
-      }
-      if (node.path === "~skills") {
-        handleNavigate("skills");
-        return;
-      }
-      if (node.path === "~integrations") {
-        handleNavigate("integrations");
-        return;
-      }
-      if (node.path === "~cloud") {
-        handleNavigate("cloud");
+        closeEntryModalIfOpen();
         return;
       }
       // Workspace-mode folders are expanded/collapsed inline in the sidebar
@@ -1698,141 +1344,79 @@ function WorkspacePageInner() {
         return;
       }
       openTabForNode(node);
-      void loadContent(node);
+      closeEntryModalIfOpen();
     },
-    [loadContent, openBlankChatTab, openSessionChatTab, openTabForNode, cronJobs, browseDir, workspaceRoot, openclawDir, setBrowseDir, handleNavigate],
+    [openBlankChatTab, openSessionChatTab, openTabForNode, browseDir, workspaceRoot, openclawDir, setBrowseDir, handleNavigate, closeEntryModalIfOpen],
   );
 
-  const applyActivatedTab = useCallback((tab: Tab | undefined) => {
-    if (!tab || tab.id === HOME_TAB_ID) {
-      return;
-    }
-    if (tab.type === "chat" || tab.type === "gateway-chat") {
-      // v3: don't touch activePath/content — right panel state is independent of chat tabs.
-      const identity = resolveChatIdentityForTab(tab);
-      setActiveSessionId(identity.sessionId);
-      setActiveSubagentKey(identity.subagentKey);
-      setActiveGatewaySessionKey(identity.gatewaySessionKey);
-      return;
-    }
-    if (tab.path) {
-      const node = resolveNode(tree, tab.path);
-      setActivePath(tab.path);
-      // Activating a non-chat tab swaps the right-panel view; close any
-      // entry-detail panel that was open against the previously-active tab.
-      setEntryModal(null);
-      if (node) {
-        setContent({ kind: "loading" });
-        void loadContent(node);
-      } else if (tab.path === "~cron") {
-        setContent({ kind: "cron-dashboard" });
-      } else if (tab.path === "~skills") {
-        setContent({ kind: "skill-store" });
-      } else if (tab.path === "~integrations") {
-        setContent({ kind: "integrations" });
-      } else if (tab.path === "~cloud") {
-        setContent({ kind: "cloud" });
-      } else if (tab.path.startsWith("~cron/")) {
-        const jobId = tab.path.slice("~cron/".length);
-        const job = cronJobs.find((j) => j.id === jobId);
-        if (job) setContent({ kind: "cron-job", jobId, job });
-      } else {
-        const fileName = tab.title || tab.path.split("/").pop() || tab.path;
-        const syntheticNode: TreeNode = {
-          name: fileName,
-          path: tab.path,
-          type: tab.type === "object" ? "object" : inferNodeTypeFromFileName(fileName),
-        };
-        setContent({ kind: "loading" });
-        void loadContent(syntheticNode);
-      }
-    }
-  }, [tree, loadContent, cronJobs]);
-
-  // Tab handler callbacks (defined after loadContent is available)
+  // Tab handler callbacks — pure dispatches into the tabs reducer.
   const handleTabActivate = useCallback((tabId: string) => {
-    const requestedTab = tabStateRef.current.tabs.find((entry) => entry.id === tabId);
-    if (tabId === HOME_TAB_ID) {
-      setTabState((prev) => {
-        let next = activateTab(prev, tabId);
-        const chatTabs = next.tabs.filter((t) => t.id !== HOME_TAB_ID && isChatTab(t));
-        const hasBlankChat = chatTabs.some((t) => !t.sessionId && !t.sessionKey);
-        if (!hasBlankChat) {
-          next = {
-            ...openTab(next, createBlankChatTab(), { preview: true }),
-            activeTabId: HOME_TAB_ID,
-          };
-        }
-        return next;
-      });
-      setActiveSessionId(null);
-      setActiveSubagentKey(null);
-      setActiveGatewaySessionKey(null);
-      applyActivatedTab(undefined);
-      return;
+    // ids are unique across content + chat tabs.
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      closeEntryModalIfOpen();
+      dispatch({ type: "activateContent", id: tabId });
+    } else {
+      dispatch({ type: "activateChat", id: tabId });
     }
-    setTabState((prev) => activateTab(prev, tabId));
-    applyActivatedTab(requestedTab);
-  }, [applyActivatedTab]);
+  }, [closeEntryModalIfOpen]);
 
   const handleTabClose = useCallback((tabId: string) => {
-    const prev = tabState;
-    let next = closeTab(prev, tabId);
-    // v3: a chat tab must always exist so the center never goes blank.
-    next = ensureChatTabPresent(next);
-    setTabState(next);
-    if (next.activeTabId !== prev.activeTabId) {
-      const newActive = next.tabs.find((t) => t.id === next.activeTabId);
-      if (!newActive || newActive.id === HOME_TAB_ID) {
-        const identity = resolveChatIdentityForTab(next.tabs.find((tab) => tab.type === "chat"));
-        setActiveSessionId(identity.sessionId);
-        setActiveSubagentKey(identity.subagentKey);
-        applyActivatedTab(undefined);
-      } else {
-        applyActivatedTab(newActive);
-      }
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      dispatch({ type: "closeContent", id: tabId });
+    } else {
+      dispatch({ type: "closeChat", id: tabId });
     }
-  }, [applyActivatedTab, tabState]);
+  }, []);
 
   // Keep ref in sync so keyboard shortcut can close active tab
   useEffect(() => {
     tabCloseActiveRef.current = () => {
-      if (tabState.activeTabId) {
-        handleTabClose(tabState.activeTabId);
+      if (tabsState.activeContentId) {
+        handleTabClose(tabsState.activeContentId);
+      } else if (tabsState.activeChatId) {
+        handleTabClose(tabsState.activeChatId);
       }
     };
-  }, [tabState.activeTabId, handleTabClose]);
+  }, [tabsState.activeContentId, tabsState.activeChatId, handleTabClose]);
 
   const handleTabCloseOthers = useCallback((tabId: string) => {
-    const next = ensureChatTabPresent(closeOtherTabs(tabState, tabId));
-    setTabState(next);
-    applyActivatedTab(next.tabs.find((tab) => tab.id === next.activeTabId));
-  }, [applyActivatedTab, tabState]);
-
-  const handleTabCloseToRight = useCallback((tabId: string) => {
-    const next = ensureChatTabPresent(closeTabsToRight(tabState, tabId));
-    setTabState(next);
-    applyActivatedTab(next.tabs.find((tab) => tab.id === next.activeTabId));
-  }, [applyActivatedTab, tabState]);
-
-  const handleTabCloseAll = useCallback(() => {
-    setTabState((prev) => {
-      const closed = closeAllTabs(prev);
-      setActivePath(null);
-      setContent({ kind: "none" });
-      setActiveSessionId(null);
-      setActiveSubagentKey(null);
-      setEntryModal(null);
-      return openTab(closed, createBlankChatTab());
-    });
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      dispatch({ type: "closeOtherContent", id: tabId });
+    }
   }, []);
 
-  const handleTabReorder = useCallback((tabId: string, from: number, to: number) => {
-    setTabState((prev) => reorderTabs(makeTabPermanent(prev, tabId), from, to));
+  const handleTabCloseToRight = useCallback((tabId: string) => {
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      dispatch({ type: "closeContentToRight", id: tabId });
+    }
+  }, []);
+
+  const handleTabCloseAll = useCallback(() => {
+    dispatch({ type: "closeAllContent" });
+    setActiveSessionId(null);
+    setActiveSubagentKey(null);
+    setEntryModal(null);
+  }, []);
+
+  const handleTabReorder = useCallback((tabId: string, _from: number, to: number) => {
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      dispatch({ type: "promoteContent", id: tabId });
+      dispatch({ type: "reorderContent", id: tabId, toIndex: to });
+    }
   }, []);
 
   const handleTabTogglePin = useCallback((tabId: string) => {
-    setTabState((prev) => togglePinTab(prev, tabId));
+    const isContent = tabsStateRef.current.contentTabs.some((t) => t.id === tabId);
+    if (isContent) {
+      dispatch({ type: "togglePinContent", id: tabId });
+    } else {
+      dispatch({ type: "togglePinChat", id: tabId });
+    }
   }, []);
 
   // Open inline file-path mentions from chat in a new workspace tab.
@@ -1970,18 +1554,15 @@ function WorkspacePageInner() {
     setActiveSessionId(null);
     setActiveSubagentKey(null);
     setActiveGatewaySessionKey(null);
-    setTabState((prev) => {
-      let next = activateTab(prev, HOME_TAB_ID);
-      const chatTabs = next.tabs.filter((t) => t.id !== HOME_TAB_ID && isChatTab(t));
-      const hasBlankChat = chatTabs.some((t) => !t.sessionId && !t.sessionKey);
-      if (!hasBlankChat) {
-        next = {
-          ...openTab(next, createBlankChatTab(), { preview: true }),
-          activeTabId: HOME_TAB_ID,
-        };
-      }
-      return next;
-    });
+    // Ensure a draft chat tab is present and focus it; the reducer's
+    // `ensureChatPresent` handles the empty-strip case.
+    const drafts = tabsStateRef.current.chatTabs.filter((t) => t.variant === "draft");
+    if (drafts.length === 0) {
+      const tab = createDraftChatTab();
+      dispatch({ type: "openChat", tab: { ...tab, preview: true } });
+    } else {
+      dispatch({ type: "activateChat", id: drafts[0].id });
+    }
   }, []);
 
   // Insert a file mention into the chat editor when a sidebar item is dropped on the chat input.
@@ -2000,74 +1581,19 @@ function WorkspacePageInner() {
         path: itemPath,
         type: item.type as TreeNode["type"],
       };
-      if (item.type === "folder") {
-        if (browseDir != null) {
-          setBrowseDir(item.path);
-        }
-        openTabForNode(node);
-        setActivePath(itemPath);
-        setContent({ kind: "directory", node: { name: item.name, path: itemPath, type: "folder" } });
-        setEntryModal(null);
-      } else {
-        if (browseDir != null) {
-          const parentOfFile = item.path.split("/").slice(0, -1).join("/") || "/";
-          setBrowseDir(parentOfFile);
-        }
-        openTabForNode(node);
-        void loadContent(node);
+      if (item.type === "folder" && browseDir != null) {
+        setBrowseDir(item.path);
+      } else if (item.type !== "folder" && browseDir != null) {
+        const parentOfFile = item.path.split("/").slice(0, -1).join("/") || "/";
+        setBrowseDir(parentOfFile);
       }
+      openTabForNode(node);
+      closeEntryModalIfOpen();
     },
-    [browseDir, workspaceRoot, setBrowseDir, openTabForNode, loadContent],
+    [browseDir, workspaceRoot, setBrowseDir, openTabForNode, closeEntryModalIfOpen],
   );
 
-  // Sync URL bar with active content / chat / browse / subagent / preview state.
-  // Uses window.location instead of searchParams in the comparison to
-  // avoid a circular dependency (searchParams updates → effect fires →
-  // router.replace → searchParams updates → …).
-  //
-  // Gated by hydrationPhase: skips entirely until hydration is done.
-  // On the first render after hydration, skips once (via postHydrationRender)
-  // because React state (activePath, etc.) hasn't propagated yet.
-  //
-  // This effect only manages shell-level params (path, chat, browse, etc.)
-  // and preserves object-view params (viewType, filters, search, sort, etc.)
-  // that are managed by ObjectView's own URL sync effect.
-  useEffect(() => {
-    if (hydrationPhase.current !== "hydrated") return;
-
-    if (postHydrationRender.current) {
-      postHydrationRender.current = false;
-      return;
-    }
-
-    const current = new URLSearchParams(window.location.search);
-    const params = buildWorkspaceSyncParams({
-      activePath,
-      activeSessionId,
-      activeSubagentKey,
-      fileChatSessionId: null,
-      entryModal,
-      browseDir,
-      showHidden,
-      previewPath: null,
-      terminalOpen,
-      cronView,
-      cronCalMode,
-      cronDate,
-      cronRunFilter,
-      cronRun,
-    }, current);
-
-    const nextQs = params.toString();
-    const currentQs = current.toString();
-
-    if (nextQs !== currentQs) {
-      lastPushedQs.current = nextQs;
-      const url = nextQs ? `/?${nextQs}` : "/";
-      router.push(url, { scroll: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excludes searchParams to avoid infinite loop; hydrationPhase is a ref gate
-  }, [activePath, activeSessionId, activeSubagentKey, entryModal, browseDir, showHidden, router, cronView, cronCalMode, cronDate, cronRunFilter, cronRun]);
+  // (URL sync moved below into the single bidirectional projection.)
 
   // Terminal URL sync — independent of workspace hydration so it works app-wide.
   useEffect(() => {
@@ -2108,121 +1634,146 @@ function WorkspacePageInner() {
         ? isSeedCompanyObjectId(relatedObjectId)
         : objectName === "company" || objectName === "companies";
       if (isSeedPerson) {
-        const node = resolveCrmObjectNode(tree, "people");
-        openTabForNode(node);
-        setActivePath(node.path);
-        setContent({ kind: "crm-person", entryId });
+        // Person profile is its own content tab kind; the URL effect serializes
+        // the open profile back to `?entry=people:<id>` automatically.
+        dispatch({
+          type: "openContent",
+          tab: {
+            id: contentTabIdFor("crm-person", "people", { entryId }),
+            kind: "crm-person",
+            path: "people",
+            title: "Person",
+            meta: { entryId },
+            preview: true,
+          },
+        });
         setEntryModal(null);
       } else if (isSeedCompany) {
-        const node = resolveCrmObjectNode(tree, "company");
-        openTabForNode(node);
-        setActivePath(node.path);
-        setContent({ kind: "crm-company", entryId });
+        dispatch({
+          type: "openContent",
+          tab: {
+            id: contentTabIdFor("crm-company", "companies", { entryId }),
+            kind: "crm-company",
+            path: "companies",
+            title: "Company",
+            meta: { entryId },
+            preview: true,
+          },
+        });
         setEntryModal(null);
       } else {
+        // Generic objects keep the side-panel modal flow.
         setEntryModal({ objectName, entryId });
       }
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("entry", `${objectName}:${entryId}`);
-      router.push(`/?${params.toString()}`, { scroll: false });
     },
-    [searchParams, router, openTabForNode, tree],
+    [],
   );
 
-  // Close entry modal handler
+  // Close entry modal handler — URL sync effect drops `?entry=` automatically.
   const handleCloseEntry = useCallback(() => {
     setEntryModal(null);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("entry");
-    const qs = params.toString();
-    router.replace(qs ? `/?${qs}` : "/", { scroll: false });
-  }, [searchParams, router]);
+  }, []);
 
-  // Hydrate state from URL query params after tree and tabs are ready.
-  // Waits for BOTH prerequisites before running:
-  //   1. tree loaded (!treeLoading && tree.length > 0)
-  //   2. tabs loaded from localStorage (tabLoadedForWorkspace matches)
-  // Runs exactly once, then transitions hydrationPhase to 'hydrated'.
+  // -- URL <-> state bidirectional projection ------------------------------
+  //
+  // The new model has a SINGLE projection function (`projectUrlState`) and a
+  // SINGLE applier (`applyUrlToState`). The URL is a pure derivation of the
+  // tabs reducer state plus shell flags; hydration / popstate apply the URL
+  // back through the same `applyUrl` action. There is no `lastPushedQs`
+  // bookkeeping or `postHydrationRender` flag — both are unnecessary because
+  // the reducer is idempotent (re-applying the same URL state is a no-op).
+
+  /** Build a URL kind resolver that uses the live workspace tree. */
+  const buildShellUrlState = useCallback(() => ({
+    resolveKind: (path: string): ContentTabKind | null => {
+      const node = resolveNode(tree, path);
+      if (node) return nodeToContentTabKind(node.type, node.path);
+      // CRM legacy paths route through the canonical object names.
+      if (path.startsWith("~crm/")) {
+        const view = path.slice("~crm/".length).split("/")[0];
+        if (view === "people" || view === "companies") return "object";
+      }
+      return null;
+    },
+  }), [tree]);
+
+  // state -> URL: dispatched on every tabs/shell-state change. Compares to
+  // `window.location.search` to avoid a circular dependency loop with
+  // `useSearchParams`.
+  useEffect(() => {
+    if (hydrationPhase.current !== "hydrated") return;
+    if (postHydrationRender.current) {
+      postHydrationRender.current = false;
+      return;
+    }
+
+    const projected = projectUrlState(tabsState, {
+      chatSessionId: activeSessionId,
+      chatSubagentKey: activeSubagentKey,
+      entryModal,
+      browseDir,
+      showHidden,
+      terminalOpen,
+      cron: {
+        view: cronView,
+        calMode: cronCalMode,
+        date: cronDate,
+        runFilter: cronRunFilter,
+        run: cronRun,
+      },
+    });
+    // Preserve object-view params (managed by ObjectView's own URL effect).
+    const current = new URLSearchParams(window.location.search);
+    const objectViewKeys = ["viewType", "view", "filters", "search", "sort", "page", "pageSize", "cols"];
+    const merged: Partial<WorkspaceUrlState> = { ...projected };
+    if (projected.path) {
+      // Only carry object-view params when there's an active path; they don't
+      // make sense on a chat-only URL.
+      const u = parseUrlState(current);
+      for (const k of objectViewKeys) {
+        const key = k as keyof WorkspaceUrlState;
+        const value = u[key];
+        if (value != null && value !== false && (Array.isArray(value) ? value.length > 0 : true)) {
+          (merged as Record<string, unknown>)[k] = value;
+        }
+      }
+    }
+    const nextQs = serializeUrlState(merged);
+    const currentQs = current.toString();
+    if (nextQs !== currentQs) {
+      const url = nextQs ? `/?${nextQs}` : "/";
+      router.push(url, { scroll: false });
+    }
+  }, [
+    tabsState,
+    activeSessionId,
+    activeSubagentKey,
+    entryModal,
+    browseDir,
+    showHidden,
+    terminalOpen,
+    cronView,
+    cronCalMode,
+    cronDate,
+    cronRunFilter,
+    cronRun,
+    router,
+  ]);
+
+  // URL -> state: hydrate once when tree + tabs have loaded, then re-apply on
+  // popstate. Both paths funnel through the reducer's `applyUrl` action.
   useEffect(() => {
     if (hydrationPhase.current !== "init") return;
     if (treeLoading || tree.length === 0) return;
     if (tabLoadedForWorkspace.current !== (workspaceName || null)) return;
 
     const urlState = parseUrlState(searchParams);
+    const shell = buildShellUrlState();
+    dispatch({ type: "applyUrl", url: urlState, shell });
 
-    if (urlState.path) {
-      const node = resolveNode(tree, urlState.path);
-      if (node) {
-        openTabForNode(node);
-        void loadContent(node);
-      } else if (urlState.path === "~cron") {
-        openTabForNode({ path: "~cron", name: "Cron", type: "folder" });
-        setActivePath("~cron");
-        setContent({ kind: "cron-dashboard" });
-        if (urlState.cronView) setCronView(urlState.cronView);
-        if (urlState.cronCalMode) setCronCalMode(urlState.cronCalMode);
-        if (urlState.cronDate) setCronDate(urlState.cronDate);
-      } else if (urlState.path.startsWith("~cron/")) {
-        openTabForNode({ path: urlState.path, name: urlState.path.split("/").pop() || "Cron Job", type: "file" });
-        setActivePath(urlState.path);
-        setContent({ kind: "cron-dashboard" });
-        if (urlState.cronRunFilter) setCronRunFilter(urlState.cronRunFilter);
-        if (urlState.cronRun != null) setCronRun(urlState.cronRun);
-      } else if (urlState.path === "~skills") {
-        openTabForNode({ path: "~skills", name: "Skills", type: "folder" });
-        setActivePath("~skills");
-        setContent({ kind: "skill-store" });
-      } else if (urlState.path === "~integrations") {
-        openTabForNode({ path: "~integrations", name: "Integrations", type: "folder" });
-        setActivePath("~integrations");
-        setContent({ kind: "integrations" });
-      } else if (urlState.path === "~cloud") {
-        openTabForNode({ path: "~cloud", name: "Cloud", type: "folder" });
-        setActivePath("~cloud");
-        setContent({ kind: "cloud" });
-      } else if (urlState.path.startsWith("~crm/")) {
-        const view = urlState.path.slice("~crm/".length).split("/")[0];
-        // People / Companies legacy URLs (`?path=~crm/people`) now resolve
-        // the underlying workspace object so the standard ObjectView renders.
-        if (view === "people" || view === "companies") {
-          const node = resolveCrmObjectNode(tree, view === "people" ? "people" : "company");
-          openTabForNode(node);
-          void loadContent(node);
-        } else {
-          const map: Record<string, { name: string; kind: "crm-inbox" | "crm-calendar" } | undefined> = {
-            inbox: { name: "Inbox", kind: "crm-inbox" },
-            calendar: { name: "Calendar", kind: "crm-calendar" },
-          };
-          const entry = map[view];
-          if (entry) {
-            openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
-            setActivePath(urlState.path);
-            setContent({ kind: entry.kind });
-          }
-        }
-      } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
-        const name = urlState.path.split("/").pop() || urlState.path;
-        const syntheticNode: TreeNode = { name, path: urlState.path, type: "file" };
-        openTabForNode(syntheticNode);
-        void loadContent(syntheticNode);
-      }
-    } else if (urlState.crm) {
-      // Top-level CRM view. People / Companies route through the standard
-      // ObjectView; Inbox / Calendar keep their dedicated content kinds.
-      if (urlState.crm === "people" || urlState.crm === "companies") {
-        const node = resolveCrmObjectNode(tree, urlState.crm === "people" ? "people" : "company");
-        openTabForNode(node);
-        void loadContent(node);
-      } else {
-        const map = {
-          inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
-          calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
-        }[urlState.crm];
-        openTabForNode({ path: map.path, name: map.name, type: "folder" });
-        setActivePath(map.path);
-        setContent({ kind: map.kind });
-      }
-    } else if (urlState.chat) {
+    // Chat-only URLs route to `openChat` so the chat strip can mount the
+    // requested session/subagent.
+    if (!urlState.path && !urlState.crm && !urlState.entry && urlState.chat) {
       if (urlState.subagent) {
         openSubagentChatTab({
           sessionKey: urlState.subagent,
@@ -2232,132 +1783,32 @@ function WorkspacePageInner() {
       } else {
         openSessionChatTab(urlState.chat);
       }
-    } else {
-      const restoredTab = tabState.tabs.find((t) => t.id === tabState.activeTabId);
-      if (restoredTab && restoredTab.id !== HOME_TAB_ID) {
-        applyActivatedTab(restoredTab);
-      }
     }
-
-    if (urlState.entry) {
-      // People + Company entries get the dedicated profile UI in the main
-      // panel (mirrors dench-2025's "base object full screen" pattern).
-      // Other objects keep the existing side-panel entry modal flow. The
-      // parent tab points at the resolved workspace object so navigating
-      // back lands on the unified ObjectView.
-      if (urlState.entry.objectName === "people") {
-        const node = resolveCrmObjectNode(tree, "people");
-        openTabForNode(node);
-        setActivePath(node.path);
-        setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
-      } else if (
-        urlState.entry.objectName === "company" ||
-        urlState.entry.objectName === "companies"
-      ) {
-        const node = resolveCrmObjectNode(tree, "company");
-        openTabForNode(node);
-        setActivePath(node.path);
-        setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
-      } else {
-        setEntryModal(urlState.entry);
-      }
+    if (urlState.entry && urlState.entry.objectName !== "people" && urlState.entry.objectName !== "company" && urlState.entry.objectName !== "companies") {
+      setEntryModal(urlState.entry);
     }
-    if (urlState.browse) {
-      setBrowseDir(urlState.browse);
-    }
-    if (urlState.hidden) {
-      setShowHidden(true);
-    }
-    if (urlState.terminal) {
-      setTerminalOpen(true);
-    }
+    if (urlState.browse) setBrowseDir(urlState.browse);
+    if (urlState.hidden) setShowHidden(true);
+    if (urlState.terminal) setTerminalOpen(true);
+    if (urlState.cronView) setCronView(urlState.cronView);
+    if (urlState.cronCalMode) setCronCalMode(urlState.cronCalMode);
+    if (urlState.cronDate) setCronDate(urlState.cronDate);
+    if (urlState.cronRunFilter) setCronRunFilter(urlState.cronRunFilter);
+    if (urlState.cronRun != null) setCronRun(urlState.cronRun);
 
     postHydrationRender.current = true;
     hydrationPhase.current = "hydrated";
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrationPhase is a ref gate, runs exactly once
-  }, [tree, treeLoading, searchParams, workspaceName, tabState, loadContent, applyActivatedTab, setBrowseDir, setShowHidden]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- runs exactly once
+  }, [tree, treeLoading, searchParams, workspaceName]);
 
-  // Handle browser back/forward navigation.
-  // When the user clicks Back/Forward, the URL changes but the app doesn't
-  // re-render with new state. We listen for popstate and re-apply URL state.
+  // popstate: same logic as hydration, but always runs.
   useEffect(() => {
     const handlePopState = () => {
-      const qs = window.location.search.replace(/^\?/, "");
-      // Skip if this matches what the app last pushed (not a real back/forward)
-      if (qs === lastPushedQs.current) return;
-
       const urlState = parseUrlState(window.location.search);
+      const shell = buildShellUrlState();
+      dispatch({ type: "applyUrl", url: urlState, shell });
 
-      if (urlState.path) {
-        const node = resolveNode(tree, urlState.path);
-        if (node) {
-          openTabForNode(node);
-          void loadContent(node);
-        } else if (urlState.path === "~cron") {
-          openTabForNode({ path: "~cron", name: "Cron", type: "folder" });
-          setActivePath("~cron");
-          setContent({ kind: "cron-dashboard" });
-        } else if (urlState.path.startsWith("~cron/")) {
-          openTabForNode({ path: urlState.path, name: urlState.path.split("/").pop() || "Cron Job", type: "file" });
-          setActivePath(urlState.path);
-          const jobId = urlState.path.slice("~cron/".length);
-          const job = cronJobs.find((j) => j.id === jobId);
-          if (job) {
-            setContent({ kind: "cron-job", jobId, job });
-          } else {
-            setContent({ kind: "cron-dashboard" });
-          }
-        } else if (urlState.path === "~skills") {
-          openTabForNode({ path: "~skills", name: "Skills", type: "folder" });
-          setActivePath("~skills");
-          setContent({ kind: "skill-store" });
-        } else if (urlState.path === "~integrations") {
-          openTabForNode({ path: "~integrations", name: "Integrations", type: "folder" });
-          setActivePath("~integrations");
-          setContent({ kind: "integrations" });
-        } else if (urlState.path === "~cloud") {
-          openTabForNode({ path: "~cloud", name: "Cloud", type: "folder" });
-          setActivePath("~cloud");
-          setContent({ kind: "cloud" });
-        } else if (urlState.path.startsWith("~crm/")) {
-          const view = urlState.path.slice("~crm/".length).split("/")[0];
-          if (view === "people" || view === "companies") {
-            const node = resolveCrmObjectNode(tree, view === "people" ? "people" : "company");
-            openTabForNode(node);
-            void loadContent(node);
-          } else {
-            const map: Record<string, { name: string; kind: "crm-inbox" | "crm-calendar" } | undefined> = {
-              inbox: { name: "Inbox", kind: "crm-inbox" },
-              calendar: { name: "Calendar", kind: "crm-calendar" },
-            };
-            const entry = map[view];
-            if (entry) {
-              openTabForNode({ path: urlState.path, name: entry.name, type: "folder" });
-              setActivePath(urlState.path);
-              setContent({ kind: entry.kind });
-            }
-          }
-        } else if (isAbsolutePath(urlState.path) || isHomeRelativePath(urlState.path)) {
-          const name = urlState.path.split("/").pop() || urlState.path;
-          const synNode: TreeNode = { name, path: urlState.path, type: "file" };
-          openTabForNode(synNode);
-          void loadContent(synNode);
-        }
-      } else if (urlState.crm) {
-        if (urlState.crm === "people" || urlState.crm === "companies") {
-          const node = resolveCrmObjectNode(tree, urlState.crm === "people" ? "people" : "company");
-          openTabForNode(node);
-          void loadContent(node);
-        } else {
-          const map = {
-            inbox: { path: "~crm/inbox", name: "Inbox", kind: "crm-inbox" as const },
-            calendar: { path: "~crm/calendar", name: "Calendar", kind: "crm-calendar" as const },
-          }[urlState.crm];
-          openTabForNode({ path: map.path, name: map.name, type: "folder" });
-          setActivePath(map.path);
-          setContent({ kind: map.kind });
-        }
-      } else if (urlState.chat) {
+      if (!urlState.path && !urlState.crm && !urlState.entry && urlState.chat) {
         if (urlState.subagent) {
           openSubagentChatTab({
             sessionKey: urlState.subagent,
@@ -2367,80 +1818,33 @@ function WorkspacePageInner() {
         } else {
           openSessionChatTab(urlState.chat);
         }
-      } else {
-        setActivePath(null);
-        setContent({ kind: "none" });
-        setActiveSessionId(null);
-        setActiveSubagentKey(null);
-        setActiveGatewaySessionKey(null);
-        setTabState((prev) => {
-          let next = activateTab(prev, HOME_TAB_ID);
-          const chatTabs = next.tabs.filter((t) => t.id !== HOME_TAB_ID && isChatTab(t));
-          const hasBlankChat = chatTabs.some((t) => !t.sessionId && !t.sessionKey);
-          if (!hasBlankChat) {
-            next = {
-              ...openTab(next, createBlankChatTab(), { preview: true }),
-              activeTabId: HOME_TAB_ID,
-            };
-          }
-          return next;
-        });
       }
-
-      if (urlState.entry) {
-        if (urlState.entry.objectName === "people") {
-          const node = resolveCrmObjectNode(tree, "people");
-          openTabForNode(node);
-          setActivePath(node.path);
-          setContent({ kind: "crm-person", entryId: urlState.entry.entryId });
-          setEntryModal(null);
-        } else if (
-          urlState.entry.objectName === "company" ||
-          urlState.entry.objectName === "companies"
-        ) {
-          const node = resolveCrmObjectNode(tree, "company");
-          openTabForNode(node);
-          setActivePath(node.path);
-          setContent({ kind: "crm-company", entryId: urlState.entry.entryId });
-          setEntryModal(null);
-        } else {
-          setEntryModal(urlState.entry);
-        }
+      if (urlState.entry && urlState.entry.objectName !== "people" && urlState.entry.objectName !== "company" && urlState.entry.objectName !== "companies") {
+        setEntryModal(urlState.entry);
       } else {
         setEntryModal(null);
       }
-
       if (urlState.browse) {
         setBrowseDir(urlState.browse);
       } else if (!urlState.path || !isAbsolutePath(urlState.path)) {
         setBrowseDir(null);
       }
-
-      if (urlState.hidden) {
-        setShowHidden(true);
-      } else {
-        setShowHidden(false);
-      }
-
-      setTerminalOpen(urlState.terminal);
-
-      lastPushedQs.current = qs;
+      setShowHidden(Boolean(urlState.hidden));
+      setTerminalOpen(Boolean(urlState.terminal));
+      if (urlState.cronView) setCronView(urlState.cronView);
+      if (urlState.cronCalMode) setCronCalMode(urlState.cronCalMode);
+      if (urlState.cronDate) setCronDate(urlState.cronDate);
+      if (urlState.cronRunFilter) setCronRunFilter(urlState.cronRunFilter);
+      if (urlState.cronRun != null) setCronRun(urlState.cronRun);
     };
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [tree, cronJobs, loadContent, setBrowseDir, setShowHidden]);
+  }, [buildShellUrlState, openSessionChatTab, openSubagentChatTab, setBrowseDir, setShowHidden]);
 
-  // Resolve cron job detail once cronJobs load (they arrive after the main hydration).
-  useEffect(() => {
-    if (!activePath?.startsWith("~cron/") || cronJobs.length === 0) return;
-    if (content.kind === "cron-job") return;
-    const jobId = activePath.slice("~cron/".length);
-    const job = cronJobs.find((j) => j.id === jobId);
-    if (job) {
-      setContent({ kind: "cron-job", jobId, job });
-    }
-  }, [activePath, cronJobs, content.kind]);
+  // Cron job detail resolution lives in `useTabContent` now; the cron-job
+  // tab's content state derives from the live `cronJobs` array each render,
+  // so no separate effect is needed to backfill it after jobs arrive.
 
   // Handle ?send= URL parameter: open a new chat session and auto-send the message.
   // Used by the "Install DuckDB" button and similar in-app triggers.
@@ -2471,8 +1875,7 @@ function WorkspacePageInner() {
   const handleBreadcrumbNavigate = useCallback(
     (path: string) => {
       if (!path) {
-        setActivePath(null);
-        setContent({ kind: "none" });
+        dispatch({ type: "activateContent", id: null });
         return;
       }
 
@@ -2482,8 +1885,17 @@ function WorkspacePageInner() {
       if (isAbsolutePath(path)) {
         const name = path.split("/").pop() || path;
         setBrowseDir(path);
-        setActivePath(path);
-        setContent({ kind: "directory", node: { name, path, type: "folder" } });
+        dispatch({
+          type: "openContent",
+          tab: {
+            id: contentTabIdFor("browse", path, { browsePath: path }),
+            kind: "browse",
+            path,
+            title: name,
+            meta: { browsePath: path },
+            preview: true,
+          },
+        });
         return;
       }
 
@@ -2551,32 +1963,24 @@ function WorkspacePageInner() {
     [tree, handleNodeSelect, handleOpenEntry],
   );
 
-  // Refresh the currently displayed object (e.g. after changing display field)
+  // Refresh callback for the currently displayed object — exposed via the
+  // hook's `refreshActive` callback inside RightPanelContent and surfaced to
+  // ObjectView through onRefreshObject below. We hand the hook a ref so the
+  // callback can be invoked without re-rendering.
+  const refreshActiveRef = useRef<() => void>(() => {});
   const refreshCurrentObject = useCallback(async () => {
-    if (content.kind !== "object") {return;}
-    const name = content.data.object.name;
-    try {
-      const res = await fetch(`/api/workspace/objects/${encodeURIComponent(name)}`);
-      if (!res.ok) {return;}
-      const data: ObjectData = await res.json();
-      setContent({ kind: "object", data });
-    } catch {
-      // ignore
-    }
-  }, [content]);
+    refreshActiveRef.current();
+  }, []);
 
-  // Auto-refresh the current object view when the workspace tree updates.
-  // The SSE watcher triggers tree refreshes on any file change (including
-  // .object.yaml edits by the AI agent). We track the tree reference and
-  // re-fetch the object data so saved views/filters update live.
+  // Auto-refresh the active object tab when the workspace tree updates.
   const prevTreeRef = useRef(tree);
   useEffect(() => {
-    if (prevTreeRef.current === tree) {return;}
+    if (prevTreeRef.current === tree) return;
     prevTreeRef.current = tree;
-    if (content.kind === "object") {
-      void refreshCurrentObject();
+    if (activeContentTab?.kind === "object") {
+      refreshActiveRef.current();
     }
-  }, [tree, content.kind, refreshCurrentObject]);
+  }, [tree, activeContentTab?.kind]);
 
   // Top-level safety net: catch workspace link clicks anywhere in the page
   // to prevent full-page navigation and handle via client-side state instead.
@@ -2597,18 +2001,35 @@ function WorkspacePageInner() {
     [handleEditorNavigate],
   );
 
-  // Cron navigation handlers
+  // Cron navigation handlers — open / focus the appropriate cron tab. The
+  // useTabContent hook resolves the actual cron job payload from the live
+  // `cronJobs` list, so we only need to dispatch tab changes.
   const handleSelectCronJob = useCallback((jobId: string) => {
-    const job = cronJobs.find((j) => j.id === jobId);
-    if (job) {
-      setActivePath(`~cron/${jobId}`);
-      setContent({ kind: "cron-job", jobId, job });
-    }
-  }, [cronJobs]);
+    const path = `~cron/${jobId}`;
+    dispatch({
+      type: "openContent",
+      tab: {
+        id: contentTabIdFor("cron-job", path, { cronJobId: jobId }),
+        kind: "cron-job",
+        path,
+        title: jobId,
+        meta: { cronJobId: jobId },
+        preview: true,
+      },
+    });
+  }, []);
 
   const handleBackToCronDashboard = useCallback(() => {
-    setActivePath("~cron");
-    setContent({ kind: "cron-dashboard" });
+    dispatch({
+      type: "openContent",
+      tab: {
+        id: "~cron",
+        kind: "cron-dashboard",
+        path: "~cron",
+        title: "Cron",
+        preview: true,
+      },
+    });
     setCronRunFilter("all");
     setCronRun(null);
   }, []);
@@ -2626,19 +2047,18 @@ function WorkspacePageInner() {
   }, [activeSessionId, sessions]);
 
   useEffect(() => {
-    setTabState((prev) => {
-      let next = syncParentChatTabTitles(prev, sessions);
-      next = syncSubagentChatTabTitles(next, subagents);
-      if (!activeSessionTitle) {
-        return next;
-      }
-      const active = next.tabs.find((t) => t.id === next.activeTabId);
-      if (active?.type === "chat" && active.title !== activeSessionTitle && !active.sessionKey) {
-        return updateChatTabTitle(next, active.id, activeSessionTitle);
-      }
-      return next;
-    });
-  }, [activeSessionTitle, sessions, subagents]);
+    dispatch({ type: "syncChatTitles", sessions, subagents });
+  }, [sessions, subagents]);
+
+  // Promote the active draft chat tab's title to the (newly named) active
+  // session title once the backend assigns one.
+  useEffect(() => {
+    if (!activeSessionTitle || !activeChatTabId) return;
+    const active = tabsStateRef.current.chatTabs.find((t) => t.id === activeChatTabId);
+    if (active && active.variant !== "subagent" && active.title !== activeSessionTitle) {
+      dispatch({ type: "renameChat", id: active.id, title: activeSessionTitle });
+    }
+  }, [activeSessionTitle, activeChatTabId]);
 
   const runningSubagentKeys = useMemo(
     () => new Set(subagents.filter((subagent) => subagent.status === "running").map((subagent) => subagent.childSessionKey)),
@@ -2733,10 +2153,8 @@ function WorkspacePageInner() {
   }, [optimisticallyStopSubagent]);
 
   const handleStopChatTab = useCallback((tabId: string) => {
-    const tab = tabState.tabs.find((entry) => entry.id === tabId);
-    if (!tab || tab.type !== "chat") {
-      return;
-    }
+    const tab = tabsStateRef.current.chatTabs.find((entry) => entry.id === tabId);
+    if (!tab) return;
     if (tab.sessionKey) {
       void stopSubagentSession(tab.sessionKey);
       return;
@@ -2744,7 +2162,7 @@ function WorkspacePageInner() {
     if (tab.sessionId) {
       void stopParentSession(tab.sessionId);
     }
-  }, [stopParentSession, stopSubagentSession, tabState.tabs]);
+  }, [stopParentSession, stopSubagentSession]);
 
   // v3 three-column layout derived values.
   // - Center always renders the chat panel stack (one session at a time in the center).
@@ -2752,88 +2170,21 @@ function WorkspacePageInner() {
   //   tab strip alongside the always-available Files sidebar. When no content tab is
   //   active the content area shows a placeholder while the file tree (if expanded)
   //   lets the user pick something.
-  const contentTabs = useMemo(
-    () => tabState.tabs.filter((tab) => tab.id !== HOME_TAB_ID && tab.type !== "chat" && tab.type !== "gateway-chat"),
-    [tabState.tabs],
-  );
+  // contentTabs and the chat-tab presence invariants are now enforced by the
+  // workspace-tabs reducer itself — there is no trackTab effect to race the
+  // tabsState updates, no destructive cleanup effect to wipe activePath, and
+  // no always-have-a-chat-tab effect (it lives in `ensureChatPresent` inside
+  // the reducer). The previous v3 effects here have been deleted; their
+  // intent is preserved by the reducer invariants.
 
-  // Track the last-focused tab per surface so switching between chat and content tabs
-  // preserves each surface's selection independently (user requirement: "chat doesn't split").
-  useEffect(() => {
-    const activeId = tabState.activeTabId;
-    if (!activeId) return;
-    const t = tabState.tabs.find((x) => x.id === activeId);
-    if (!t) return;
-    if (t.type === "chat" || t.type === "gateway-chat") {
-      setActiveChatTabId(t.id);
-    } else if (t.id !== HOME_TAB_ID) {
-      setActiveContentTabId(t.id);
-    }
-  }, [tabState.activeTabId, tabState.tabs]);
-
-  // Clear stale active-content-tab-id if the content tab was closed externally.
-  // Also reset activePath/content so the right panel falls back to the placeholder
-  // instead of continuing to show the closed tab's content (this mirrors what the
-  // old outer "Files" pill click did, which no longer exists in the unified layout).
-  //
-  // IMPORTANT: when openTab() REPLACES a preview tab with another preview tab
-  // (e.g. clicking Integrations while a markdown file preview is active), the old
-  // tab id disappears from contentTabs but the new one is already the active tab.
-  // We must NOT wipe activePath/content in that case — the trackTab effect above
-  // will re-point activeContentTabId to the new tab on the next tick. Only clear
-  // when the current activeTabId is NOT itself a content tab (i.e. the user
-  // really did close the active content tab and focus moved to home/chat).
-  useEffect(() => {
-    if (activeContentTabId && !contentTabs.some((t) => t.id === activeContentTabId)) {
-      const activeTabIsContent = contentTabs.some((t) => t.id === tabState.activeTabId);
-      if (activeTabIsContent) {
-        // The new active tab is itself a content tab (e.g. preview-replaced via openTab).
-        // The trackTab effect will sync activeContentTabId on the next tick — don't clobber
-        // activePath/content that handleNavigate / loadContent / applyActivatedTab just set.
-        return;
-      }
-      setActiveContentTabId(null);
-      setActivePath(null);
-      setContent({ kind: "none" });
-    }
-  }, [activeContentTabId, contentTabs, tabState.activeTabId]);
-
-
-
-  // v3: the center always shows a chat panel. If no chat tab exists (e.g. after
-  // closing the last one, on a fresh refresh, or before tab hydration completes),
-  // create a fresh blank one so the hero state ("What can I help with?") renders
-  // instead of an empty center.
-  useEffect(() => {
-    if (mainChatTabs.length > 0) return;
-    const tab = createBlankChatTab();
-    setTabState((prev) => openTab(prev, tab, { preview: true }));
-    setActiveChatTabId(tab.id);
-  }, [mainChatTabs.length]);
-
-  // Belt-and-braces: if visibleMainChatTabId loses its target (e.g. tab was
-  // closed externally), point activeChatTabId at the first available chat tab so
-  // the center never renders blank.
-  useEffect(() => {
-    if (mainChatTabs.length === 0) return;
-    if (activeChatTabId && mainChatTabs.some((t) => t.id === activeChatTabId)) return;
-    setActiveChatTabId(mainChatTabs[0].id);
-  }, [activeChatTabId, mainChatTabs]);
-
-  // Right-panel content tab handlers.
-  const handleContentTabActivate = useCallback(
-    (tabId: string) => {
-      const tab = tabStateRef.current.tabs.find((t) => t.id === tabId);
-      if (!tab) return;
-      setActiveContentTabId(tabId);
-      setTabState((prev) => activateTab(prev, tabId));
-      applyActivatedTab(tab);
-    },
-    [applyActivatedTab],
-  );
+  // Right-panel content tab handlers — pure dispatches.
+  const handleContentTabActivate = useCallback((tabId: string) => {
+    closeEntryModalIfOpen();
+    dispatch({ type: "activateContent", id: tabId });
+  }, [closeEntryModalIfOpen]);
 
   const handleContentTabClose = useCallback((tabId: string) => {
-    setTabState((prev) => closeTab(prev, tabId));
+    dispatch({ type: "closeContent", id: tabId });
   }, []);
 
   // Custom CRM tables surfaced in the sidebar's CRM section. Derived from
@@ -2852,21 +2203,21 @@ function WorkspacePageInner() {
     activeWorkspace: workspaceName,
     onWorkspaceChanged: handleWorkspaceChanged,
     activeCrmTarget: (
-      content.kind === "crm-person" ||
-      (content.kind === "object" && content.data.object.name === "people")
+      activeContentTab?.kind === "crm-person" ||
+      (activeContentTab?.kind === "object" && activeContentTab.path === "people")
         ? "people" as const
-        : content.kind === "crm-company" ||
-          (content.kind === "object" &&
-            (content.data.object.name === "company" || content.data.object.name === "companies"))
+        : activeContentTab?.kind === "crm-company" ||
+          (activeContentTab?.kind === "object" &&
+            (activeContentTab.path === "company" || activeContentTab.path === "companies"))
           ? "companies" as const
-          : content.kind === "crm-inbox"
+          : activeContentTab?.kind === "crm-inbox"
             ? "inbox" as const
-            : content.kind === "crm-calendar"
+            : activeContentTab?.kind === "crm-calendar"
               ? "calendar" as const
               : null
     ),
     customCrmObjects,
-    activeCrmObjectName: content.kind === "object" ? content.data.object.name : null,
+    activeCrmObjectName: activeContentTab?.kind === "object" ? activeContentTab.path : null,
     onNavigateToCrmObject: handleNavigateToObject,
     onNewChatSession: () => openPermanentBlankChatTab(),
     chatsPanel: (
@@ -2921,6 +2272,78 @@ function WorkspacePageInner() {
     onRenameHistorySession: handleRenameSession,
     onDeleteHistorySession: handleDeleteSession,
   };
+
+  // Render-prop slots for `RightPanelContent`. These keep `ContentRenderer`
+  // and `EntryDetailPanel` (with their large prop tornados) co-located here
+  // while the layout component owns the file tree + tab strip + content area.
+  const renderRightPanelEntryDetail = useCallback((entry: { objectName: string; entryId: string }) => (
+    <EntryDetailPanel
+      objectName={entry.objectName}
+      entryId={entry.entryId}
+      members={context?.members}
+      tree={tree}
+      searchFn={searchIndex}
+      onClose={handleCloseEntry}
+      onNavigateEntry={(objName, eid, relatedObjectId) => handleOpenEntry(objName, eid, relatedObjectId)}
+      onNavigateObject={(objName) => {
+        handleCloseEntry();
+        handleNavigateToObject(objName);
+      }}
+      onRefresh={refreshCurrentObject}
+      onNavigate={handleEditorNavigate}
+    />
+  ), [
+    context?.members, tree, searchIndex, handleCloseEntry, handleOpenEntry,
+    handleNavigateToObject, refreshCurrentObject, handleEditorNavigate,
+  ]);
+
+  const renderRightPanelContentBody = useCallback((c: ContentState, _tab: ContentTab | null) => (
+    <ContentRenderer
+      content={c}
+      workspaceExists={workspaceExists}
+      expectedPath={workspaceRoot}
+      tree={tree}
+      activePath={activePath}
+      browseDir={browseDir}
+      treeLoading={treeLoading}
+      members={context?.members}
+      onNodeSelect={handleNodeSelect}
+      onNavigateToObject={handleNavigateToObject}
+      onRefreshObject={refreshCurrentObject}
+      onRefreshTree={refreshTree}
+      onNavigate={handleEditorNavigate}
+      onOpenEntry={handleOpenEntry}
+      activeEntryId={undefined}
+      searchFn={searchIndex}
+      onSelectCronJob={handleSelectCronJob}
+      onBackToCronDashboard={handleBackToCronDashboard}
+      cronView={cronView}
+      onCronViewChange={setCronView}
+      cronCalMode={cronCalMode}
+      onCronCalModeChange={setCronCalMode}
+      cronDate={cronDate}
+      onCronDateChange={setCronDate}
+      cronRunFilter={cronRunFilter}
+      onCronRunFilterChange={setCronRunFilter}
+      cronRun={cronRun}
+      onCronRunChange={setCronRun}
+      onSendCommand={handleCronSendCommand}
+      onMakeTabPermanent={promoteTabByPath}
+    />
+  ), [
+    workspaceExists, workspaceRoot, tree, activePath, browseDir, treeLoading,
+    context?.members, handleNodeSelect, handleNavigateToObject,
+    refreshCurrentObject, refreshTree, handleEditorNavigate, handleOpenEntry,
+    searchIndex, handleSelectCronJob, handleBackToCronDashboard,
+    cronView, cronCalMode, cronDate, cronRunFilter, cronRun,
+    handleCronSendCommand, promoteTabByPath,
+  ]);
+
+  const renderRightPanelPlaceholder = useCallback(() => (
+    <p className="text-sm text-center px-6 max-w-xs" style={{ color: "var(--color-text-muted)" }}>
+      Select a file or open a page from the sidebar
+    </p>
+  ), []);
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
@@ -3053,7 +2476,7 @@ function WorkspacePageInner() {
         {/* Chat panel stack — always visible, never replaced by content */}
         <div className="flex-1 flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ background: "var(--color-main-bg)" }}>
           {mainChatTabs.map((tab) => {
-            const isGateway = tab.type === "gateway-chat";
+            const isGateway = tab.variant === "gateway";
             const subagent = !isGateway && tab.sessionKey
               ? subagents.find((entry) => entry.childSessionKey === tab.sessionKey)
               : null;
@@ -3163,272 +2586,36 @@ function WorkspacePageInner() {
               onResize={setRightPanelWidth}
             />
             <RightPanel>
-              <div className="flex h-full min-h-0 overflow-hidden">
-                {/* File tree column — always available, togglable independently of the right panel itself. */}
-                {!fileTreeCollapsed && (
-                  <div
-                    className="flex flex-col min-h-0 shrink-0 border-r overflow-hidden"
-                    style={{ width: FILE_TREE_WIDTH, minWidth: FILE_TREE_WIDTH, borderColor: "var(--color-border)" }}
-                  >
-                    {handleFileSearchSelect && (
-                      <div className="px-2 pt-2 pb-1 shrink-0 flex items-center gap-1">
-                        <div className="flex-1 min-w-0">
-                          <FileSearch onSelect={handleFileSearchSelect} searchFn={searchIndex} />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setFileTreeCollapsed(true)}
-                          className="p-1 rounded-md cursor-pointer shrink-0"
-                          style={{ color: "var(--color-text-muted)" }}
-                          title="Hide files (⌘E)"
-                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                    {browseDir && (
-                      <div
-                        className="px-3 py-2 border-b flex items-center gap-2 shrink-0"
-                        style={{ borderColor: "var(--color-border)" }}
-                      >
-                        <span className="shrink-0" style={{ color: "var(--color-text-muted)" }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-                          </svg>
-                        </span>
-                        <span
-                          className="text-[12px] font-medium truncate flex-1 min-w-0"
-                          style={{ color: "var(--color-text)" }}
-                          title={browseDir}
-                        >
-                          {browseDir.split("/").pop() || browseDir}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleGoHome}
-                          className="p-1 rounded-md shrink-0 transition-colors cursor-pointer"
-                          style={{ color: "var(--color-text-muted)" }}
-                          title="Return to workspace"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                            <polyline points="9 22 9 12 15 12 15 22" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                    <div className="flex-1 overflow-y-auto px-1 py-2">
-                      <FileManagerTree
-                        tree={enhancedTree}
-                        activePath={activePath}
-                        onSelect={handleNodeSelect}
-                        onRefresh={refreshTree}
-                        parentDir={effectiveParentDir}
-                        onNavigateUp={handleNavigateUp}
-                        browseDir={browseDir}
-                        workspaceRoot={workspaceRoot}
-                        onExternalDrop={handleSidebarExternalDrop}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Content column: unified tab strip + (entry detail | content | placeholder) */}
-                <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
-                  <div
-                    className="flex items-center h-10 shrink-0 border-b min-w-0"
-                    style={{ borderColor: "var(--color-border)" }}
-                  >
-                    {/* Tab strip — scrolls horizontally when narrow. Collapse button
-                        is rendered as a sibling so it is always visible. */}
-                    <div className="no-scrollbar flex-1 flex items-center gap-1 px-2 min-w-0 h-full overflow-x-auto">
-                    {fileTreeCollapsed && (
-                      <button
-                        type="button"
-                        onClick={() => setFileTreeCollapsed(false)}
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer shrink-0 text-[12px] font-medium"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Show files (⌘E)"
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                          <path d="M4 4h5l2 2h9a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
-                        </svg>
-                        Files
-                      </button>
-                    )}
-                    {contentTabs.map((tab, tabIdx) => {
-                      const isActive = tab.id === activeContentTabId;
-                      const hasTabsToRight = tabIdx < contentTabs.length - 1;
-                      const hasOtherTabs = contentTabs.length > 1;
-                      return (
-                        <ContextMenu key={tab.id}>
-                          <ContextMenuTrigger asChild>
-                            <div
-                              className="flex items-center rounded-md shrink-0"
-                              style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => handleContentTabActivate(tab.id)}
-                                className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
-                                style={{
-                                  color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
-                                  fontStyle: tab.preview ? "italic" : "normal",
-                                }}
-                                title={tab.title}
-                              >
-                                <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
-                                  <TabIcon tab={tab} />
-                                </span>
-                                <span>{tab.title.length > 24 ? tab.title.slice(0, 22) + "…" : tab.title}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
-                                className="p-0.5 rounded-md mr-0.5 cursor-pointer"
-                                style={{ color: "var(--color-text-muted)" }}
-                                title="Close tab"
-                                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-border)"; }}
-                                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                              >
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                                </svg>
-                              </button>
-                            </div>
-                          </ContextMenuTrigger>
-                          <ContextMenuContent>
-                            <ContextMenuItem onSelect={() => handleContentTabClose(tab.id)}>
-                              Close
-                            </ContextMenuItem>
-                            <ContextMenuItem
-                              onSelect={() => handleTabCloseOthers(tab.id)}
-                              disabled={!hasOtherTabs}
-                            >
-                              Close other tabs
-                            </ContextMenuItem>
-                            <ContextMenuItem
-                              onSelect={() => handleTabCloseToRight(tab.id)}
-                              disabled={!hasTabsToRight}
-                            >
-                              Close tabs to the right
-                            </ContextMenuItem>
-                            <ContextMenuSeparator />
-                            <ContextMenuItem onSelect={handleTabCloseAll}>
-                              Close all tabs
-                            </ContextMenuItem>
-                          </ContextMenuContent>
-                        </ContextMenu>
-                      );
-                    })}
-                    </div>
-                    {/* Always-visible collapse button, outside the scrollable tab strip. */}
-                    <button
-                      type="button"
-                      onClick={() => setRightPanelCollapsed(true)}
-                      className="p-1.5 mr-1 rounded-md cursor-pointer shrink-0"
-                      style={{ color: "var(--color-text-muted)" }}
-                      title="Hide right panel (⌘⇧B)"
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)"; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <rect width="18" height="18" x="3" y="3" rx="2" />
-                        <path d="M15 3v18" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  {entryModal ? (
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                      <EntryDetailPanel
-                        objectName={entryModal.objectName}
-                        entryId={entryModal.entryId}
-                        members={context?.members}
-                        tree={tree}
-                        searchFn={searchIndex}
-                        onClose={handleCloseEntry}
-                        onNavigateEntry={(objName, eid, relatedObjectId) =>
-                          handleOpenEntry(objName, eid, relatedObjectId)
-                        }
-                        onNavigateObject={(objName) => {
-                          handleCloseEntry();
-                          handleNavigateToObject(objName);
-                        }}
-                        onRefresh={refreshCurrentObject}
-                        onNavigate={handleEditorNavigate}
-                      />
-                    </div>
-                  ) : activePath && content.kind !== "none" ? (
-                    <>
-                      {/* {!activePath.startsWith("~") && (
-                        <div
-                          className="px-4 border-b flex-shrink-0 flex items-center h-10"
-                          style={{ borderColor: "var(--color-border)" }}
-                        >
-                          <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
-                        </div>
-                      )} */}
-                      <div className="flex-1 overflow-y-auto">
-                        <ContentRenderer
-                          content={content}
-                          workspaceExists={workspaceExists}
-                          expectedPath={workspaceRoot}
-                          tree={tree}
-                          activePath={activePath}
-                          browseDir={browseDir}
-                          treeLoading={treeLoading}
-                          members={context?.members}
-                          onNodeSelect={handleNodeSelect}
-                          onNavigateToObject={handleNavigateToObject}
-                          onRefreshObject={refreshCurrentObject}
-                          onRefreshTree={refreshTree}
-                          onNavigate={handleEditorNavigate}
-                          onOpenEntry={handleOpenEntry}
-                          activeEntryId={undefined}
-                          searchFn={searchIndex}
-                          onSelectCronJob={handleSelectCronJob}
-                          onBackToCronDashboard={handleBackToCronDashboard}
-                          cronView={cronView}
-                          onCronViewChange={setCronView}
-                          cronCalMode={cronCalMode}
-                          onCronCalModeChange={setCronCalMode}
-                          cronDate={cronDate}
-                          onCronDateChange={setCronDate}
-                          cronRunFilter={cronRunFilter}
-                          onCronRunFilterChange={setCronRunFilter}
-                          cronRun={cronRun}
-                          onCronRunChange={setCronRun}
-                          onSendCommand={handleCronSendCommand}
-                          onMakeTabPermanent={promoteTabByPath}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    // Empty-state placeholder — centered in the content
-                    // column (the visible area to the right of the file tree),
-                    // since that's where the user is actually looking when
-                    // nothing is open. Centering across the whole right panel
-                    // would make the text appear pushed left into the file
-                    // tree boundary, which reads as off-center to the user.
-                    <div className="flex-1 min-w-0 flex items-center justify-center">
-                      <p
-                        className="text-sm text-center px-6 max-w-xs"
-                        style={{ color: "var(--color-text-muted)" }}
-                      >
-                        Select a file or open a page from the sidebar
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <RightPanelContent
+                tabsState={tabsState}
+                activeContentTab={activeContentTab}
+                fileTreeCollapsed={fileTreeCollapsed}
+                enhancedTree={enhancedTree}
+                effectiveParentDir={effectiveParentDir}
+                browseDir={browseDir}
+                workspaceRoot={workspaceRoot}
+                fileSearchFn={searchIndex}
+                entryModal={entryModal}
+                tree={tree}
+                cronJobs={cronJobs}
+                onTreeNodeSelect={handleNodeSelect}
+                onTreeRefresh={refreshTree}
+                onTreeNavigateUp={handleNavigateUp}
+                onTreeExternalDrop={handleSidebarExternalDrop}
+                onTreeFileSearchSelect={handleFileSearchSelect}
+                onTreeGoHome={handleGoHome}
+                onSetFileTreeCollapsed={setFileTreeCollapsed}
+                onSetRightPanelCollapsed={setRightPanelCollapsed}
+                onActivateContent={handleContentTabActivate}
+                onCloseContent={handleContentTabClose}
+                onCloseOtherContent={handleTabCloseOthers}
+                onCloseContentToRight={handleTabCloseToRight}
+                onCloseAllContent={handleTabCloseAll}
+                onDuckDBMissing={handleDuckDBMissing}
+                renderContent={renderRightPanelContentBody}
+                renderEntryDetail={renderRightPanelEntryDetail}
+                renderPlaceholder={renderRightPanelPlaceholder}
+              />
             </RightPanel>
           </div>
         </aside>
@@ -3441,189 +2628,35 @@ function WorkspacePageInner() {
           <div onClick={(e) => e.stopPropagation()} className="fixed inset-y-0 right-0 z-50 drawer-right" style={{ width: "min(90vw, 400px)", background: "var(--color-bg)" }}>
             <div className="flex flex-col h-full">
               <RightPanel>
-                <div className="flex h-full min-h-0 overflow-hidden">
-                  {/* On mobile the file tree shares horizontal space with content; respect the same toggle. */}
-                  {!fileTreeCollapsed && (
-                    <div
-                      className="flex flex-col min-h-0 shrink-0 border-r overflow-hidden"
-                      style={{ width: 200, minWidth: 200, borderColor: "var(--color-border)" }}
-                    >
-                      <div className="px-2 pt-2 pb-1 shrink-0 flex items-center gap-1">
-                        <span className="flex-1 text-[12px] font-medium px-1" style={{ color: "var(--color-text-muted)" }}>
-                          Files
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setFileTreeCollapsed(true)}
-                          className="p-1 rounded-md cursor-pointer shrink-0"
-                          style={{ color: "var(--color-text-muted)" }}
-                          title="Hide files"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                      </div>
-                      <div className="flex-1 overflow-y-auto px-1 py-2">
-                        <FileManagerTree
-                          tree={enhancedTree}
-                          activePath={activePath}
-                          onSelect={(node) => { handleNodeSelect(node); }}
-                          onRefresh={refreshTree}
-                          parentDir={effectiveParentDir}
-                          onNavigateUp={handleNavigateUp}
-                          browseDir={browseDir}
-                          workspaceRoot={workspaceRoot}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                    <div
-                      className="flex items-center gap-1 px-2 h-10 shrink-0 border-b overflow-x-auto"
-                      style={{ borderColor: "var(--color-border)" }}
-                    >
-                      {fileTreeCollapsed && (
-                        <button
-                          type="button"
-                          onClick={() => setFileTreeCollapsed(false)}
-                          className="p-1 rounded-md cursor-pointer shrink-0"
-                          style={{ color: "var(--color-text-muted)" }}
-                          title="Show files"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <polyline points="13 17 18 12 13 7" />
-                            <polyline points="6 17 11 12 6 7" />
-                          </svg>
-                        </button>
-                      )}
-                      {contentTabs.map((tab) => {
-                        const isActive = tab.id === activeContentTabId;
-                        return (
-                          <div
-                            key={tab.id}
-                            className="flex items-center rounded-md shrink-0"
-                            style={{ background: isActive ? "var(--color-surface-hover)" : "transparent" }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => handleContentTabActivate(tab.id)}
-                              className="flex items-center gap-1.5 pl-2 pr-1 py-1 text-[12px] font-medium transition-colors cursor-pointer"
-                              style={{
-                                color: isActive ? "var(--color-text)" : "var(--color-text-muted)",
-                                fontStyle: tab.preview ? "italic" : "normal",
-                              }}
-                              title={tab.title}
-                            >
-                              <span className="shrink-0" style={{ opacity: isActive ? 1 : 0.8 }}>
-                                <TabIcon tab={tab} />
-                              </span>
-                              <span>{tab.title.length > 20 ? tab.title.slice(0, 18) + "…" : tab.title}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleContentTabClose(tab.id); }}
-                              className="p-0.5 rounded-md mr-0.5 cursor-pointer"
-                              style={{ color: "var(--color-text-muted)" }}
-                              title="Close tab"
-                            >
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <div className="flex-1" />
-                      <button
-                        type="button"
-                        onClick={() => setMobileRightPanelOpen(false)}
-                        className="p-1.5 rounded-md cursor-pointer shrink-0"
-                        style={{ color: "var(--color-text-muted)" }}
-                        title="Close"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                          <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                        </svg>
-                      </button>
-                    </div>
-
-                    {entryModal ? (
-                      <div className="flex-1 min-h-0 overflow-hidden">
-                        <EntryDetailPanel
-                          objectName={entryModal.objectName}
-                          entryId={entryModal.entryId}
-                          members={context?.members}
-                          tree={tree}
-                          searchFn={searchIndex}
-                          onClose={handleCloseEntry}
-                          onNavigateEntry={(objName, eid, relatedObjectId) =>
-                            handleOpenEntry(objName, eid, relatedObjectId)
-                          }
-                          onNavigateObject={(objName) => {
-                            handleCloseEntry();
-                            handleNavigateToObject(objName);
-                          }}
-                          onRefresh={refreshCurrentObject}
-                          onNavigate={handleEditorNavigate}
-                        />
-                      </div>
-                    ) : activePath && content.kind !== "none" ? (
-                      <>
-                        {/* {!activePath.startsWith("~") && (
-                          <div
-                            className="px-4 border-b flex-shrink-0 flex items-center h-10"
-                            style={{ borderColor: "var(--color-border)" }}
-                          >
-                            <Breadcrumbs path={activePath} onNavigate={handleBreadcrumbNavigate} formatSegment={formatBreadcrumbSegment} />
-                          </div>
-                        )} */}
-                        <div className="flex-1 overflow-y-auto">
-                          <ContentRenderer
-                            content={content}
-                            workspaceExists={workspaceExists}
-                            expectedPath={workspaceRoot}
-                            tree={tree}
-                            activePath={activePath}
-                            browseDir={browseDir}
-                            treeLoading={treeLoading}
-                            members={context?.members}
-                            onNodeSelect={handleNodeSelect}
-                            onNavigateToObject={handleNavigateToObject}
-                            onRefreshObject={refreshCurrentObject}
-                            onRefreshTree={refreshTree}
-                            onNavigate={handleEditorNavigate}
-                            onOpenEntry={handleOpenEntry}
-                            activeEntryId={undefined}
-                            searchFn={searchIndex}
-                            onSelectCronJob={handleSelectCronJob}
-                            onBackToCronDashboard={handleBackToCronDashboard}
-                            cronView={cronView}
-                            onCronViewChange={setCronView}
-                            cronCalMode={cronCalMode}
-                            onCronCalModeChange={setCronCalMode}
-                            cronDate={cronDate}
-                            onCronDateChange={setCronDate}
-                            cronRunFilter={cronRunFilter}
-                            onCronRunFilterChange={setCronRunFilter}
-                            cronRun={cronRun}
-                            onCronRunChange={setCronRun}
-                            onSendCommand={handleCronSendCommand}
-                            onMakeTabPermanent={promoteTabByPath}
-                          />
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center">
-                        <p className="text-sm text-center px-6" style={{ color: "var(--color-text-muted)" }}>
-                          Select a file or open a page from the sidebar
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <RightPanelContent
+                  tabsState={tabsState}
+                  activeContentTab={activeContentTab}
+                  fileTreeCollapsed={fileTreeCollapsed}
+                  enhancedTree={enhancedTree}
+                  effectiveParentDir={effectiveParentDir}
+                  browseDir={browseDir}
+                  workspaceRoot={workspaceRoot}
+                  fileSearchFn={searchIndex}
+                  entryModal={entryModal}
+                  tree={tree}
+                  cronJobs={cronJobs}
+                  onTreeNodeSelect={handleNodeSelect}
+                  onTreeRefresh={refreshTree}
+                  onTreeNavigateUp={handleNavigateUp}
+                  onTreeFileSearchSelect={handleFileSearchSelect}
+                  onTreeGoHome={handleGoHome}
+                  onSetFileTreeCollapsed={setFileTreeCollapsed}
+                  onSetRightPanelCollapsed={() => setMobileRightPanelOpen(false)}
+                  onActivateContent={handleContentTabActivate}
+                  onCloseContent={handleContentTabClose}
+                  onCloseOtherContent={handleTabCloseOthers}
+                  onCloseContentToRight={handleTabCloseToRight}
+                  onCloseAllContent={handleTabCloseAll}
+                  onDuckDBMissing={handleDuckDBMissing}
+                  renderContent={renderRightPanelContentBody}
+                  renderEntryDetail={renderRightPanelEntryDetail}
+                  renderPlaceholder={renderRightPanelPlaceholder}
+                />
               </RightPanel>
             </div>
           </div>

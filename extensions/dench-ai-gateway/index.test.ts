@@ -38,9 +38,10 @@ function writeWebRuntimeProcessFile(stateDir: string, port: number): void {
  * Build a minimal plugin api shim with optional sync-trigger config.
  * Mirrors the shape `dench-ai-gateway/index.ts`'s `register()` reads.
  */
-function createSyncTriggerApi(params?: {
-  syncTrigger?: Record<string, unknown> | null;
-}): { api: any; logs: string[] } {
+function createSyncTriggerApi(params?: { syncTrigger?: Record<string, unknown> | null }): {
+  api: any;
+  logs: string[];
+} {
   const logs: string[] = [];
   const api: any = {
     config: {
@@ -50,9 +51,7 @@ function createSyncTriggerApi(params?: {
             config: {
               enabled: true,
               gatewayUrl: "https://gateway.example.com",
-              ...(params?.syncTrigger !== null
-                ? { syncTrigger: params?.syncTrigger ?? {} }
-                : {}),
+              ...(params?.syncTrigger !== null ? { syncTrigger: params?.syncTrigger ?? {} } : {}),
             },
           },
         },
@@ -186,13 +185,23 @@ describe("dench-ai-gateway composio bridge", () => {
 
     expect(providers).toHaveLength(1);
     expect(services).toHaveLength(1);
-    expect(tools.map((tool) => tool.name)).toEqual(["dench_execute_integrations"]);
+    // Use arrayContaining so this test stays meaningful when other
+    // tools (e.g. denchclaw_refresh_sync, denchclaw_resync_full) are
+    // added in the same `register()` pass — we only care here that the
+    // composio bridge tool is among them.
+    expect(tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["dench_execute_integrations"]),
+    );
     expect(api.config.mcp).toBeUndefined();
     expect(info).toHaveBeenCalledWith(
       "[dench-ai-gateway] registered dench_execute_integrations bridge tool",
     );
 
-    const result = await tools[0].execute("call-1", {
+    const bridgeTool = tools.find(
+      (tool: { name: string }) => tool.name === "dench_execute_integrations",
+    );
+    expect(bridgeTool).toBeDefined();
+    const result = await bridgeTool.execute("call-1", {
       tool_slug: "GMAIL_FETCH_EMAILS",
       arguments: {
         label_ids: ["INBOX"],
@@ -220,9 +229,15 @@ describe("dench-ai-gateway composio bridge", () => {
     const { api, tools } = createApi();
     register(api);
 
-    expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("dench_execute_integrations");
-    expect(tools[0].parameters).toMatchObject({
+    // The composio bridge tool is one of several tools that may be
+    // registered in `register()` — assert specifically on it by name
+    // rather than by count, so additions like the sync refresh tools
+    // don't cause false-positive failures here.
+    const bridgeTool = tools.find(
+      (tool: { name: string }) => tool.name === "dench_execute_integrations",
+    );
+    expect(bridgeTool).toBeDefined();
+    expect(bridgeTool.parameters).toMatchObject({
       type: "object",
       additionalProperties: false,
       required: ["tool_slug"],
@@ -671,9 +686,7 @@ describe("dench-ai-gateway sync-trigger", () => {
     writeAuthProfiles(stateDir, "dc-key");
 
     let status = 404;
-    const fetchMock = vi.fn(
-      async () => new Response("err", { status }),
-    ) as unknown as typeof fetch;
+    const fetchMock = vi.fn(async () => new Response("err", { status })) as unknown as typeof fetch;
     globalThis.fetch = fetchMock;
     const { api, logs } = createSyncTriggerApi({
       syncTrigger: { intervalMs: 5000 },
@@ -741,5 +754,256 @@ describe("dench-ai-gateway sync-trigger", () => {
 
     const timeoutLogs = logs.filter((m) => m.includes("timed out"));
     expect(timeoutLogs).toHaveLength(1);
+  });
+});
+
+/**
+ * Sync refresh tools (`denchclaw_refresh_sync`, `denchclaw_resync_full`)
+ * — the user-facing escape hatch when someone says "refresh my inbox"
+ * mid-conversation. Pinned here because:
+ *
+ *   1. They MUST register only when a Dench Cloud key is present —
+ *      without it the underlying `tickPoller` can't talk to Composio
+ *      and the tools would just return errors.
+ *   2. They MUST hit `/api/sync/refresh` (not the older Bearer-gated
+ *      `/api/sync/poll-tick`) — otherwise the UI button and the tool
+ *      diverge and bug-fixing one ignores the other.
+ *   3. The tool descriptions matter to the model — a wording change
+ *      should be deliberate, so we pin the "incremental"/"backfill"
+ *      verbiage at the test level.
+ */
+describe("dench-ai-gateway sync refresh tools", () => {
+  const originalFetch = globalThis.fetch;
+  const originalStateDir = process.env.OPENCLAW_STATE_DIR;
+  let stateDir: string | undefined;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+    if (stateDir) {
+      rmSync(stateDir, { recursive: true, force: true });
+      stateDir = undefined;
+    }
+    if (originalStateDir !== undefined) {
+      process.env.OPENCLAW_STATE_DIR = originalStateDir;
+    } else {
+      delete process.env.OPENCLAW_STATE_DIR;
+    }
+    _resetSyncTriggerForTests();
+  });
+
+  it("registers both refresh tools when a Dench Cloud key is present", () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+
+    const { api, tools, info } = createApi();
+    register(api);
+
+    const names = tools.map((tool: { name: string }) => tool.name);
+    expect(names).toEqual(
+      expect.arrayContaining(["denchclaw_refresh_sync", "denchclaw_resync_full"]),
+    );
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("registered sync refresh tools"));
+  });
+
+  it("does NOT register refresh tools when no Dench Cloud key is configured", () => {
+    // Same threat model as the gateway sync trigger: without a key,
+    // the underlying `tickPoller` can't authenticate against Composio,
+    // so exposing the tools would just produce a confusing 401 → 5xx
+    // chain in chat. Better to omit them entirely.
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    delete process.env.DENCH_CLOUD_API_KEY;
+    delete process.env.DENCH_API_KEY;
+    // Deliberately NOT calling writeAuthProfiles → no key.
+
+    const { api, tools, info } = createApi();
+    register(api);
+
+    const names = tools.map((tool: { name: string }) => tool.name);
+    expect(names).not.toContain("denchclaw_refresh_sync");
+    expect(names).not.toContain("denchclaw_resync_full");
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("sync refresh tools"));
+  });
+
+  it("denchclaw_refresh_sync executes against /api/sync/refresh with mode incremental", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    // Pin a known port so the URL assertion is deterministic.
+    writeWebRuntimeProcessFile(stateDir, 31000);
+
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            mode: "incremental",
+            ranAt: "2026-04-22T01:00:00.000Z",
+            lastEvent: {
+              phase: "polling",
+              message: "Synced 3 new emails.",
+              messagesProcessed: 3,
+              eventsProcessed: 0,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    const { api, tools } = createApi();
+    register(api);
+    const refreshTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_refresh_sync",
+    );
+    expect(refreshTool).toBeDefined();
+
+    const result = await refreshTool.execute("call-1", {});
+
+    // URL pulls from the process.json port we wrote; body is the
+    // explicit incremental discriminator the route expects.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:31000/api/sync/refresh");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({ mode: "incremental" });
+
+    // The text the agent reads back should summarize the work done so
+    // it can paraphrase to the user. We assert on the substance, not
+    // the exact wording, to keep the test resilient to minor copy edits.
+    expect(result.content[0]?.text).toMatch(/3 new email/);
+    expect(result.details).toMatchObject({
+      mode: "incremental",
+      response: expect.objectContaining({ ok: true, mode: "incremental" }),
+    });
+  });
+
+  it("denchclaw_resync_full executes against /api/sync/refresh with mode backfill", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    writeWebRuntimeProcessFile(stateDir, 31000);
+
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            mode: "backfill",
+            ranAt: "2026-04-22T01:00:00.000Z",
+            started: true,
+            lastEvent: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    const { api, tools } = createApi();
+    register(api);
+    const resyncTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_resync_full",
+    );
+    expect(resyncTool).toBeDefined();
+
+    const result = await resyncTool.execute("call-1", {});
+
+    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:31000/api/sync/refresh");
+    expect(JSON.parse(String(init?.body ?? "{}"))).toEqual({ mode: "backfill" });
+    expect(result.content[0]?.text).toMatch(/[Bb]ackfill started/);
+    expect(result.details).toMatchObject({ mode: "backfill" });
+  });
+
+  it("surfaces a route 4xx as a structured error rather than throwing", async () => {
+    // Critical: tool errors must be returned as content, not exceptions
+    // — the agent runner can't recover from a thrown error mid-tool-call
+    // and we want a graceful "Refresh failed: <reason>" instead.
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "No Gmail connection. Connect Gmail before starting the sync.",
+          }),
+          { status: 409, headers: { "content-type": "application/json" } },
+        ),
+    ) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+    const resyncTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_resync_full",
+    );
+
+    const result = await resyncTool.execute("call-1", {});
+    expect(result.details).toMatchObject({ status: "error", httpStatus: 409 });
+    expect(result.content[0]?.text).toContain("No Gmail connection");
+  });
+
+  it("surfaces a network error as a structured error", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    }) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+    const refreshTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_refresh_sync",
+    );
+
+    const result = await refreshTool.execute("call-1", {});
+    expect(result.details).toMatchObject({ status: "error" });
+    expect(result.content[0]?.text).toContain("ECONNREFUSED");
+  });
+
+  it("describes both tools clearly enough for the model to pick the right one", () => {
+    // The descriptions are the model's only signal for which tool to
+    // call when a user says "refresh sync." Pin a few key phrases so
+    // accidental wording drift in a refactor doesn't silently regress
+    // tool selection.
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "dench-ai-gateway-refresh-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+
+    const { api, tools } = createApi();
+    register(api);
+
+    const refreshTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_refresh_sync",
+    );
+    const resyncTool = tools.find(
+      (tool: { name: string }) => tool.name === "denchclaw_resync_full",
+    );
+
+    expect(refreshTool.description).toMatch(/incremental/i);
+    expect(refreshTool.description).toMatch(/refresh|sync now|new emails/i);
+    expect(resyncTool.description).toMatch(/full|backfill|re-?import/i);
+    expect(resyncTool.description).toMatch(/heavi(er|est)|background/i);
+
+    // Schemas: zero parameters for both — the agent picks the tool by
+    // name, not by passing a `mode`. Allowing a mode would let the
+    // model paint itself into "I'll just always call refresh with
+    // mode='backfill'" corners.
+    expect(refreshTool.parameters).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    });
+    expect(resyncTool.parameters).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    });
   });
 });

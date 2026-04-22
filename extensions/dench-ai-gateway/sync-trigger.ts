@@ -44,8 +44,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { homedir } from "node:os";
+import path from "node:path";
 import { readDenchAuthProfileKey } from "../shared/dench-auth.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -69,10 +69,16 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function resolveSyncTriggerConfig(api: any): UnknownRecord | undefined {
-  const pluginConfig = asRecord(
-    asRecord(asRecord(api?.config)?.plugins)?.entries,
-  )?.["dench-ai-gateway"];
+/**
+ * Exported so sibling code (e.g. `sync-refresh-tools.ts`) can read the
+ * same `syncTrigger.*` config block without re-implementing the
+ * three-deep `plugins.entries["dench-ai-gateway"].config.syncTrigger`
+ * lookup. Re-exported for symmetry; not part of any public-facing API.
+ */
+export function resolveSyncTriggerConfig(api: any): UnknownRecord | undefined {
+  const pluginConfig = asRecord(asRecord(asRecord(api?.config)?.plugins)?.entries)?.[
+    "dench-ai-gateway"
+  ];
   return asRecord(asRecord(pluginConfig)?.config?.["syncTrigger"] as unknown);
 }
 
@@ -104,7 +110,20 @@ function resolveWebPortFromProcessFile(stateDir: string): number | undefined {
   }
 }
 
-function resolveWebBaseUrl(api: any, syncTriggerConfig: UnknownRecord | undefined): string {
+/**
+ * Resolve where the Next.js web app is listening, in this priority:
+ *
+ *   1. Plugin config `syncTrigger.webBaseUrl` (explicit override).
+ *   2. `DENCHCLAW_WEB_BASE_URL` env (test / dev override).
+ *   3. `<stateDir>/web-runtime/process.json#port` (managed-runtime sidecar).
+ *   4. Default `http://127.0.0.1:3100`.
+ *
+ * Exported so sibling tools (e.g. `denchclaw_refresh_sync`) hit the
+ * exact same URL as the cron, rather than independently re-deriving
+ * the port and risking a drift where one of them targets a stale
+ * default.
+ */
+export function resolveWebBaseUrl(api: any, syncTriggerConfig: UnknownRecord | undefined): string {
   const fromConfig = readString(syncTriggerConfig?.webBaseUrl);
   if (fromConfig) {
     return fromConfig.replace(/\/$/, "");
@@ -184,17 +203,13 @@ export function armSyncTrigger(api: any): void {
 
   const config = resolveSyncTriggerConfig(api);
   if (config?.enabled === false) {
-    api?.logger?.info?.(
-      "[dench-ai-gateway] sync-trigger disabled via syncTrigger.enabled=false",
-    );
+    api?.logger?.info?.("[dench-ai-gateway] sync-trigger disabled via syncTrigger.enabled=false");
     return;
   }
 
   const apiKey = readDenchAuthProfileKey();
   if (!apiKey) {
-    api?.logger?.info?.(
-      "[dench-ai-gateway] No Dench Cloud API key; sync trigger not armed.",
-    );
+    api?.logger?.info?.("[dench-ai-gateway] No Dench Cloud API key; sync trigger not armed.");
     return;
   }
 
@@ -237,11 +252,8 @@ export function armSyncTrigger(api: any): void {
       // fires; surface it as a distinct timeout outcome so streak logging
       // can collapse it independently of plain network errors.
       const aborted =
-        err instanceof Error &&
-        (err.name === "AbortError" || /aborted/i.test(message));
-      outcome = aborted
-        ? { kind: "timeout" }
-        : { kind: "network", message };
+        err instanceof Error && (err.name === "AbortError" || /aborted/i.test(message));
+      outcome = aborted ? { kind: "timeout" } : { kind: "network", message };
     } finally {
       clearTimeout(timeoutHandle);
     }
@@ -250,9 +262,7 @@ export function armSyncTrigger(api: any): void {
     const wasFailing = lastOutcomeKey !== "ok";
     if (outcome.kind === "ok") {
       if (wasFailing) {
-        api?.logger?.info?.(
-          `[dench-ai-gateway] sync-trigger recovered (was: ${lastOutcomeKey})`,
-        );
+        api?.logger?.info?.(`[dench-ai-gateway] sync-trigger recovered (was: ${lastOutcomeKey})`);
       }
     } else if (key !== lastOutcomeKey) {
       // First failure in a streak (or failure mode changed). Log it.
@@ -272,9 +282,7 @@ export function armSyncTrigger(api: any): void {
   }, intervalMs);
 
   _armed = true;
-  api?.logger?.info?.(
-    `[dench-ai-gateway] sync-trigger armed (every ${intervalMs}ms → ${tickUrl})`,
-  );
+  api?.logger?.info?.(`[dench-ai-gateway] sync-trigger armed (every ${intervalMs}ms → ${tickUrl})`);
 }
 
 /**

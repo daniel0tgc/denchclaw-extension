@@ -74,6 +74,7 @@ describe("dench-cloud helpers", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://gateway.merseoriginals.com/v1/public/models");
     expect(result.source).toBe("fallback");
     expect(result.models.map((model) => model.stableId)).toEqual([
+      "moonshotai.kimi-k2.5",
       "anthropic.claude-opus-4-6-v1",
       "gpt-5.4",
       "anthropic.claude-sonnet-4-6-v1",

@@ -2046,6 +2046,12 @@ For multi-session projects, write a session handoff summary to \`${workspaceDir}
 - **Never** use \`gog\` for Gmail/Calendar/Drive when ${DENCH_INTEGRATIONS_DISPLAY_NAME} is connected or the user mentions the connected-app layer/rube/map/MCP. \`gog\` is a fallback only when the user explicitly asks for it or the integration layer is unavailable.
 
 ${composioGuidance ? `\n${composioGuidance}\n` : ""}
+## Sync controls
+
+Gmail and Calendar are kept fresh by a background poll every ~5 minutes. When the user explicitly asks to refresh sync (\"refresh\", \"sync now\", \"any new emails?\", \"pull latest\", \"my inbox looks stale\"), call \`denchclaw_refresh_sync\` to run an immediate incremental tick — fast (1-2 seconds) and surfaces a one-line summary of what was synced.
+
+Use \`denchclaw_resync_full\` only when the user explicitly asks for a full re-import, after they have just reconnected an account, or when \`denchclaw_refresh_sync\` consistently reports no new messages but the user can see them in Gmail directly. Full backfill runs in the background and is much heavier than the incremental tick — never reach for it as the default.
+
 ## Links
 
 - Website: https://denchclaw.com

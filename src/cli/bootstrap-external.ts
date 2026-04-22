@@ -42,6 +42,7 @@ import {
   type DenchCloudCatalogModel,
 } from "./dench-cloud.js";
 import { applyCliProfileEnv } from "./profile.js";
+import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
 import {
   DEFAULT_WEB_APP_PORT,
   ensureManagedWebRuntime,
@@ -49,7 +50,6 @@ import {
   resolveProfileStateDir,
   waitForWebRuntime,
 } from "./web-runtime.js";
-import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
 import { seedWorkspaceFromAssets, type WorkspaceSeedResult } from "./workspace-seed.js";
 
 const DEFAULT_DENCHCLAW_PROFILE = "dench";
@@ -1106,18 +1106,7 @@ async function runOpenClawInteractiveOrThrow(params: {
   /** Grace between SIGTERM and SIGKILL. Default 5s. */
   sigtermGraceMs?: number;
 }): Promise<SpawnResult> {
-  // #region debug-e2e66e: H1/H2 — confirm onboard subprocess spawn + lifetime
-  const _dbgStart = Date.now();
-  fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H1+H2',location:'bootstrap-external.ts:runOpenClawInteractiveOrThrow:start',message:'spawning interactive openclaw',data:{cmd:params.openclawCommand,args:params.args,timeoutMs:params.timeoutMs,gatewayLogPath:params.gatewayLogPath},timestamp:_dbgStart})}).catch(()=>{});
-  const _dbgPing = setInterval(() => {
-    fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H1',location:'bootstrap-external.ts:runOpenClawInteractiveOrThrow:still-waiting',message:'still awaiting onboard exit',data:{elapsedMs:Date.now()-_dbgStart,argsTail:params.args.slice(-6)},timestamp:Date.now()})}).catch(()=>{});
-  }, 30_000);
-  // #endregion
   const result = await runOpenClawInteractiveWithMarkerCutoff(params);
-  // #region debug-e2e66e: H1/H2 — onboard subprocess actually exited
-  clearInterval(_dbgPing);
-  fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H1+H2',location:'bootstrap-external.ts:runOpenClawInteractiveOrThrow:exit',message:'interactive openclaw exited',data:{code:result.code,elapsedMs:Date.now()-_dbgStart},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (result.code === 0) {
     return result;
   }
@@ -1128,11 +1117,11 @@ async function runOpenClawInteractiveOrThrow(params: {
   throw new Error(parts.join("\n"));
 }
 
-// 0 = SIGTERM the moment the marker fires. Runtime evidence (debug session
-// e2e66e, log entries 4 → 7 → 8) showed onboard exits within 24ms of SIGTERM
-// after the marker, so any non-zero grace is pure dead time bootstrap-side.
-// Caller can opt back into a grace period if they hit a reproducible case
-// where onboard needs more time to flush state after the marker.
+// 0 = SIGTERM the moment the marker fires. In practice onboard often exits
+// within tens of ms of SIGTERM after the marker, so any non-zero grace is
+// mostly dead time bootstrap-side. Callers can opt back into a grace period
+// if they hit a reproducible case where onboard needs more time to flush
+// state after the marker.
 const ONBOARD_DEFAULT_MARKER_GRACE_MS = 0;
 const ONBOARD_DEFAULT_SIGTERM_GRACE_MS = 5_000;
 // Poll the gateway log roughly twice per second so the marker is detected
@@ -1180,7 +1169,9 @@ async function runOpenClawInteractiveWithMarkerCutoff(params: {
     let postMarkerSigkillTimer: NodeJS.Timeout | null = null;
 
     const outerTimer = setTimeout(() => {
-      if (settled) {return;}
+      if (settled) {
+        return;
+      }
       try {
         child.kill("SIGKILL");
       } catch {
@@ -1190,9 +1181,15 @@ async function runOpenClawInteractiveWithMarkerCutoff(params: {
 
     function clearTimers(): void {
       clearTimeout(outerTimer);
-      if (logWatcher) {clearInterval(logWatcher);}
-      if (postMarkerSigtermTimer) {clearTimeout(postMarkerSigtermTimer);}
-      if (postMarkerSigkillTimer) {clearTimeout(postMarkerSigkillTimer);}
+      if (logWatcher) {
+        clearInterval(logWatcher);
+      }
+      if (postMarkerSigtermTimer) {
+        clearTimeout(postMarkerSigtermTimer);
+      }
+      if (postMarkerSigkillTimer) {
+        clearTimeout(postMarkerSigkillTimer);
+      }
     }
 
     // Side-channel marker watcher: tail the gateway log starting from its
@@ -1208,11 +1205,17 @@ async function runOpenClawInteractiveWithMarkerCutoff(params: {
       }
       let cursor = initialSize;
       logWatcher = setInterval(() => {
-        if (markerSeen || settled) {return;}
+        if (markerSeen || settled) {
+          return;
+        }
         try {
-          if (!existsSync(gatewayLogPath)) {return;}
+          if (!existsSync(gatewayLogPath)) {
+            return;
+          }
           const size = statSync(gatewayLogPath).size;
-          if (size <= cursor) {return;}
+          if (size <= cursor) {
+            return;
+          }
           // Read only the new bytes.
           const len = size - cursor;
           const buf = Buffer.alloc(len);
@@ -1225,25 +1228,20 @@ async function runOpenClawInteractiveWithMarkerCutoff(params: {
           cursor = size;
           if (buf.toString("utf-8").includes(ONBOARD_GATEWAY_READY_MARKER)) {
             markerSeen = true;
-            // #region debug-e2e66e: H4 — marker observed, arming graceful kill
-            fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H4',location:'bootstrap-external.ts:marker-cutoff:marker-seen',message:'gateway-ready marker detected; arming kill',data:{markerGraceMs,sigtermGraceMs},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
             const sendSigterm = (): void => {
-              if (settled || child.exitCode !== null) {return;}
+              if (settled || child.exitCode !== null) {
+                return;
+              }
               killedAfterMarker = true;
-              // #region debug-e2e66e: H4 — sending SIGTERM to onboard
-              fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H4',location:'bootstrap-external.ts:marker-cutoff:sigterm',message:'sending SIGTERM after marker grace',data:{markerGraceMs},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
               try {
                 child.kill("SIGTERM");
               } catch {
                 // ignore
               }
               postMarkerSigkillTimer = setTimeout(() => {
-                if (settled || child.exitCode !== null) {return;}
-                // #region debug-e2e66e: H4 — escalating to SIGKILL
-                fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H4',location:'bootstrap-external.ts:marker-cutoff:sigkill',message:'escalating to SIGKILL',data:{},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
+                if (settled || child.exitCode !== null) {
+                  return;
+                }
                 try {
                   child.kill("SIGKILL");
                 } catch {
@@ -1264,25 +1262,25 @@ async function runOpenClawInteractiveWithMarkerCutoff(params: {
     }
 
     child.once("error", (error: Error) => {
-      if (settled) {return;}
+      if (settled) {
+        return;
+      }
       settled = true;
       clearTimers();
       reject(error);
     });
 
     child.once("close", (code: number | null) => {
-      if (settled) {return;}
+      if (settled) {
+        return;
+      }
       settled = true;
       clearTimers();
       // If we killed it AFTER the marker fired, treat as success — the
       // wizard's user-visible work was already done. Bootstrap will run
       // its own gateway probe + autofix immediately after, so any
       // openclaw-side post-wizard verification we cut short is redundant.
-      const synthesizedCode = killedAfterMarker
-        ? 0
-        : typeof code === "number"
-          ? code
-          : 1;
+      const synthesizedCode = killedAfterMarker ? 0 : typeof code === "number" ? code : 1;
       resolve({
         code: synthesizedCode,
         stdout: "",
@@ -3526,9 +3524,6 @@ export async function bootstrapCommand(
     });
   }
 
-  // #region debug-e2e66e: H3 — onboard returned, entering post-onboard sequence
-  fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H3',location:'bootstrap-external.ts:post-onboard:enter',message:'onboard returned, starting post-onboard work',data:{},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const workspaceSeed = seedWorkspaceFromAssets({
     workspaceDir,
     packageRoot,
@@ -3604,10 +3599,6 @@ export async function bootstrapCommand(
     // daemon picks up plugin, model, and subagent changes that were written after
     // onboard started it.  No helper above triggers its own restart.
     postOnboardSpinner?.message("Restarting gateway…");
-    // #region debug-e2e66e: H3 — about to call openclaw gateway restart
-    const _dbgRestartStart = Date.now();
-    fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H3',location:'bootstrap-external.ts:gateway-restart:start',message:'calling openclaw gateway restart',data:{},timestamp:_dbgRestartStart})}).catch(()=>{});
-    // #endregion
     try {
       await runOpenClawOrThrow({
         openclawCommand,
@@ -3615,13 +3606,7 @@ export async function bootstrapCommand(
         timeoutMs: 60_000,
         errorMessage: "Failed to restart gateway after config update.",
       });
-      // #region debug-e2e66e: H3 — gateway restart returned
-      fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H3',location:'bootstrap-external.ts:gateway-restart:done',message:'gateway restart returned ok',data:{elapsedMs:Date.now()-_dbgRestartStart},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } catch (err) {
-      // #region debug-e2e66e: H3 — gateway restart threw
-      fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H3',location:'bootstrap-external.ts:gateway-restart:throw',message:'gateway restart threw (caught)',data:{elapsedMs:Date.now()-_dbgRestartStart,err:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       // Gateway may not be running (e.g. onboard daemon install failed on this
       // platform).  The final readiness check below will catch this.
     }
@@ -3662,9 +3647,6 @@ export async function bootstrapCommand(
   const gatewayUrl = `ws://127.0.0.1:${gatewayPort}`;
   const preferredWebPort = parseOptionalPort(opts.webPort) ?? DEFAULT_WEB_APP_PORT;
   postOnboardSpinner?.message(`Starting web runtime on port ${preferredWebPort}…`);
-  // #region debug-e2e66e: H3 — about to install/start web runtime
-  fetch('http://127.0.0.1:7651/ingest/93e0c293-34f1-4a69-8fce-870fc1b93fcb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'e2e66e'},body:JSON.stringify({sessionId:'e2e66e',hypothesisId:'H3',location:'bootstrap-external.ts:ensureManagedWebRuntime:start',message:'starting web runtime install',data:{port:preferredWebPort},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   let webRuntimeStatus = await ensureManagedWebRuntime({
     stateDir,
     packageRoot,

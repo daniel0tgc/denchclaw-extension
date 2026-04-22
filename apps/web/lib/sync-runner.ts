@@ -65,9 +65,72 @@ export type SyncProgressEvent = {
   threadsProcessed: number;
   eventsProcessed: number;
   error?: string;
+  /** Which subsystem the error/progress is about (only set on error events
+   *  emitted by the incremental poller). Lets the UI render
+   *  source-specific banners without having to grep `message`. */
+  source?: "gmail" | "calendar";
 };
 
 type ProgressListener = (event: SyncProgressEvent) => void;
+
+// ---------------------------------------------------------------------------
+// Per-source sync health (used by the workspace UI banner + /api/sync/status)
+// ---------------------------------------------------------------------------
+
+/**
+ * Snapshot of the most recent failure/success for one source. The UI
+ * shows a sticky banner whenever `lastError` is non-null AND there
+ * hasn't been a more recent successful tick.
+ */
+export type SyncSourceStatus = {
+  /** Plain-English failure message, or null when last tick succeeded. */
+  lastError: string | null;
+  /** ISO timestamp of the most recent failure (sticky until next success). */
+  lastErrorAt: string | null;
+  /** ISO timestamp of the most recent successful tick (poll *or* backfill). */
+  lastSuccessAt: string | null;
+  /**
+   * Streak counter: how many consecutive failures we've seen with the
+   * same error key. Used by the gateway-style "first-failure-only" log
+   * suppression so logs don't fill up with identical lines every 5min.
+   */
+  consecutiveFailures: number;
+  /**
+   * True when the failure looks like an OAuth-revocation
+   * (`ComposioToolNoConnectionError`) — UI surfaces a "Reconnect"
+   * button for these instead of a generic "retry later" message.
+   */
+  needsReconnect: boolean;
+};
+
+export type SyncStatus = {
+  gmail: SyncSourceStatus;
+  calendar: SyncSourceStatus;
+};
+
+function emptyStatus(): SyncSourceStatus {
+  return {
+    lastError: null,
+    lastErrorAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    needsReconnect: false,
+  };
+}
+
+const syncStatus: SyncStatus = {
+  gmail: emptyStatus(),
+  calendar: emptyStatus(),
+};
+
+// Keys for the latest failure mode per source — used by the
+// "log first failure in a streak, then suppress identical repeats"
+// pattern (mirrors the gateway sync-trigger logger so a 5-min poll loop
+// against a dead Gmail OAuth doesn't spam stderr 288 times a day).
+const lastLoggedFailureKey: { gmail: string | null; calendar: string | null } = {
+  gmail: null,
+  calendar: null,
+};
 
 // ---------------------------------------------------------------------------
 // Module-singleton state
@@ -114,6 +177,103 @@ export function subscribeProgress(listener: ProgressListener): () => void {
 
 export function getLastProgressEvent(): SyncProgressEvent | null {
   return lastEvent;
+}
+
+// ---------------------------------------------------------------------------
+// Per-source status (consumed by `/api/sync/status` + workspace banner)
+// ---------------------------------------------------------------------------
+
+/**
+ * Snapshot the current per-source sync health. Returns a structural copy
+ * so callers can't mutate the singleton state by accident.
+ */
+export function getSyncStatus(): SyncStatus {
+  return {
+    gmail: { ...syncStatus.gmail },
+    calendar: { ...syncStatus.calendar },
+  };
+}
+
+/**
+ * Stringify an unknown thrown value without triggering `[object Object]`.
+ * Mirrors what the rest of the file does in the catch blocks so the
+ * streak key and the user-visible message stay consistent — diverging
+ * here would cause the dedupe logic to flap between key shapes.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) {return err.message;}
+  if (typeof err === "string") {return err;}
+  if (typeof err === "number" || typeof err === "boolean") {return String(err);}
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return "unknown error";
+  }
+}
+
+/**
+ * Coarse error key used for streak-based log suppression. We collapse
+ * identical Composio responses (same status + first 80 chars of message)
+ * so a stuck 5-min poll loop doesn't write the same stack to stderr
+ * every tick. Keep this stable: changing the key shape would defeat the
+ * suppression on the very next deploy after an upgrade.
+ */
+function failureKeyFor(err: unknown, kind: "no-connection" | "other"): string {
+  if (kind === "no-connection") {return "no-connection";}
+  const message = describeError(err);
+  if (err && typeof err === "object" && "status" in err) {
+    const status = (err as { status?: number }).status ?? 0;
+    return `http:${status}:${message.slice(0, 80)}`;
+  }
+  if (err instanceof Error) {return `error:${message.slice(0, 80)}`;}
+  return `unknown:${message.slice(0, 80)}`;
+}
+
+function recordSyncFailure(
+  source: "gmail" | "calendar",
+  err: unknown,
+  opts: { needsReconnect: boolean },
+): void {
+  const message = describeError(err);
+  const key = failureKeyFor(err, opts.needsReconnect ? "no-connection" : "other");
+  const previousKey = lastLoggedFailureKey[source];
+  const previous = syncStatus[source];
+  const now = new Date().toISOString();
+  syncStatus[source] = {
+    lastError: message,
+    lastErrorAt: now,
+    lastSuccessAt: previous.lastSuccessAt,
+    // Reset the counter when the failure mode changes — it's the
+    // *streak* of identical failures, not the running total of all
+    // failures since boot.
+    consecutiveFailures: previousKey === key ? previous.consecutiveFailures + 1 : 1,
+    needsReconnect: opts.needsReconnect,
+  };
+  // Mirror sync-trigger's "first failure in a streak only" logging so
+  // operators see a single line on the failure mode change but not
+  // 288 identical lines per day for a chronically-broken connection.
+  if (previousKey !== key) {
+    console.error(`[sync-runner] ${source} sync failed: ${message}`);
+  }
+  lastLoggedFailureKey[source] = key;
+}
+
+function recordSyncSuccess(source: "gmail" | "calendar"): void {
+  const previous = syncStatus[source];
+  syncStatus[source] = {
+    lastError: null,
+    lastErrorAt: null,
+    lastSuccessAt: new Date().toISOString(),
+    consecutiveFailures: 0,
+    needsReconnect: false,
+  };
+  if (previous.lastError) {
+    // Recovery line so operators can correlate "stopped failing" with a
+    // re-OAuth or upstream Composio fix, mirroring sync-trigger's
+    // recovery log.
+    console.info(`[sync-runner] ${source} sync recovered`);
+  }
+  lastLoggedFailureKey[source] = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,15 +382,21 @@ async function runBackfillInner(options: StartBackfillOptions): Promise<void> {
         totalCompanies = summary.companiesProcessed;
         totalThreads = summary.threadsProcessed;
         selfEmail = summary.selfEmail ?? null;
+        recordSyncSuccess("gmail");
       } catch (err) {
         // Surface the full stack to stderr so dev-mode terminal shows
         // exactly where the failure happened — the SSE only carries the
         // message, which is often not enough to tell e.g. "the field map
         // came back empty" from "the Composio call returned a 4xx".
         console.error("[sync-runner] Gmail backfill failed:", err);
+        const needsReconnect = err instanceof ComposioToolNoConnectionError;
+        recordSyncFailure("gmail", err, { needsReconnect });
         emit({
           phase: "error",
-          message: `Gmail sync failed: ${(err as Error).message}`,
+          source: "gmail",
+          message: needsReconnect
+            ? "Gmail connection expired. Reconnect from Integrations."
+            : `Gmail sync failed: ${(err as Error).message}`,
           messagesProcessed: totalMessages,
           peopleProcessed: totalPeople,
           companiesProcessed: totalCompanies,
@@ -238,7 +404,7 @@ async function runBackfillInner(options: StartBackfillOptions): Promise<void> {
           eventsProcessed: totalEvents,
           error: (err as Error).message,
         });
-        if (err instanceof ComposioToolNoConnectionError) {
+        if (needsReconnect) {
           // Don't proceed to calendar if Gmail is broken — likely both
           // need a re-OAuth and the user gets a clearer error this way.
           return;
@@ -267,11 +433,17 @@ async function runBackfillInner(options: StartBackfillOptions): Promise<void> {
         });
         totalEvents = summary.eventsProcessed;
         totalPeople += summary.peopleProcessed;
+        recordSyncSuccess("calendar");
       } catch (err) {
         console.error("[sync-runner] Calendar backfill failed:", err);
+        const needsReconnect = err instanceof ComposioToolNoConnectionError;
+        recordSyncFailure("calendar", err, { needsReconnect });
         emit({
           phase: "error",
-          message: `Calendar sync failed: ${(err as Error).message}`,
+          source: "calendar",
+          message: needsReconnect
+            ? "Calendar connection expired. Reconnect from Integrations."
+            : `Calendar sync failed: ${(err as Error).message}`,
           messagesProcessed: totalMessages,
           peopleProcessed: totalPeople,
           companiesProcessed: totalCompanies,
@@ -399,6 +571,7 @@ export async function tickPoller(): Promise<void> {
           connectionId: connections.gmail.connectionId,
           startHistoryId: cursors.gmail.historyId,
         });
+        recordSyncSuccess("gmail");
         if (summary.messagesProcessed > 0) {
           didWork = true;
           emit({
@@ -414,19 +587,29 @@ export async function tickPoller(): Promise<void> {
           });
         }
       } catch (err) {
-        if (err instanceof ComposioToolNoConnectionError) {
-          // Surface the error but don't break the poller; user fixes by reconnecting.
-          emit({
-            phase: "error",
-            message: "Gmail connection expired. Reconnect from Integrations.",
-            messagesProcessed: 0,
-            peopleProcessed: 0,
-            companiesProcessed: 0,
-            threadsProcessed: 0,
-            eventsProcessed: 0,
-            error: err.message,
-          });
-        }
+        // Every failure mode (revoked OAuth, transient 5xx, malformed
+        // Composio response, DuckDB lock contention, classifier crash —
+        // all of it) gets recorded so the workspace banner can surface
+        // it. Previously only `ComposioToolNoConnectionError` made it
+        // out and everything else vanished into a dead try/catch — the
+        // single bug that hid the inbox-frozen-for-3-days symptom that
+        // motivated this overhaul.
+        const needsReconnect = err instanceof ComposioToolNoConnectionError;
+        recordSyncFailure("gmail", err, { needsReconnect });
+        const description = describeError(err);
+        emit({
+          phase: "error",
+          source: "gmail",
+          message: needsReconnect
+            ? "Gmail connection expired. Reconnect from Integrations."
+            : `Gmail sync failed: ${description}`,
+          messagesProcessed: 0,
+          peopleProcessed: 0,
+          companiesProcessed: 0,
+          threadsProcessed: 0,
+          eventsProcessed: 0,
+          error: description,
+        });
       }
     }
 
@@ -437,6 +620,7 @@ export async function tickPoller(): Promise<void> {
           syncToken: cursors.calendar.syncToken,
           selfEmail: connections.gmail?.accountEmail ?? null,
         });
+        recordSyncSuccess("calendar");
         if (summary.eventsProcessed > 0) {
           didWork = true;
           emit({
@@ -452,18 +636,22 @@ export async function tickPoller(): Promise<void> {
           });
         }
       } catch (err) {
-        if (err instanceof ComposioToolNoConnectionError) {
-          emit({
-            phase: "error",
-            message: "Calendar connection expired. Reconnect from Integrations.",
-            messagesProcessed: 0,
-            peopleProcessed: 0,
-            companiesProcessed: 0,
-            threadsProcessed: 0,
-            eventsProcessed: 0,
-            error: err.message,
-          });
-        }
+        const needsReconnect = err instanceof ComposioToolNoConnectionError;
+        recordSyncFailure("calendar", err, { needsReconnect });
+        const description = describeError(err);
+        emit({
+          phase: "error",
+          source: "calendar",
+          message: needsReconnect
+            ? "Calendar connection expired. Reconnect from Integrations."
+            : `Calendar sync failed: ${description}`,
+          messagesProcessed: 0,
+          peopleProcessed: 0,
+          companiesProcessed: 0,
+          threadsProcessed: 0,
+          eventsProcessed: 0,
+          error: description,
+        });
       }
     }
 
@@ -501,4 +689,8 @@ export function _resetSyncRunnerForTests(): void {
   lastEvent = null;
   backfillRunning = false;
   backfillPromise = null;
+  syncStatus.gmail = emptyStatus();
+  syncStatus.calendar = emptyStatus();
+  lastLoggedFailureKey.gmail = null;
+  lastLoggedFailureKey.calendar = null;
 }

@@ -48,11 +48,7 @@ function readKeyFromAuthProfiles(stateDir: string): string | undefined {
 }
 
 function envFallbackKey(): string | undefined {
-  return (
-    process.env.DENCH_CLOUD_API_KEY?.trim() ||
-    process.env.DENCH_API_KEY?.trim() ||
-    undefined
-  );
+  return process.env.DENCH_CLOUD_API_KEY?.trim() || process.env.DENCH_API_KEY?.trim() || undefined;
 }
 
 /**
@@ -100,9 +96,7 @@ export async function kickoffSyncPoll(params: {
     return { kind: "error", reason: "http", status: response.status };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const aborted =
-      err instanceof Error &&
-      (err.name === "AbortError" || /aborted/i.test(message));
+    const aborted = err instanceof Error && (err.name === "AbortError" || /aborted/i.test(message));
     if (aborted) {
       return { kind: "error", reason: "timeout" };
     }

@@ -512,6 +512,35 @@ function formatByHeuristics(raw: string): FormattedWorkspaceValue {
 	};
 }
 
+/**
+ * Bounded format-result cache. The function runs ~5 regexes per call and is
+ * invoked O(rows × cells) per render — caching by (value, type) makes
+ * repeated renders nearly free. We keep a soft cap and evict the oldest
+ * entries when full (Map preserves insertion order).
+ */
+const FORMAT_CACHE_MAX = 4096;
+const formatCache = new Map<string, FormattedWorkspaceValue>();
+
+function getCachedFormatted(
+	cacheKey: string,
+	compute: () => FormattedWorkspaceValue,
+): FormattedWorkspaceValue {
+	const hit = formatCache.get(cacheKey);
+	if (hit !== undefined) {
+		// Refresh insertion order so frequently-used keys aren't evicted first.
+		formatCache.delete(cacheKey);
+		formatCache.set(cacheKey, hit);
+		return hit;
+	}
+	const value = compute();
+	if (formatCache.size >= FORMAT_CACHE_MAX) {
+		const oldestKey = formatCache.keys().next().value;
+		if (oldestKey !== undefined) {formatCache.delete(oldestKey);}
+	}
+	formatCache.set(cacheKey, value);
+	return value;
+}
+
 export function formatWorkspaceFieldValue(
 	value: unknown,
 	fieldType?: string,
@@ -522,6 +551,19 @@ export function formatWorkspaceFieldValue(
 	}
 
 	const schemaType = normalizeFieldType(fieldType);
+	// Cache key length is bounded so we don't blow memory on long
+	// rich-text values; for those we bypass the cache and just compute.
+	if (raw.length <= 256) {
+		const cacheKey = `${schemaType}\u0000${raw}`;
+		return getCachedFormatted(cacheKey, () => computeFormatted(raw, schemaType));
+	}
+	return computeFormatted(raw, schemaType);
+}
+
+function computeFormatted(
+	raw: string,
+	schemaType: string,
+): FormattedWorkspaceValue {
 	const schemaFormatted = formatBySchema(raw, schemaType);
 	if (schemaFormatted) {
 		return schemaFormatted;

@@ -341,13 +341,32 @@ export function DataTable<TData, TValue>({
 		[onColumnReorder],
 	);
 
-	// Scroll tracking for sticky column shadow
+	// Scroll tracking for sticky column shadow.
+	// Coalesces via rAF + ref comparison so a continuous scroll doesn't
+	// trigger a setState (and thus a tbody re-render) per pixel.
+	const isScrolledRef = useRef(false);
+	const scrollRafRef = useRef<number | null>(null);
 	const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-		setIsScrolled(e.currentTarget.scrollLeft > 0);
+		const next = e.currentTarget.scrollLeft > 0;
+		if (next === isScrolledRef.current) {return;}
+		isScrolledRef.current = next;
+		if (scrollRafRef.current != null) {return;}
+		scrollRafRef.current = requestAnimationFrame(() => {
+			scrollRafRef.current = null;
+			setIsScrolled(isScrolledRef.current);
+		});
+	}, []);
+	useEffect(() => () => {
+		if (scrollRafRef.current != null) {cancelAnimationFrame(scrollRafRef.current);}
 	}, []);
 
-	// Build row number column — always first, non-sortable, non-hideable
-	const rownumColumn: ColumnDef<TData> = {
+	// Build row number column — always first, non-sortable, non-hideable.
+	// Memoized so the column definition has a stable identity across renders;
+	// otherwise `allColumns` (and therefore the entire TanStack table tree)
+	// would rebuild on every render — including a row-selection click.
+	const serverPaginationPage = serverPagination?.page;
+	const serverPaginationPageSize = serverPagination?.pageSize;
+	const rownumColumn = useMemo<ColumnDef<TData>>(() => ({
 		id: "__rownum",
 		header: () => (
 			<span
@@ -358,8 +377,8 @@ export function DataTable<TData, TValue>({
 			</span>
 		),
 		cell: ({ row }) => {
-			const baseIdx = serverPagination
-				? (serverPagination.page - 1) * serverPagination.pageSize
+			const baseIdx = serverPaginationPage != null && serverPaginationPageSize != null
+				? (serverPaginationPage - 1) * serverPaginationPageSize
 				: 0;
 			return (
 				<span
@@ -375,10 +394,10 @@ export function DataTable<TData, TValue>({
 		enableSorting: false,
 		enableHiding: false,
 		enableResizing: false,
-	};
+	}), [serverPaginationPage, serverPaginationPageSize]);
 
-	// Build selection column
-	const selectionColumn: ColumnDef<TData> | null = enableRowSelection
+	// Build selection column. Memoized for stable identity across renders.
+	const selectionColumn = useMemo<ColumnDef<TData> | null>(() => enableRowSelection
 		? {
 				id: "select",
 				header: ({ table }) => (
@@ -403,10 +422,10 @@ export function DataTable<TData, TValue>({
 				enableSorting: false,
 				enableHiding: false,
 			}
-		: null;
+		: null, [enableRowSelection]);
 
-	// Build actions column
-	const actionsColumn: ColumnDef<TData> | null = rowActions
+	// Build actions column. Memoized for stable identity across renders.
+	const actionsColumn = useMemo<ColumnDef<TData> | null>(() => rowActions
 		? {
 				id: "actions",
 				header: () => null,
@@ -421,7 +440,7 @@ export function DataTable<TData, TValue>({
 				enableSorting: false,
 				enableHiding: false,
 			}
-		: null;
+		: null, [rowActions]);
 
 	const allColumns = useMemo(() => {
 		const cols: ColumnDef<TData, TValue>[] = [];
@@ -432,10 +451,15 @@ export function DataTable<TData, TValue>({
 		return cols;
 	}, [columns, selectionColumn, actionsColumn, rownumColumn]);
 
-	// Server-side pagination state derived from props
-	const serverPaginationState = serverPagination
-		? { pageIndex: serverPagination.page - 1, pageSize: serverPagination.pageSize }
-		: undefined;
+	// Server-side pagination state derived from props. Memoized so the
+	// table state object identity is stable across renders that don't
+	// touch pagination.
+	const serverPaginationState = useMemo(
+		() => serverPagination
+			? { pageIndex: serverPagination.page - 1, pageSize: serverPagination.pageSize }
+			: undefined,
+		[serverPagination?.page, serverPagination?.pageSize], // eslint-disable-line react-hooks/exhaustive-deps
+	);
 
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -502,9 +526,19 @@ export function DataTable<TData, TValue>({
 
 	const selectedCount = Object.keys(rowSelectionState).filter((k) => rowSelectionState[k]).length;
 	const visibleColumns = table.getVisibleFlatColumns().filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column");
+	// Stable items array for dnd-kit's SortableContext so the dnd
+	// context isn't reset on every render.
+	const sortableHeaderIds = useMemo(
+		() => columnOrder.filter((id) => !FIXED_COL_IDS.has(id)),
+		[columnOrder], // eslint-disable-line react-hooks/exhaustive-deps
+	);
 
 	// Column sizes as CSS variables for performant resize (TanStack recommended approach).
 	// Only th elements reference these vars; td widths are inherited via table-layout:fixed.
+	// Depend on `columnSizing` (the actual sizes) instead of `columnSizingInfo` (a fresh
+	// object on every state change) so this doesn't recompute on selection/sort/etc.
+	const columnSizingState = table.getState().columnSizing;
+	const isResizingColumn = !!table.getState().columnSizingInfo.isResizingColumn;
 	const columnSizeVars = useMemo(() => {
 		const headers = table.getFlatHeaders();
 		const vars: Record<string, number> = {};
@@ -513,7 +547,7 @@ export function DataTable<TData, TValue>({
 			vars[`--col-${header.column.id}-size`] = header.column.getSize();
 		}
 		return vars;
-	}, [table.getState().columnSizingInfo, table.getState().columnSizing]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [columnSizingState, isResizingColumn, columnVisibility, columnOrder]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// ─── Render ───
 
@@ -690,7 +724,7 @@ export function DataTable<TData, TValue>({
 										style={{ borderColor: "var(--color-border)" }}
 										className="border-b-2 backdrop-blur-sm"
 									>
-										<SortableContext items={columnOrder.filter((id) => !FIXED_COL_IDS.has(id))} strategy={horizontalListSortingStrategy}>
+										<SortableContext items={sortableHeaderIds} strategy={horizontalListSortingStrategy}>
 											{headerGroup.headers.map((header, colIdx) => {
 												// Layout: [__rownum, select?, ...data, actions?]
 												const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
@@ -887,7 +921,166 @@ export function DataTable<TData, TValue>({
 	);
 }
 
-/* ─── Memoized Table Body (skips re-render during column resize) ─── */
+/* ─── Memoized Table Row & Body ───
+ *
+ * The big perf win lives here. Previously the entire <tbody> re-rendered on
+ * every parent state change (selection, scroll, hover, sort) because the only
+ * memo on `DataTableBody` skipped renders ONLY during column resize. We now
+ * memoize at the row level so a single checkbox click re-renders just the
+ * toggled row instead of all 100+ rows.
+ */
+
+// biome-ignore lint/suspicious/noExplicitAny: generic row component used with React.memo
+type TableRowProps = {
+	row: Row<any>;
+	rowIdx: number;
+	isSelected: boolean;
+	isActive: boolean;
+	enableRowSelection: boolean;
+	stickyFirstColumn: boolean;
+	isScrolled: boolean;
+	onRowClick?: (row: any, index: number) => void;
+	firstColumnFaviconUrl: string | null | undefined;
+	/** Stable string key encoding visible column IDs in order. When this
+	 * changes (column add/remove/reorder/visibility) the row re-renders. */
+	cellLayoutKey: string;
+};
+
+function TableRowInner({
+	row,
+	rowIdx,
+	isSelected,
+	isActive,
+	enableRowSelection,
+	stickyFirstColumn,
+	isScrolled,
+	onRowClick,
+	firstColumnFaviconUrl,
+}: TableRowProps) {
+	const visibleCells = row.getVisibleCells();
+	const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
+	const altBg = rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";
+	const baseBg = isActive || isSelected ? "var(--color-accent-light)" : altBg;
+	const stickyBg = baseBg;
+
+	const handleClick = useCallback(() => {
+		onRowClick?.(row.original, rowIdx);
+	}, [onRowClick, row.original, rowIdx]);
+
+	const handleMouseEnter = useCallback((e: React.MouseEvent<HTMLTableRowElement>) => {
+		if (!isSelected && !isActive) {
+			(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+		}
+	}, [isSelected, isActive]);
+
+	const handleMouseLeave = useCallback((e: React.MouseEvent<HTMLTableRowElement>) => {
+		if (!isSelected && !isActive) {
+			(e.currentTarget as HTMLElement).style.background = altBg;
+		}
+	}, [isSelected, isActive, altBg]);
+
+	return (
+		<tr
+			data-state={isSelected ? "selected" : isActive ? "active" : undefined}
+			className={cn(
+				"border-b transition-colors duration-100 group/row",
+				onRowClick && "cursor-pointer",
+				isSelected && "data-[state=selected]:bg-(--color-accent-light)",
+			)}
+			style={{
+				borderColor: isActive ? "var(--color-accent)" : "var(--color-border)",
+				background: baseBg,
+			}}
+			onClick={handleClick}
+			onMouseEnter={handleMouseEnter}
+			onMouseLeave={handleMouseLeave}
+		>
+			{visibleCells.map((cell, colIdx) => {
+				const isRownumCol = cell.column.id === "__rownum";
+				const isFirstData = colIdx === firstDataIdx;
+				const isSticky = stickyFirstColumn && isFirstData;
+				const isSelectCol = cell.column.id === "select";
+				const isLastCol = colIdx === visibleCells.length - 1;
+				const cellFaviconUrl = isFirstData && !isSelectCol ? firstColumnFaviconUrl : undefined;
+
+				const cellStyle: React.CSSProperties = {
+					borderColor: "var(--color-border)",
+					...(isSticky
+						? {
+								position: "sticky" as const,
+								left: enableRowSelection ? 40 : 0,
+								zIndex: 2,
+								background: stickyBg,
+								boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)" : "none",
+							}
+						: {}),
+					...(isSelectCol
+						? {
+								position: "sticky" as const,
+								left: 0,
+								zIndex: 2,
+								background: stickyBg,
+								width: 40,
+							}
+						: {}),
+				};
+
+				return (
+					<td
+						key={cell.id}
+						className={cn(
+							"align-middle whitespace-nowrap text-[13px] border-b transition-colors box-border",
+							isRownumCol
+								? "px-3 py-3 text-right"
+								: isSelectCol
+									? "px-3 py-3"
+									: "px-4 py-3",
+							!isLastCol && "border-r",
+							isSticky && isScrolled && "border-r-2!",
+						)}
+						style={cellStyle}
+					>
+						<div className="overflow-hidden">
+							{cellFaviconUrl ? (
+								<div className="flex min-w-0 items-center gap-2">
+									<span className="pointer-events-none shrink-0">
+										<UrlFavicon src={cellFaviconUrl} />
+									</span>
+									<div className="min-w-0 flex-1 overflow-hidden">
+										{flexRender(cell.column.columnDef.cell, cell.getContext())}
+									</div>
+								</div>
+							) : (
+								flexRender(cell.column.columnDef.cell, cell.getContext())
+							)}
+						</div>
+						{isSticky && isScrolled && (
+							<div className="absolute top-0 right-0 bottom-0 w-4 translate-x-full pointer-events-none bg-linear-to-r from-black/4 to-transparent z-100" />
+						)}
+					</td>
+				);
+			})}
+		</tr>
+	);
+}
+
+/** Custom equality: skip re-render unless something the row actually
+ * displays changed. The `row` reference itself is fresh on every TanStack
+ * render so we explicitly ignore it and compare semantic primitives instead. */
+const TableRow = React.memo(TableRowInner, (prev, next) => {
+	return (
+		prev.row.original === next.row.original &&
+		prev.rowIdx === next.rowIdx &&
+		prev.isSelected === next.isSelected &&
+		prev.isActive === next.isActive &&
+		prev.enableRowSelection === next.enableRowSelection &&
+		prev.stickyFirstColumn === next.stickyFirstColumn &&
+		prev.isScrolled === next.isScrolled &&
+		prev.onRowClick === next.onRowClick &&
+		prev.firstColumnFaviconUrl === next.firstColumnFaviconUrl &&
+		prev.cellLayoutKey === next.cellLayoutKey
+	);
+});
 
 // biome-ignore lint/suspicious/noExplicitAny: generic body component used with React.memo
 type DataTableBodyProps = {
@@ -911,124 +1104,50 @@ function DataTableBodyInner({
 	onRowClick,
 	getFirstDataColumnFaviconUrl,
 }: DataTableBodyProps) {
-	// Layout: [__rownum, select?, ...data, actions?]
-	const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
+	// Encode visible column layout as a stable string. When columns are
+	// added/removed/reordered/hidden, this changes and rows re-render.
+	// Column SIZE changes don't need to invalidate rows — sizes are applied
+	// via CSS variables on <th> elements and <td> widths inherit via
+	// table-layout:fixed.
+	const cellLayoutKey = table.getVisibleLeafColumns().map((c) => c.id).join("|");
+
 	return (
 		<tbody className="[&_tr:last-child]:border-0">
 			{table.getRowModel().rows.map((row, rowIdx) => {
 				const isSelected = row.getIsSelected();
-				const visibleCells = row.getVisibleCells();
 				const isActive = activeRowId != null && getRowId != null && getRowId(row.original) === activeRowId;
-				// Subtle zebra: white (surface) for even rows, slightly off-white (bg) for odd rows.
-				const altBg = rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";
-				const baseBg = isActive || isSelected ? "var(--color-accent-light)" : altBg;
+				const firstColumnFaviconUrl = getFirstDataColumnFaviconUrl?.(row, table) ?? undefined;
 				return (
-					<tr
+					<TableRow
 						key={row.id}
-						data-state={isSelected ? "selected" : isActive ? "active" : undefined}
-						className={cn(
-							"border-b transition-colors duration-100 group/row",
-							onRowClick && "cursor-pointer",
-							isSelected && "data-[state=selected]:bg-(--color-accent-light)",
-						)}
-						style={{
-							borderColor: isActive ? "var(--color-accent)" : "var(--color-border)",
-							background: baseBg,
-						}}
-						onClick={() => onRowClick?.(row.original, rowIdx)}
-						onMouseEnter={(e) => {
-							if (!isSelected && !isActive)
-								{(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";}
-						}}
-						onMouseLeave={(e) => {
-							if (!isSelected && !isActive)
-								{(e.currentTarget as HTMLElement).style.background = altBg;}
-						}}
-					>
-						{visibleCells.map((cell, colIdx) => {
-							const isRownumCol = cell.column.id === "__rownum";
-							const isFirstData = colIdx === firstDataIdx;
-							const isSticky = stickyFirstColumn && isFirstData;
-							const isSelectCol = cell.column.id === "select";
-							const isLastCol = colIdx === visibleCells.length - 1;
-							const firstDataColumnFaviconUrl = isFirstData && !isSelectCol
-								? getFirstDataColumnFaviconUrl?.(row, table)
-								: undefined;
-
-							// Sticky cells need an explicit background so content scrolling
-							// underneath them doesn't show through. Match the row's zebra shade.
-							const stickyBg = (isActive || isSelected)
-								? "var(--color-accent-light)"
-								: altBg;
-
-							const cellStyle: React.CSSProperties = {
-								borderColor: "var(--color-border)",
-								...(isSticky
-									? {
-											position: "sticky" as const,
-											left: enableRowSelection ? 40 : 0,
-											zIndex: 2,
-											background: stickyBg,
-											boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)" : "none",
-										}
-									: {}),
-								...(isSelectCol
-									? {
-											position: "sticky" as const,
-											left: 0,
-											zIndex: 2,
-											background: stickyBg,
-											width: 40,
-										}
-									: {}),
-							};
-
-							return (
-								<td
-									key={cell.id}
-									className={cn(
-										"align-middle whitespace-nowrap text-[13px] border-b transition-colors box-border",
-										isRownumCol
-											? "px-3 py-3 text-right"
-											: isSelectCol
-												? "px-3 py-3"
-												: "px-4 py-3",
-										!isLastCol && "border-r",
-										isSticky && isScrolled && "border-r-2!",
-									)}
-									style={cellStyle}
-								>
-									<div className="overflow-hidden">
-										{firstDataColumnFaviconUrl ? (
-											<div className="flex min-w-0 items-center gap-2">
-												<span className="pointer-events-none shrink-0">
-													<UrlFavicon src={firstDataColumnFaviconUrl} />
-												</span>
-												<div className="min-w-0 flex-1 overflow-hidden">
-													{flexRender(cell.column.columnDef.cell, cell.getContext())}
-												</div>
-											</div>
-										) : (
-											flexRender(cell.column.columnDef.cell, cell.getContext())
-										)}
-									</div>
-									{isSticky && isScrolled && (
-										<div className="absolute top-0 right-0 bottom-0 w-4 translate-x-full pointer-events-none bg-linear-to-r from-black/4 to-transparent z-100" />
-									)}
-								</td>
-							);
-						})}
-					</tr>
+						row={row}
+						rowIdx={rowIdx}
+						isSelected={isSelected}
+						isActive={isActive}
+						enableRowSelection={enableRowSelection}
+						stickyFirstColumn={stickyFirstColumn}
+						isScrolled={isScrolled}
+						onRowClick={onRowClick}
+						firstColumnFaviconUrl={firstColumnFaviconUrl}
+						cellLayoutKey={cellLayoutKey}
+					/>
 				);
 			})}
 		</tbody>
 	);
 }
 
-const DataTableBody = React.memo(DataTableBodyInner, (prev, next) =>
-	!!next.table.getState().columnSizingInfo.isResizingColumn
-	&& prev.table.options.data === next.table.options.data,
-);
+/** Skip re-rendering the body shell during column resize (sizes flow via
+ * CSS variables on <th>; rows don't need to react). For all other changes
+ * the body re-renders, but per-row memoization above prevents the
+ * expensive cell work from running for unchanged rows. */
+const DataTableBody = React.memo(DataTableBodyInner, (prev, next) => {
+	const isResizing = !!next.table.getState().columnSizingInfo.isResizingColumn;
+	if (isResizing && prev.table.options.data === next.table.options.data) {
+		return true;
+	}
+	return false;
+});
 
 /* ─── Sub-components ─── */
 

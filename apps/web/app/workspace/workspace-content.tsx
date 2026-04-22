@@ -3716,6 +3716,7 @@ function ContentRenderer({
     case "object":
       return (
         <ObjectView
+          key={content.data.object.name}
           data={content.data}
           members={members}
           onNavigateToObject={onNavigateToObject}
@@ -4261,6 +4262,41 @@ function ObjectView({
   // Use entries from server (already filtered server-side)
   const filteredEntries = entries;
 
+  // ---- Stable props for ObjectTable ----
+  // The ObjectTable / DataTable / row / cell tree is heavily memoized; if we
+  // pass fresh function/object references on every parent render, every
+  // memoization downstream busts and we end up re-rendering all 100 rows on
+  // every state tick. Keep these stable.
+
+  /** Open the entry detail modal for an entry in THIS object. */
+  const handleEntryClick = useCallback(
+    (entryId: string) => {
+      onOpenEntry?.(data.object.name, entryId);
+    },
+    [onOpenEntry, data.object.name],
+  );
+  // Pass `undefined` (not a noop) when no parent handler exists so the
+  // ObjectTable can still suppress the click affordance.
+  const handleEntryClickProp = onOpenEntry ? handleEntryClick : undefined;
+
+  /** Open the +Add entry modal. */
+  const handleOpenAddModal = useCallback(() => {
+    setShowAddModal(true);
+  }, []);
+
+  /** Server pagination prop, memoized so the object identity is stable
+   * unless one of the actual values changes. */
+  const serverPaginationProp = useMemo(
+    () => ({
+      totalCount,
+      page: serverPage,
+      pageSize: serverPageSize,
+      onPageChange: handlePageChange,
+      onPageSizeChange: handlePageSizeChange,
+    }),
+    [totalCount, serverPage, serverPageSize, handlePageChange, handlePageSizeChange],
+  );
+
   // Save view to .object.yaml via API
   const handleSaveView = useCallback(async (name: string) => {
     const newView: SavedView = {
@@ -4690,7 +4726,7 @@ function ObjectView({
               statuses={data.statuses}
               members={members}
               relationLabels={data.relationLabels}
-              onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+              onEntryClick={handleEntryClickProp}
               onRefresh={handleRefresh}
             />
           </div>
@@ -4705,27 +4741,21 @@ function ObjectView({
             reverseRelations={data.reverseRelations}
             onNavigateToObject={onNavigateToObject}
             onNavigateToEntry={onOpenEntry}
-            onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+            onEntryClick={handleEntryClickProp}
             onRefresh={handleRefresh}
             activeEntryId={activeEntryId}
             columnVisibility={columnVisibility}
             onColumnVisibilityChanged={handleColumnVisibilityChanged}
             columnSizing={columnSizing}
             onColumnSizingChanged={handleColumnSizingChanged}
-            serverPagination={{
-              totalCount,
-              page: serverPage,
-              pageSize: serverPageSize,
-              onPageChange: handlePageChange,
-              onPageSizeChange: handlePageSizeChange,
-            }}
+            serverPagination={serverPaginationProp}
             onServerSearch={handleServerSearch}
             hideInternalToolbar
             globalFilter={globalFilter}
             onGlobalFilterChange={handleGlobalFilterChange}
             stickyFirstColumnValue={stickyFirstColumn}
             onStickyFirstColumnChange={setStickyFirstColumn}
-            onAddRequest={() => setShowAddModal(true)}
+            onAddRequest={handleOpenAddModal}
           />
         )}
         {currentViewType === "calendar" && (
@@ -4739,7 +4769,7 @@ function ObjectView({
               mode={effectiveSettings.calendarMode ?? "month"}
               onModeChange={(mode) => handleViewSettingsChange({ ...effectiveSettings, calendarMode: mode })}
               members={members}
-              onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+              onEntryClick={handleEntryClickProp}
               onEntryDateChange={handleCalendarDateChange}
             />
           </div>
@@ -4756,7 +4786,7 @@ function ObjectView({
               zoom={effectiveSettings.timelineZoom ?? "week"}
               onZoomChange={(zoom) => handleViewSettingsChange({ ...effectiveSettings, timelineZoom: zoom })}
               members={members}
-              onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+              onEntryClick={handleEntryClickProp}
               onEntryDateChange={handleTimelineDateChange}
             />
           </div>
@@ -4771,7 +4801,7 @@ function ObjectView({
               coverField={effectiveSettings.galleryCoverField}
               members={members}
               relationLabels={data.relationLabels}
-              onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+              onEntryClick={handleEntryClickProp}
             />
           </div>
         )}
@@ -4784,7 +4814,7 @@ function ObjectView({
               titleField={effectiveSettings.listTitleField}
               subtitleField={effectiveSettings.listSubtitleField}
               members={members}
-              onEntryClick={onOpenEntry ? (entryId) => onOpenEntry(data.object.name, entryId) : undefined}
+              onEntryClick={handleEntryClickProp}
             />
           </div>
         )}

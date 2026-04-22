@@ -30,14 +30,7 @@ function jsonResult(payload: unknown) {
   };
 }
 
-const SEARCH_TYPES = [
-  "auto",
-  "neural",
-  "fast",
-  "deep",
-  "deep-reasoning",
-  "instant",
-] as const;
+const SEARCH_TYPES = ["auto", "neural", "fast", "deep", "deep-reasoning", "instant"] as const;
 const SEARCH_CATEGORIES = [
   "company",
   "research paper",
@@ -55,8 +48,16 @@ const ExaSearchParameters = {
     searchType: { type: "string", enum: [...SEARCH_TYPES], description: "Exa search type." },
     category: { type: "string", enum: [...SEARCH_CATEGORIES], description: "Exa search category." },
     numResults: { type: "number", description: "Maximum number of results." },
-    includeDomains: { type: "array", items: { type: "string" }, description: "Only search these domains." },
-    excludeDomains: { type: "array", items: { type: "string" }, description: "Exclude these domains." },
+    includeDomains: {
+      type: "array",
+      items: { type: "string" },
+      description: "Only search these domains.",
+    },
+    excludeDomains: {
+      type: "array",
+      items: { type: "string" },
+      description: "Exclude these domains.",
+    },
     startPublishedDate: { type: "string", description: "ISO date lower bound for published date." },
     endPublishedDate: { type: "string", description: "ISO date upper bound for published date." },
     text: { type: "boolean", description: "Include extracted page text." },
@@ -291,8 +292,7 @@ function createExaAnswerTool(gatewayUrl: string, apiKey: string): AnyAgentTool {
   return {
     name: "exa_answer",
     label: "Exa Answer",
-    description:
-      "Ask Exa for a citation-backed answer through the Dench Cloud gateway.",
+    description: "Ask Exa for a citation-backed answer through the Dench Cloud gateway.",
     parameters: ExaAnswerParameters,
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
@@ -328,9 +328,7 @@ export default function register(api: OpenClawPluginApi) {
   const apiKey = readDenchAuthProfileKey();
 
   if (!apiKey) {
-    api.logger?.info?.(
-      "[exa-search] No Dench Cloud API key found; tools will not be registered.",
-    );
+    api.logger?.info?.("[exa-search] No Dench Cloud API key found; tools will not be registered.");
     return;
   }
 

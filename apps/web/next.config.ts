@@ -48,6 +48,27 @@ const nextConfig: NextConfig = {
   // Transpile ESM-only packages so webpack can bundle them
   transpilePackages: ["react-markdown", "remark-gfm"],
 
+  // Turbopack equivalent of the webpack `resolve.fallback` below — html-to-docx
+  // imports Node built-ins at the top of its ESM bundle that should be no-ops
+  // in browser bundles. Scoped to `browser` so server bundles still get the
+  // real Node modules.
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: "./lib/empty-module.js" },
+      path: { browser: "./lib/empty-module.js" },
+      crypto: { browser: "./lib/empty-module.js" },
+      stream: { browser: "./lib/empty-module.js" },
+      http: { browser: "./lib/empty-module.js" },
+      https: { browser: "./lib/empty-module.js" },
+      url: { browser: "./lib/empty-module.js" },
+      zlib: { browser: "./lib/empty-module.js" },
+      util: { browser: "./lib/empty-module.js" },
+      events: { browser: "./lib/empty-module.js" },
+      punycode: { browser: "./lib/empty-module.js" },
+      encoding: { browser: "./lib/empty-module.js" },
+    },
+  },
+
   webpack: (config, { dev, isServer }) => {
     if (!isServer) {
       // html-to-docx references Node-only modules that should not be resolved in browser bundles.

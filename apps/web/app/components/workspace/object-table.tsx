@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { type ColumnDef, type CellContext, type Row } from "@tanstack/react-table";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { type ColumnDef, type CellContext } from "@tanstack/react-table";
 import { DataTable, type RowAction, type ColumnSizingState } from "./data-table";
 import { RelationSelect } from "./relation-select";
 import { FormattedFieldValue } from "./formatted-field-value";
 import { formatWorkspaceFieldValue } from "@/lib/workspace-cell-format";
 import { parseTagsValue } from "@/lib/parse-tags";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { ActionButton, useActionStates, type ActionConfig } from "./action-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BulkActionBar } from "./bulk-action-bar";
@@ -56,7 +57,17 @@ type ObjectTableProps = {
 	relationLabels?: Record<string, Record<string, string>>;
 	reverseRelations?: ReverseRelation[];
 	onNavigateToObject?: (objectName: string) => void;
-	onNavigateToEntry?: (objectName: string, entryId: string) => void;
+	/**
+	 * Open the entry's detail view. The optional `relatedObjectId` lets the
+	 * parent route precisely (e.g. CRM seed people/company → dedicated profile,
+	 * everything else → generic side-panel modal) instead of guessing from the
+	 * raw object name, which collides with custom user objects.
+	 */
+	onNavigateToEntry?: (
+		objectName: string,
+		entryId: string,
+		relatedObjectId?: string,
+	) => void;
 	onEntryClick?: (entryId: string) => void;
 	onRefresh?: () => void;
 	activeEntryId?: string;
@@ -70,14 +81,22 @@ type ObjectTableProps = {
 	serverPagination?: ServerPaginationProps;
 	/** Server-side search callback. */
 	onServerSearch?: (query: string) => void;
+	/** When true, the DataTable's internal toolbar (search, columns, refresh, +Add) is suppressed. */
+	hideInternalToolbar?: boolean;
+	/** Controlled global filter value. When provided, the DataTable uses this instead of its own state. */
+	globalFilter?: string;
+	onGlobalFilterChange?: (value: string) => void;
+	/** If provided, the table's +Add action delegates to this callback instead of opening the built-in modal. */
+	onAddRequest?: () => void;
+	/** Controlled sticky-first-column toggle. */
+	stickyFirstColumnValue?: boolean;
+	onStickyFirstColumnChange?: (value: boolean) => void;
 };
 
 type EntryRow = Record<string, unknown> & { entry_id?: string };
-type EntryRowCell = ReturnType<Row<EntryRow>["getVisibleCells"]>[number];
 
 const CREATED_AT_KEYS = ["created_at", "Created", "createdAt", "created"] as const;
 const UPDATED_AT_KEYS = ["updated_at", "Updated", "updatedAt", "updated"] as const;
-const FIXED_TABLE_COLUMN_IDS = new Set(["select", "actions", "__add_column"]);
 
 /* ─── Helpers ─── */
 
@@ -94,11 +113,15 @@ function safeString(val: unknown): string {
 function parseRelationValue(value: string | null | undefined): string[] {
 	if (!value) {return [];}
 	const trimmed = value.trim();
-	if (!trimmed) {return [];}
+	if (!trimmed || trimmed === "null" || trimmed === "undefined") {return [];}
 	if (trimmed.startsWith("[")) {
 		try {
 			const parsed = JSON.parse(trimmed);
-			if (Array.isArray(parsed)) {return parsed.map(String).filter(Boolean);}
+			if (Array.isArray(parsed)) {
+				return parsed
+					.map(String)
+					.filter((id) => id && id !== "null" && id !== "undefined");
+			}
 		} catch { /* not JSON */ }
 	}
 	return [trimmed];
@@ -134,41 +157,27 @@ function resolveEntryMetaValue(
 	return undefined;
 }
 
-function getColumnFieldType(meta: unknown): string | undefined {
-	if (!meta || typeof meta !== "object") {
-		return undefined;
-	}
-	const fieldType = (meta as { fieldType?: unknown }).fieldType;
-	return typeof fieldType === "string" ? fieldType : undefined;
-}
-
-function getCellFaviconUrl(cell: EntryRowCell): string | undefined {
-	const formatted = formatWorkspaceFieldValue(
-		cell.getValue(),
-		getColumnFieldType(cell.column.columnDef.meta),
-	);
-	return formatted.kind === "link" && formatted.linkType === "url"
-		? formatted.faviconUrl
-		: undefined;
-}
-
-function getFirstUrlColumnFaviconUrl(row: Row<EntryRow>): string | undefined {
-	const candidateCells = row.getVisibleCells().filter(
-		(cell) => !FIXED_TABLE_COLUMN_IDS.has(cell.column.id),
-	);
-	const urlTypedCells = candidateCells.filter(
-		(cell) => getColumnFieldType(cell.column.columnDef.meta) === "url",
-	);
-	const cellsToCheck = urlTypedCells.length > 0 ? urlTypedCells : candidateCells;
-
-	for (const cell of cellsToCheck) {
-		const faviconUrl = getCellFaviconUrl(cell);
-		if (faviconUrl) {
-			return faviconUrl;
+function computeEntryFaviconUrl(
+	entry: Record<string, unknown>,
+	candidateFields: Field[],
+): string | undefined {
+	for (const field of candidateFields) {
+		const value = entry[field.name];
+		if (value == null || value === "") {continue;}
+		const formatted = formatWorkspaceFieldValue(value, field.type);
+		if (formatted.kind === "link" && formatted.linkType === "url" && formatted.faviconUrl) {
+			return formatted.faviconUrl;
 		}
 	}
-
 	return undefined;
+}
+
+/** Stable getRowId: hoisted to module scope so its identity doesn't change
+ * across renders (avoids re-keying the TanStack row map). */
+function getRowIdFromEntry(row: EntryRow): string {
+	const eid = row.entry_id;
+	if (eid == null) {return "";}
+	return String(typeof eid === "object" ? JSON.stringify(eid) : eid);
 }
 
 /* ─── Cell Renderers (read-only display) ─── */
@@ -209,15 +218,19 @@ function UserCell({ value, members }: { value: unknown; members?: Array<{ id: st
 }
 
 function RelationCell({
-	value, field, relationLabels, onNavigateObject, onNavigateEntry,
+	value, field, fieldLabels, onNavigateObject, onNavigateEntry,
 }: {
 	value: unknown; field: Field;
-	relationLabels?: Record<string, Record<string, string>>;
+	/** Labels for THIS field only (already narrowed). */
+	fieldLabels?: Record<string, string>;
 	onNavigateObject?: (objectName: string) => void;
-	onNavigateEntry?: (objectName: string, entryId: string) => void;
+	onNavigateEntry?: (
+		objectName: string,
+		entryId: string,
+		relatedObjectId?: string,
+	) => void;
 }) {
-	const fieldLabels = relationLabels?.[field.name];
-	const ids = parseRelationValue(String(value));
+	const ids = value == null ? [] : parseRelationValue(String(value));
 	if (ids.length === 0) {return <span style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>--</span>;}
 	return (
 		<span className="flex items-center gap-1 flex-wrap">
@@ -229,7 +242,11 @@ function RelationCell({
 						if (!onNavigateEntry && !onNavigateObject) {return;}
 						e.stopPropagation();
 						if (onNavigateEntry) {
-							onNavigateEntry(field.related_object_name, id);
+							onNavigateEntry(
+								field.related_object_name,
+								id,
+								field.related_object_id,
+							);
 							return;
 						}
 						onNavigateObject?.(field.related_object_name);
@@ -367,11 +384,16 @@ function TagsInput({
 	);
 }
 
-function ReverseRelationCell({ links, sourceObjectName, onNavigateObject, onNavigateEntry }: {
+function ReverseRelationCell({ links, sourceObjectName, sourceObjectId, onNavigateObject, onNavigateEntry }: {
 	links: Array<{ id: string; label: string }>;
 	sourceObjectName: string;
+	sourceObjectId?: string;
 	onNavigateObject?: (objectName: string) => void;
-	onNavigateEntry?: (objectName: string, entryId: string) => void;
+	onNavigateEntry?: (
+		objectName: string,
+		entryId: string,
+		relatedObjectId?: string,
+	) => void;
 }) {
 	if (!links || links.length === 0) {return <span style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>--</span>;}
 	const display = links.slice(0, 5);
@@ -385,7 +407,7 @@ function ReverseRelationCell({ links, sourceObjectName, onNavigateObject, onNavi
 						if (!onNavigateEntry && !onNavigateObject) {return;}
 						e.stopPropagation();
 						if (onNavigateEntry) {
-							onNavigateEntry(sourceObjectName, link.id);
+							onNavigateEntry(sourceObjectName, link.id, sourceObjectId);
 							return;
 						}
 						onNavigateObject?.(sourceObjectName);
@@ -403,33 +425,45 @@ function ReverseRelationCell({ links, sourceObjectName, onNavigateObject, onNavi
 
 /* ─── Inline Edit Cell ─── */
 
-function EditableCell({
-	value: initialValue,
-	entryId,
-	fieldName,
-	objectName,
-	field,
-	members,
-	relationLabels,
-	onNavigateObject,
-	onNavigateEntry,
-	onLocalValueChange,
-	onSaved,
-	showUrlFavicon = false,
-}: {
+type EditableCellProps = {
 	value: unknown;
 	entryId: string;
 	fieldName: string;
 	objectName: string;
 	field: Field;
 	members?: Array<{ id: string; name: string }>;
-	relationLabels?: Record<string, Record<string, string>>;
+	/** Labels for THIS field only (relation fields). Pre-narrowed from the
+	 * parent's full relationLabels map so non-relation cells don't bust their
+	 * memo when the unrelated parts of the map change. */
+	fieldRelationLabels?: Record<string, string>;
 	onNavigateObject?: (objectName: string) => void;
-	onNavigateEntry?: (objectName: string, entryId: string) => void;
-	onLocalValueChange?: (value: string) => void;
+	onNavigateEntry?: (
+		objectName: string,
+		entryId: string,
+		relatedObjectId?: string,
+	) => void;
+	/** Stable callback that receives the (entryId, fieldName, value) tuple
+	 * so each cell doesn't have to bind its own arrow (which would bust
+	 * the surrounding React.memo). */
+	onLocalValueChange?: (entryId: string, fieldName: string, value: string) => void;
 	onSaved?: () => void;
 	showUrlFavicon?: boolean;
-}) {
+};
+
+function EditableCellInner({
+	value: initialValue,
+	entryId,
+	fieldName,
+	objectName,
+	field,
+	members,
+	fieldRelationLabels,
+	onNavigateObject,
+	onNavigateEntry,
+	onLocalValueChange,
+	onSaved,
+	showUrlFavicon = false,
+}: EditableCellProps) {
 	const [editing, setEditing] = useState(false);
 	const [localValue, setLocalValue] = useState(safeString(initialValue));
 	const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null);
@@ -451,7 +485,7 @@ function EditableCell({
 	const isTags = field.type === "tags";
 
 	const save = useCallback(async (val: string) => {
-		onLocalValueChange?.(val);
+		onLocalValueChange?.(entryId, fieldName, val);
 		try {
 			await fetch(`/api/workspace/objects/${encodeURIComponent(objectName)}/entries/${encodeURIComponent(entryId)}`, {
 				method: "PATCH",
@@ -597,7 +631,7 @@ function EditableCell({
 				<RelationCell
 					value={initialValue}
 					field={field}
-					relationLabels={relationLabels}
+					fieldLabels={fieldRelationLabels}
 					onNavigateObject={onNavigateObject}
 					onNavigateEntry={onNavigateEntry}
 				/>
@@ -643,6 +677,40 @@ function EditableCell({
 	);
 }
 
+/** React.memo wrapper for the inline-edit cell. With stable parent props
+ * (Layer 3 fixes), this is the dominant per-cell perf win — cells whose
+ * value/field hasn't changed will skip rendering entirely on a row that
+ * does need to re-render (e.g. a sibling cell's value changed). */
+const EditableCell = React.memo(EditableCellInner);
+
+/* ─── First-column sticky bold link ─── */
+
+type FirstColumnCellProps = {
+	value: unknown;
+	entryId: string;
+	onEntryClick?: (entryId: string) => void;
+};
+
+function FirstColumnCellInner({ value, entryId, onEntryClick }: FirstColumnCellProps) {
+	const displayVal = value === null || value === undefined || value === "" ? "--" : safeString(value);
+	const isEmpty = displayVal === "--";
+	const handleClick = useCallback((e: React.MouseEvent) => {
+		e.stopPropagation();
+		if (entryId && !isEmpty && onEntryClick) {onEntryClick(entryId);}
+	}, [entryId, isEmpty, onEntryClick]);
+	return (
+		<span
+			className={`font-semibold truncate block max-w-[300px] ${isEmpty || !onEntryClick ? "" : "cursor-pointer hover:underline"}`}
+			style={{ color: isEmpty ? "var(--color-text-muted)" : "var(--color-accent)", opacity: isEmpty ? 0.5 : 1 }}
+			onClick={handleClick}
+		>
+			{displayVal}
+		</span>
+	);
+}
+
+const FirstColumnCell = React.memo(FirstColumnCellInner);
+
 /* ─── Main ObjectTable ─── */
 
 function parseActionConfig(defaultValue: string | null | undefined): ActionConfig[] {
@@ -672,6 +740,12 @@ export function ObjectTable({
 	onColumnSizingChanged,
 	serverPagination,
 	onServerSearch,
+	hideInternalToolbar,
+	globalFilter,
+	onGlobalFilterChange,
+	onAddRequest,
+	stickyFirstColumnValue,
+	onStickyFirstColumnChange,
 }: ObjectTableProps) {
 	const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -720,6 +794,36 @@ export function ObjectTable({
 		if (!reverseRelations) {return [];}
 		return reverseRelations.filter((rr) => Object.keys(rr.entries).length > 0);
 	}, [reverseRelations]);
+
+	// Precompute the first URL favicon per entry once (instead of recomputing
+	// per row, per render, which used to walk every cell of every row and
+	// run ~5 regexes per cell value). With this map, the row component only
+	// does an O(1) lookup. This is the single biggest selection-perf win on
+	// large pages.
+	const faviconUrlByEntryId = useMemo(() => {
+		const urlFields = dataFields.filter((f) => f.type === "url");
+		const candidateFields = urlFields.length > 0 ? urlFields : dataFields;
+		const map = new Map<string, string>();
+		for (const entry of localEntries) {
+			const eid = entry.entry_id;
+			if (eid == null) {continue;}
+			const entryId = String(typeof eid === "object" ? JSON.stringify(eid) : eid);
+			if (!entryId) {continue;}
+			const url = computeEntryFaviconUrl(entry, candidateFields);
+			if (url) {map.set(entryId, url);}
+		}
+		return map;
+	}, [localEntries, dataFields]);
+
+	const getRowFaviconUrl = useCallback(
+		(row: { original: EntryRow }) => {
+			const eid = row.original.entry_id;
+			if (eid == null) {return undefined;}
+			const entryId = String(typeof eid === "object" ? JSON.stringify(eid) : eid);
+			return faviconUrlByEntryId.get(entryId);
+		},
+		[faviconUrlByEntryId],
+	);
 
 	// Column management handlers
 	const handleColumnReorder = useCallback(
@@ -782,89 +886,91 @@ export function ObjectTable({
 		}
 	}, [dataFields, handleColumnReorder]);
 
-	// Build TanStack columns from fields (excluding action fields)
+	// Build TanStack columns from fields (excluding action fields).
+	// We use stable, hoisted memo'd cell components (FirstColumnCell,
+	// EditableCell) so flexRender's child subtree can be skipped when
+	// the cell's actual displayed values haven't changed.
 	const columns = useMemo<ColumnDef<EntryRow>[]>(() => {
-		const cols: ColumnDef<EntryRow>[] = dataFields.map((field, fieldIdx) => ({
-			id: field.id,
-			accessorKey: field.name,
-			meta: { label: field.name, fieldName: field.name, fieldType: field.type },
-			header: ({ column }: { column: { getIsSorted: () => "asc" | "desc" | false; toggleSorting: (desc: boolean) => void; toggleVisibility: (visible: boolean) => void } }) => {
-				if (renamingFieldId === field.id) {
+		const cols: ColumnDef<EntryRow>[] = dataFields.map((field, fieldIdx) => {
+			// Pre-narrow relation labels to just THIS field so non-relation
+			// cells don't bust their memo when an unrelated field's labels change.
+			const fieldRelationLabels = field.type === "relation"
+				? relationLabels?.[field.name]
+				: undefined;
+			return {
+				id: field.id,
+				accessorKey: field.name,
+				meta: { label: field.name, fieldName: field.name, fieldType: field.type },
+				header: ({ column }: { column: { getIsSorted: () => "asc" | "desc" | false; toggleSorting: (desc: boolean) => void; toggleVisibility: (visible: boolean) => void } }) => {
+					if (renamingFieldId === field.id) {
+						return (
+							<InlineRenameInput
+								currentName={field.name}
+								onSave={(newName) => void handleRenameColumn(field.id, newName)}
+								onCancel={() => setRenamingFieldId(null)}
+							/>
+						);
+					}
 					return (
-						<InlineRenameInput
-							currentName={field.name}
-							onSave={(newName) => void handleRenameColumn(field.id, newName)}
-							onCancel={() => setRenamingFieldId(null)}
-						/>
-					);
-				}
-				return (
-					<span className="flex items-center gap-1.5 w-full" style={{ color: "var(--color-text-muted)" }}>
-						<FieldTypeIcon type={field.type} size={12} className="shrink-0 opacity-50" />
-						<span className="truncate">{field.name}</span>
-						{field.type === "relation" && field.related_object_name && (
-							<span className="text-[9px] font-normal normal-case tracking-normal opacity-60 shrink-0">
-								({field.related_object_name})
-							</span>
-						)}
-						<ColumnHeaderMenu
-							field={field}
-							sortDirection={column.getIsSorted()}
-							onSort={(desc) => column.toggleSorting(desc)}
-							onHide={() => column.toggleVisibility(false)}
-							onRename={() => setRenamingFieldId(field.id)}
-							onDelete={() => handleDeleteColumn(field.id, field.name)}
-							canMoveLeft={fieldIdx > 0}
-							canMoveRight={fieldIdx < dataFields.length - 1}
-							onMoveLeft={() => handleMoveColumn(field.id, "left")}
-							onMoveRight={() => handleMoveColumn(field.id, "right")}
-						/>
-					</span>
-				);
-			},
-			cell: (info: CellContext<EntryRow, unknown>) => {
-				const eid = info.row.original.entry_id;
-				const entryId = String(eid != null && typeof eid === "object" ? JSON.stringify(eid) : (eid ?? ""));
-
-				// First column (sticky): bold link that opens the entry detail modal
-				if (fieldIdx === 0 && onEntryClick) {
-					const val = info.getValue();
-					const displayVal = val === null || val === undefined || val === "" ? "--" : safeString(val);
-					const isEmpty = displayVal === "--";
-					return (
-						<span
-							className={`font-semibold truncate block max-w-[300px] ${isEmpty ? "" : "cursor-pointer hover:underline"}`}
-							style={{ color: isEmpty ? "var(--color-text-muted)" : "var(--color-accent)", opacity: isEmpty ? 0.5 : 1 }}
-							onClick={(e) => {
-								e.stopPropagation();
-								if (entryId && !isEmpty) {onEntryClick(entryId);}
-							}}
-						>
-							{displayVal}
+						<span className="flex items-center gap-1.5 w-full" style={{ color: "var(--color-text-muted)" }}>
+							<FieldTypeIcon type={field.type} size={12} className="shrink-0 opacity-50" />
+							<span className="truncate">{field.name}</span>
+							{field.type === "relation" && field.related_object_name && (
+								<span className="text-[9px] font-normal normal-case tracking-normal opacity-60 shrink-0">
+									({displayObjectName(field.related_object_name)})
+								</span>
+							)}
+							<ColumnHeaderMenu
+								field={field}
+								sortDirection={column.getIsSorted()}
+								onSort={(desc) => column.toggleSorting(desc)}
+								onHide={() => column.toggleVisibility(false)}
+								onRename={() => setRenamingFieldId(field.id)}
+								onDelete={() => handleDeleteColumn(field.id, field.name)}
+								canMoveLeft={fieldIdx > 0}
+								canMoveRight={fieldIdx < dataFields.length - 1}
+								onMoveLeft={() => handleMoveColumn(field.id, "left")}
+								onMoveRight={() => handleMoveColumn(field.id, "right")}
+							/>
 						</span>
 					);
-				}
+				},
+				cell: (info: CellContext<EntryRow, unknown>) => {
+					const eid = info.row.original.entry_id;
+					const entryId = String(eid != null && typeof eid === "object" ? JSON.stringify(eid) : (eid ?? ""));
 
-				return (
-					<EditableCell
-						value={info.getValue()}
-						entryId={entryId}
-						fieldName={field.name}
-						objectName={objectName}
-						field={field}
-						members={members}
-						relationLabels={relationLabels}
-						onNavigateObject={onNavigateToObject}
-						onNavigateEntry={onNavigateToEntry}
-						onLocalValueChange={(value) => updateLocalEntryField(entryId, field.name, value)}
-						onSaved={onRefresh}
-						showUrlFavicon={fieldIdx !== 0}
-					/>
-				);
-			},
-			size: field.type === "richtext" ? 300 : field.type === "relation" || field.type === "tags" ? 220 : 200,
-			enableSorting: true,
-		}));
+					// First column (sticky): bold link that opens the entry detail modal.
+					if (fieldIdx === 0 && onEntryClick) {
+						return (
+							<FirstColumnCell
+								value={info.getValue()}
+								entryId={entryId}
+								onEntryClick={onEntryClick}
+							/>
+						);
+					}
+
+					return (
+						<EditableCell
+							value={info.getValue()}
+							entryId={entryId}
+							fieldName={field.name}
+							objectName={objectName}
+							field={field}
+							members={members}
+							fieldRelationLabels={fieldRelationLabels}
+							onNavigateObject={onNavigateToObject}
+							onNavigateEntry={onNavigateToEntry}
+							onLocalValueChange={updateLocalEntryField}
+							onSaved={onRefresh}
+							showUrlFavicon={fieldIdx !== 0}
+						/>
+					);
+				},
+				size: field.type === "richtext" ? 300 : field.type === "relation" || field.type === "tags" ? 220 : 200,
+				enableSorting: true,
+			};
+		});
 
 		cols.push({
 			id: "created_at",
@@ -902,13 +1008,13 @@ export function ObjectTable({
 		for (const rr of activeReverseRelations) {
 			cols.push({
 				id: `rev_${rr.sourceObjectName}_${rr.fieldName}`,
-				meta: { label: `${rr.sourceObjectName} (via ${rr.fieldName})`, fieldType: "relation" },
+				meta: { label: `${displayObjectName(rr.sourceObjectName)} (via ${rr.fieldName})`, fieldType: "relation" },
 				header: () => (
 					<span className="flex items-center gap-1.5" style={{ color: "var(--color-text-muted)" }}>
 						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
 							<path d="m12 19-7-7 7-7" /><path d="M19 12H5" />
 						</svg>
-						<span className="capitalize">{rr.sourceObjectName}</span>
+						<span>{displayObjectName(rr.sourceObjectName)}</span>
 						<span className="text-[9px] font-normal normal-case tracking-normal opacity-50">via {rr.fieldName}</span>
 					</span>
 				),
@@ -920,6 +1026,7 @@ export function ObjectTable({
 						<ReverseRelationCell
 							links={links}
 							sourceObjectName={rr.sourceObjectName}
+							sourceObjectId={rr.sourceObjectId}
 							onNavigateObject={onNavigateToObject}
 							onNavigateEntry={onNavigateToEntry}
 						/>
@@ -990,12 +1097,19 @@ export function ObjectTable({
 		});
 
 		return cols;
-	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onRefresh, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn]);
+		// `onEntryClick` and `updateLocalEntryField` are read inside the `cell`
+		// closures and were missing from the original deps (stale-closure bug);
+		// they're included now.
+	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn]);
 
-	// Add entry handler — opens modal instead of creating empty entry
+	// Add entry handler — delegates to parent when provided, otherwise opens local modal.
 	const handleAdd = useCallback(() => {
-		setShowAddModal(true);
-	}, []);
+		if (onAddRequest) {
+			onAddRequest();
+		} else {
+			setShowAddModal(true);
+		}
+	}, [onAddRequest]);
 
 	const getSelectedEntryIds = useCallback(() => {
 		return Object.keys(rowSelection)
@@ -1113,21 +1227,26 @@ export function ObjectTable({
 			rowSelection={rowSelection}
 			onRowSelectionChange={setRowSelection}
 			onColumnReorder={handleColumnReorder}
-			searchPlaceholder={`Search ${objectName}...`}
+			searchPlaceholder={`Search ${displayObjectName(objectName)}...`}
 			onRefresh={onRefresh}
 			onAdd={handleAdd}
 			addButtonLabel="+ Add"
 			rowActions={getRowActions}
 			stickyFirstColumn
+			stickyFirstColumnValue={stickyFirstColumnValue}
+			onStickyFirstColumnChange={onStickyFirstColumnChange}
 			activeRowId={activeEntryId}
-			getRowId={(row) => String(row.entry_id ?? "")}
+			getRowId={getRowIdFromEntry}
 			initialColumnVisibility={columnVisibility}
 			onColumnVisibilityChanged={onColumnVisibilityChanged}
 			initialColumnSizing={columnSizing}
 			onColumnSizingChange={onColumnSizingChanged}
 			serverPagination={serverPagination}
 			onServerSearch={onServerSearch}
-			getFirstDataColumnFaviconUrl={getFirstUrlColumnFaviconUrl}
+			hideToolbar={hideInternalToolbar}
+			globalFilter={globalFilter}
+			onGlobalFilterChange={onGlobalFilterChange}
+			getFirstDataColumnFaviconUrl={getRowFaviconUrl}
 		/>
 
 		<BulkActionBar
@@ -1166,7 +1285,7 @@ export function ObjectTable({
 
 /* ─── Add Entry Modal ─── */
 
-function AddEntryModal({
+export function AddEntryModal({
 	objectName,
 	fields,
 	members,
@@ -1234,8 +1353,8 @@ function AddEntryModal({
 					className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
 					style={{ borderColor: "var(--color-border)" }}
 				>
-					<h2 className="text-lg font-semibold capitalize" style={{ color: "var(--color-text)" }}>
-						Add {objectName}
+					<h2 className="text-lg font-semibold" style={{ color: "var(--color-text)" }}>
+						Add {displayObjectNameSingular(objectName)}
 					</h2>
 					<button type="button" onClick={onClose} className="p-1.5 rounded-lg" style={{ color: "var(--color-text-muted)" }}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1262,7 +1381,7 @@ function AddEntryModal({
 									{field.name}
 									{isRelation && field.related_object_name && (
 										<span className="normal-case tracking-normal font-normal opacity-60 ml-1">
-											({field.related_object_name})
+											({displayObjectName(field.related_object_name)})
 										</span>
 									)}
 								</label>
@@ -1330,7 +1449,7 @@ function AddEntryModal({
 										value={values[field.name] ?? ""}
 										multiple={field.relationship_type === "many_to_many"}
 										onChange={(v) => updateField(field.name, v)}
-										placeholder={`Select ${field.related_object_name}...`}
+										placeholder={`Select ${displayObjectNameSingular(field.related_object_name)}...`}
 									/>
 								) : isUser ? (
 									<select

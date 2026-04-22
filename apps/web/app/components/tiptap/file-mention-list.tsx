@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { SearchIndexItem } from "@/lib/search-index";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import {
 	IconFolderFilled,
 	IconFileFilled,
@@ -181,8 +182,11 @@ const FileMentionList = forwardRef<FileMentionListRef, FileMentionListProps>(
 			const category = getFileCategory(item.name, item.type);
 			const hasEmoji = item.icon && /\p{Emoji_Presentation}/u.test(item.icon);
 			const isDbItem = item.type === "object" || item.type === "entry";
+			const displayName = item.type === "object"
+				? displayObjectName(item.name)
+				: item.name;
 			const sublabel = item.type === "entry" && item.objectName
-				? item.objectName
+				? displayObjectNameSingular(item.objectName)
 				: isDbItem
 					? (item.defaultView === "kanban" ? "Board" : "Table")
 					: shortenPath(item.path);
@@ -205,7 +209,7 @@ const FileMentionList = forwardRef<FileMentionListRef, FileMentionListProps>(
 					</span>
 					<div className="min-w-0 flex-1">
 						<div className="text-sm font-medium truncate">
-							{item.name}
+							{displayName}
 						</div>
 						<div
 							className="text-xs truncate"

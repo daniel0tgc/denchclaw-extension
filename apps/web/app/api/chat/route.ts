@@ -54,10 +54,15 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
 function extractImageAttachmentsFromMessage(
 	text: string,
 ): ImageAttachment[] {
-	const match = text.match(/\[Attached files: (.+?)\]/);
-	if (!match) return [];
+	const prefix = "[Attached files: ";
+	const start = text.indexOf(prefix);
+	if (start === -1) return [];
+	const innerStart = start + prefix.length;
+	const close = text.indexOf("]", innerStart);
+	if (close === -1) return [];
 	const workspaceRoot = resolveWorkspaceRoot();
-	const paths = match[1]
+	const paths = text
+		.slice(innerStart, close)
 		.split(", ")
 		.map((p) => p.trim())
 		.filter(Boolean);

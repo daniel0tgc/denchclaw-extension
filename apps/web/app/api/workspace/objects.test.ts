@@ -17,9 +17,15 @@ vi.mock("@/lib/workspace", () => ({
   findDuckDBForObjectAsync: vi.fn(async () => null),
   getObjectViews: vi.fn(() => ({ views: [], activeView: null })),
   parseRelationValue: vi.fn((v: string | null) => (v ? [v] : [])),
+  pivotViewIdentifier: (objectName: string) => {
+    const normalized = objectName.replace(/-/g, "_");
+    const escaped = normalized.replace(/"/g, '""');
+    return `"v_${escaped}"`;
+  },
   resolveDuckdbBin: vi.fn(() => null),
   discoverDuckDBPaths: vi.fn(() => []),
   discoverDuckDBPathsAsync: vi.fn(async () => []),
+  readObjectYamlIcon: vi.fn(() => undefined),
 }));
 
 describe("Workspace Objects API", () => {
@@ -39,9 +45,15 @@ describe("Workspace Objects API", () => {
       findDuckDBForObjectAsync: vi.fn(async () => null),
       getObjectViews: vi.fn(() => ({ views: [], activeView: null })),
       parseRelationValue: vi.fn((v: string | null) => (v ? [v] : [])),
+      pivotViewIdentifier: (objectName: string) => {
+        const normalized = objectName.replace(/-/g, "_");
+        const escaped = normalized.replace(/"/g, '""');
+        return `"v_${escaped}"`;
+      },
       resolveDuckdbBin: vi.fn(() => null),
       discoverDuckDBPaths: vi.fn(() => []),
       discoverDuckDBPathsAsync: vi.fn(async () => []),
+      readObjectYamlIcon: vi.fn(() => undefined),
     }));
   });
 

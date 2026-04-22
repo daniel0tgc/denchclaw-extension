@@ -32,10 +32,12 @@ When the user says "freeze to [directory]" or when [investigate](../investigate/
 ```
 
 ### Allowed
+
 - Any file under the frozen directory
 - Reading files anywhere (read-only is always allowed)
 
 ### Blocked
+
 - Editing files outside the frozen directory
 - Creating new files outside the frozen directory
 

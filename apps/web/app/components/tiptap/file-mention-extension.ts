@@ -1,6 +1,7 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { type SuggestionOptions } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
+import { displayObjectName } from "@/lib/object-display-name";
 
 export const chatFileMentionPluginKey = new PluginKey("chatFileMention");
 
@@ -50,6 +51,7 @@ export const FileMentionNode = Node.create({
 		const mType = (HTMLAttributes.mentionType as string) || "file";
 		const dView = (HTMLAttributes.defaultView as string) || "";
 		const colors = mentionColors(label, mType);
+		const visibleLabel = mType === "object" ? displayObjectName(label) : label;
 		return [
 			"span",
 			mergeAttributes(
@@ -63,7 +65,7 @@ export const FileMentionNode = Node.create({
 				},
 				HTMLAttributes,
 			),
-			label,
+			visibleLabel,
 		];
 	},
 });

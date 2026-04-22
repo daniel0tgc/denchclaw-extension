@@ -29,15 +29,18 @@ Before reviewing, understand context:
 ## Step 0: Nuclear Scope Challenge + Mode Selection
 
 ### 0A. Premise Challenge
+
 1. Is this the right problem to solve? Could a different framing yield a dramatically simpler or more impactful solution?
 2. What is the actual user/business outcome? Is the plan the most direct path?
 3. What would happen if we did nothing? Real pain point or hypothetical?
 
 ### 0B. Existing Code Leverage
+
 1. What existing code already partially solves each sub-problem?
 2. Is this plan rebuilding anything that already exists?
 
 ### 0C. Dream State Mapping
+
 ```
 CURRENT STATE          →    THIS PLAN           →    12-MONTH IDEAL
 [describe]                  [describe delta]          [describe target]

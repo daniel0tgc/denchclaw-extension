@@ -20,9 +20,18 @@ vi.mock("node:fs/promises", () => ({
 // Mock node:child_process
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(() => ""),
+  execFileSync: vi.fn(() => ""),
   exec: vi.fn((_cmd: string, _opts: unknown, cb: (err: Error | null, result: { stdout: string }) => void) => {
     cb(null, { stdout: "" });
   }),
+  execFile: vi.fn((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, result: { stdout: string }) => void) => {
+    cb(null, { stdout: "" });
+  }),
+  spawn: vi.fn(() => ({
+    on: vi.fn(),
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+  })),
 }));
 
 // Mock node:os
@@ -80,9 +89,18 @@ describe("workspace utilities", () => {
     }));
     vi.mock("node:child_process", () => ({
       execSync: vi.fn(() => ""),
+      execFileSync: vi.fn(() => ""),
       exec: vi.fn((_cmd: string, _opts: unknown, cb: (err: Error | null, result: { stdout: string }) => void) => {
         cb(null, { stdout: "" });
       }),
+      execFile: vi.fn((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, result: { stdout: string }) => void) => {
+        cb(null, { stdout: "" });
+      }),
+      spawn: vi.fn(() => ({
+        on: vi.fn(),
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+      })),
     }));
     vi.mock("node:os", () => ({
       homedir: vi.fn(() => "/home/testuser"),
@@ -97,7 +115,7 @@ describe("workspace utilities", () => {
   async function importWorkspace() {
     const { existsSync: es, readFileSync: rfs, readdirSync: rds } = await import("node:fs");
     const { access: acc, readdir: rda } = await import("node:fs/promises");
-    const { execSync: exs } = await import("node:child_process");
+    const { execSync: exs, execFileSync: exfs } = await import("node:child_process");
     const mod = await import("./workspace.js");
     return {
       ...mod,
@@ -107,6 +125,7 @@ describe("workspace utilities", () => {
       mockAccess: vi.mocked(acc),
       mockReaddirAsync: vi.mocked(rda),
       mockExec: vi.mocked(exs),
+      mockExecFileSync: vi.mocked(exfs),
     };
   }
 
@@ -454,23 +473,23 @@ describe("workspace utilities", () => {
   describe("duckdbQuery", () => {
     it("returns parsed JSON rows on success", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQuery, mockExists, mockExecFileSync } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return s === WS_DIR || s === rootDb || s === bin;
       });
-      mockExec.mockReturnValue('[{"id":"1","name":"test"}]' as never);
+      mockExecFileSync.mockReturnValue('[{"id":"1","name":"test"}]' as never);
       const result = duckdbQuery("SELECT * FROM objects");
       expect(result).toEqual([{ id: "1", name: "test" }]);
     });
 
     it("returns empty array for empty result", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQuery, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockReturnValue(true);
-      mockExec.mockReturnValue("[]" as never);
+      mockExecFileSync.mockReturnValue("[]" as never);
       expect(duckdbQuery("SELECT * FROM empty")).toEqual([]);
     });
 
@@ -481,11 +500,11 @@ describe("workspace utilities", () => {
       expect(duckdbQuery("SELECT 1")).toEqual([]);
     });
 
-    it("returns empty array on execSync error", async () => {
+    it("returns empty array on execFileSync error", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQuery, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQuery, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockReturnValue(true);
-      mockExec.mockImplementation(() => { throw new Error("query failed"); });
+      mockExecFileSync.mockImplementation(() => { throw new Error("query failed"); });
       expect(duckdbQuery("BAD SQL")).toEqual([]);
     });
   });
@@ -496,7 +515,7 @@ describe("workspace utilities", () => {
     it("returns parsed JSON rows on success", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists, mockAccess } = await importWorkspace();
-      const { exec: mockExecFn } = await import("node:child_process");
+      const { execFile: mockExecFileFn } = await import("node:child_process");
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
@@ -507,10 +526,12 @@ describe("workspace utilities", () => {
         if (String(p) === rootDb) {return;}
         throw new Error("ENOENT");
       });
-      vi.mocked(mockExecFn).mockImplementation((_cmd: unknown, _opts: unknown, cb: unknown) => {
-        (cb as (err: null, r: { stdout: string }) => void)(null, { stdout: '[{"id":"1"}]' });
-        return {} as never;
-      });
+      vi.mocked(mockExecFileFn).mockImplementation(
+        (_cmd: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+          (cb as (err: null, r: { stdout: string }) => void)(null, { stdout: '[{"id":"1"}]' });
+          return {} as never;
+        },
+      );
       const result = await duckdbQueryAsync("SELECT * FROM t");
       expect(result).toEqual([{ id: "1" }]);
     });
@@ -529,27 +550,31 @@ describe("workspace utilities", () => {
     it("returns empty array for empty stdout", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists, mockAccess } = await importWorkspace();
-      const { exec: mockExecFn } = await import("node:child_process");
+      const { execFile: mockExecFileFn } = await import("node:child_process");
       mockExists.mockReturnValue(true);
       mockAccess.mockImplementation(async () => undefined);
-      vi.mocked(mockExecFn).mockImplementation((_cmd: unknown, _opts: unknown, cb: unknown) => {
-        (cb as (err: null, r: { stdout: string }) => void)(null, { stdout: "" });
-        return {} as never;
-      });
+      vi.mocked(mockExecFileFn).mockImplementation(
+        (_cmd: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+          (cb as (err: null, r: { stdout: string }) => void)(null, { stdout: "" });
+          return {} as never;
+        },
+      );
       const result = await duckdbQueryAsync("SELECT 1");
       expect(result).toEqual([]);
     });
 
-    it("returns empty array on exec error", async () => {
+    it("returns empty array on execFile error", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { duckdbQueryAsync, mockExists, mockAccess } = await importWorkspace();
-      const { exec: mockExecFn } = await import("node:child_process");
+      const { execFile: mockExecFileFn } = await import("node:child_process");
       mockExists.mockReturnValue(true);
       mockAccess.mockImplementation(async () => undefined);
-      vi.mocked(mockExecFn).mockImplementation((_cmd: unknown, _opts: unknown, cb: unknown) => {
-        (cb as (err: Error) => void)(new Error("fail"));
-        return {} as never;
-      });
+      vi.mocked(mockExecFileFn).mockImplementation(
+        (_cmd: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+          (cb as (err: Error) => void)(new Error("fail"));
+          return {} as never;
+        },
+      );
       const result = await duckdbQueryAsync("BAD SQL");
       expect(result).toEqual([]);
     });
@@ -560,7 +585,7 @@ describe("workspace utilities", () => {
   describe("duckdbQueryAll", () => {
     it("merges results from multiple databases", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { duckdbQueryAll, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
@@ -575,7 +600,7 @@ describe("workspace utilities", () => {
         return [] as unknown as Dirent[];
       });
       let callCount = 0;
-      mockExec.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         callCount++;
         if (callCount <= 1) {return '[{"name":"rootObj"}]' as never;}
         return '[{"name":"subObj"}]' as never;
@@ -586,7 +611,7 @@ describe("workspace utilities", () => {
 
     it("deduplicates by key (shallower wins)", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { duckdbQueryAll, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
@@ -599,7 +624,7 @@ describe("workspace utilities", () => {
         return [] as unknown as Dirent[];
       });
       let callCount = 0;
-      mockExec.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         callCount++;
         if (callCount <= 1) {return '[{"name":"obj","val":"root"}]' as never;}
         return '[{"name":"obj","val":"sub"}]' as never;
@@ -617,7 +642,7 @@ describe("workspace utilities", () => {
 
     it("skips failing databases", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbQueryAll, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { duckdbQueryAll, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const subDb = join(WS_DIR, "sub", "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
@@ -630,7 +655,7 @@ describe("workspace utilities", () => {
         return [] as unknown as Dirent[];
       });
       let callCount = 0;
-      mockExec.mockImplementation(() => {
+      mockExecFileSync.mockImplementation(() => {
         callCount++;
         if (callCount <= 1) {throw new Error("corrupt db");}
         return '[{"name":"subObj"}]' as never;
@@ -645,7 +670,7 @@ describe("workspace utilities", () => {
   describe("findDuckDBForObject", () => {
     it("finds object in first database", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { findDuckDBForObject, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
@@ -653,13 +678,13 @@ describe("workspace utilities", () => {
         return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
-      mockExec.mockReturnValue('[{"id":"123"}]' as never);
+      mockExecFileSync.mockReturnValue('[{"id":"123"}]' as never);
       expect(findDuckDBForObject("leads")).toBe(rootDb);
     });
 
     it("returns null when object not found in any db", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { findDuckDBForObject, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
@@ -667,7 +692,7 @@ describe("workspace utilities", () => {
         return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
-      mockExec.mockReturnValue("[]" as never);
+      mockExecFileSync.mockReturnValue("[]" as never);
       expect(findDuckDBForObject("nonexistent")).toBeNull();
     });
 
@@ -680,7 +705,7 @@ describe("workspace utilities", () => {
 
     it("handles object names with single quotes", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { findDuckDBForObject, mockExists, mockExec, mockReaddir } = await importWorkspace();
+      const { findDuckDBForObject, mockExists, mockExecFileSync, mockReaddir } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
@@ -688,7 +713,7 @@ describe("workspace utilities", () => {
         return s === WS_DIR || s === rootDb || s === bin;
       });
       mockReaddir.mockReturnValue([]);
-      mockExec.mockReturnValue('[{"id":"1"}]' as never);
+      mockExecFileSync.mockReturnValue('[{"id":"1"}]' as never);
       expect(findDuckDBForObject("O'Brien's")).toBe(rootDb);
     });
   });
@@ -698,14 +723,14 @@ describe("workspace utilities", () => {
   describe("duckdbExec", () => {
     it("returns true on successful exec", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
-      const { duckdbExec, mockExists, mockExec } = await importWorkspace();
+      const { duckdbExec, mockExists, mockExecFileSync } = await importWorkspace();
       const rootDb = join(WS_DIR, "workspace.duckdb");
       const bin = "/opt/homebrew/bin/duckdb";
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return s === WS_DIR || s === rootDb || s === bin;
       });
-      mockExec.mockReturnValue("" as never);
+      mockExecFileSync.mockReturnValue("" as never);
       expect(duckdbExec("INSERT INTO t VALUES (1)")).toBe(true);
     });
 
@@ -719,23 +744,23 @@ describe("workspace utilities", () => {
 
   describe("duckdbExecOnFile", () => {
     it("returns true on success", async () => {
-      const { duckdbExecOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbExecOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockImplementation((p) => String(p) === "/opt/homebrew/bin/duckdb");
-      mockExec.mockReturnValue("" as never);
+      mockExecFileSync.mockReturnValue("" as never);
       expect(duckdbExecOnFile("/db/file.duckdb", "CREATE TABLE t(id INT)")).toBe(true);
     });
 
     it("returns false when no bin", async () => {
-      const { duckdbExecOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbExecOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockReturnValue(false);
-      mockExec.mockImplementation(() => { throw new Error("not found"); });
+      mockExecFileSync.mockImplementation(() => { throw new Error("not found"); });
       expect(duckdbExecOnFile("/db/file.duckdb", "SQL")).toBe(false);
     });
 
     it("returns false on exec error", async () => {
-      const { duckdbExecOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbExecOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockImplementation((p) => String(p) === "/opt/homebrew/bin/duckdb");
-      mockExec.mockImplementation(() => { throw new Error("exec failed"); });
+      mockExecFileSync.mockImplementation(() => { throw new Error("exec failed"); });
       expect(duckdbExecOnFile("/db/file.duckdb", "BAD SQL")).toBe(false);
     });
   });
@@ -862,23 +887,23 @@ describe("workspace utilities", () => {
 
   describe("duckdbQueryOnFile", () => {
     it("executes query against specific db file", async () => {
-      const { duckdbQueryOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQueryOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockImplementation((p) => String(p) === "/opt/homebrew/bin/duckdb");
-      mockExec.mockReturnValue('[{"col":"val"}]' as never);
+      mockExecFileSync.mockReturnValue('[{"col":"val"}]' as never);
       expect(duckdbQueryOnFile("/any/db.duckdb", "SELECT *")).toEqual([{ col: "val" }]);
     });
 
     it("returns empty array when no bin found", async () => {
-      const { duckdbQueryOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQueryOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockReturnValue(false);
-      mockExec.mockImplementation(() => { throw new Error("not found"); });
+      mockExecFileSync.mockImplementation(() => { throw new Error("not found"); });
       expect(duckdbQueryOnFile("/any/db.duckdb", "SELECT *")).toEqual([]);
     });
 
     it("returns empty for empty result", async () => {
-      const { duckdbQueryOnFile, mockExists, mockExec } = await importWorkspace();
+      const { duckdbQueryOnFile, mockExists, mockExecFileSync } = await importWorkspace();
       mockExists.mockImplementation((p) => String(p) === "/opt/homebrew/bin/duckdb");
-      mockExec.mockReturnValue("" as never);
+      mockExecFileSync.mockReturnValue("" as never);
       expect(duckdbQueryOnFile("/any/db.duckdb", "SELECT *")).toEqual([]);
     });
   });

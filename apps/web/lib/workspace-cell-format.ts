@@ -156,24 +156,44 @@ function inferFilePath(raw: string): string | null {
 	return trimmed;
 }
 
+/**
+ * Bare domain or domain+path (no scheme), e.g. `acme.com`, `sub.example.co.uk/path?q=1`.
+ * Requires at least one dot and a TLD-shaped tail (2+ ASCII letters) so we
+ * don't false-match on file paths (`foo.txt`), version numbers (`v1.2.3`),
+ * or arbitrary dotted text. Each label is letters/digits/hyphens, can't start
+ * or end with a hyphen, and the final label must be all letters.
+ */
+const BARE_DOMAIN_RE =
+	/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}(?:\/[^\s]*)?$/i;
+
 function normalizeUrl(raw: string): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed) {return null;}
 	if (trimmed.startsWith("www.")) {
 		return `https://${trimmed}`;
 	}
-	if (!URL_RE.test(trimmed)) {
-		return null;
-	}
-	try {
-		const u = new URL(trimmed);
-		if (u.protocol !== "http:" && u.protocol !== "https:") {
+	if (URL_RE.test(trimmed)) {
+		try {
+			const u = new URL(trimmed);
+			if (u.protocol !== "http:" && u.protocol !== "https:") {
+				return null;
+			}
+			return u.toString();
+		} catch {
 			return null;
 		}
-		return u.toString();
-	} catch {
-		return null;
 	}
+	// Bare domain (e.g. `acme.com`): prepend `http://` so link previews and
+	// outbound clicks resolve. Servers redirect to https when applicable.
+	if (BARE_DOMAIN_RE.test(trimmed)) {
+		try {
+			const u = new URL(`http://${trimmed}`);
+			return u.toString();
+		} catch {
+			return null;
+		}
+	}
+	return null;
 }
 
 function buildGoogleFaviconUrl(href: string): string | undefined {
@@ -492,6 +512,35 @@ function formatByHeuristics(raw: string): FormattedWorkspaceValue {
 	};
 }
 
+/**
+ * Bounded format-result cache. The function runs ~5 regexes per call and is
+ * invoked O(rows × cells) per render — caching by (value, type) makes
+ * repeated renders nearly free. We keep a soft cap and evict the oldest
+ * entries when full (Map preserves insertion order).
+ */
+const FORMAT_CACHE_MAX = 4096;
+const formatCache = new Map<string, FormattedWorkspaceValue>();
+
+function getCachedFormatted(
+	cacheKey: string,
+	compute: () => FormattedWorkspaceValue,
+): FormattedWorkspaceValue {
+	const hit = formatCache.get(cacheKey);
+	if (hit !== undefined) {
+		// Refresh insertion order so frequently-used keys aren't evicted first.
+		formatCache.delete(cacheKey);
+		formatCache.set(cacheKey, hit);
+		return hit;
+	}
+	const value = compute();
+	if (formatCache.size >= FORMAT_CACHE_MAX) {
+		const oldestKey = formatCache.keys().next().value;
+		if (oldestKey !== undefined) {formatCache.delete(oldestKey);}
+	}
+	formatCache.set(cacheKey, value);
+	return value;
+}
+
 export function formatWorkspaceFieldValue(
 	value: unknown,
 	fieldType?: string,
@@ -502,6 +551,19 @@ export function formatWorkspaceFieldValue(
 	}
 
 	const schemaType = normalizeFieldType(fieldType);
+	// Cache key length is bounded so we don't blow memory on long
+	// rich-text values; for those we bypass the cache and just compute.
+	if (raw.length <= 256) {
+		const cacheKey = `${schemaType}\u0000${raw}`;
+		return getCachedFormatted(cacheKey, () => computeFormatted(raw, schemaType));
+	}
+	return computeFormatted(raw, schemaType);
+}
+
+function computeFormatted(
+	raw: string,
+	schemaType: string,
+): FormattedWorkspaceValue {
 	const schemaFormatted = formatBySchema(raw, schemaType);
 	if (schemaFormatted) {
 		return schemaFormatted;

@@ -6,14 +6,7 @@
  * npm pack silently drops. Without this step the published package ships
  * with an empty node_modules/ and `require('next')` fails on user machines.
  */
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 export interface FlattenResult {

@@ -98,7 +98,15 @@ describe("installManagedWebRuntime backup", () => {
     stateDir = path.join(tmpDir, "state");
     packageRoot = path.join(tmpDir, "pkg");
 
-    const standaloneAppDir = path.join(packageRoot, "apps", "web", ".next", "standalone", "apps", "web");
+    const standaloneAppDir = path.join(
+      packageRoot,
+      "apps",
+      "web",
+      ".next",
+      "standalone",
+      "apps",
+      "web",
+    );
     mkdirSync(standaloneAppDir, { recursive: true });
     writeFileSync(path.join(standaloneAppDir, "server.js"), "module.exports = {};", "utf-8");
   });

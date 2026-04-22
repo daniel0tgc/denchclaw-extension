@@ -16,6 +16,7 @@ function defaultState(overrides: Partial<WorkspaceSyncState> = {}): WorkspaceSyn
     activeSessionId: null,
     activeSubagentKey: null,
     fileChatSessionId: null,
+    entryModal: null,
     browseDir: null,
     showHidden: false,
     previewPath: null,
@@ -137,17 +138,42 @@ describe("buildWorkspaceSyncParams core behavior", () => {
     expect(params.has("chat")).toBe(false);
   });
 
-  it("preserves entry param from current URL when path is set (entry modal is independent)", () => {
+  it("includes entry param when entryModal state is set alongside an active path", () => {
     const params = buildWorkspaceSyncParams(
-      defaultState({ activePath: "leads" }),
-      new URLSearchParams("entry=leads:abc"),
+      defaultState({
+        activePath: "leads",
+        entryModal: { objectName: "leads", entryId: "abc" },
+      }),
+      new URLSearchParams(),
     );
     expect(params.get("entry")).toBe("leads:abc");
   });
 
+  it("strips a stale entry param from the URL when entryModal is null (modal closed by navigation)", () => {
+    const params = buildWorkspaceSyncParams(
+      defaultState({ activePath: "leads" }),
+      new URLSearchParams("entry=leads:abc"),
+    );
+    expect(params.has("entry")).toBe(false);
+  });
+
+  it("replaces a stale entry param when navigating to a different entry modal", () => {
+    const params = buildWorkspaceSyncParams(
+      defaultState({
+        activePath: "leads",
+        entryModal: { objectName: "leads", entryId: "new-id" },
+      }),
+      new URLSearchParams("entry=leads:old-id"),
+    );
+    expect(params.get("entry")).toBe("leads:new-id");
+  });
+
   it("does not carry entry param when in chat mode (entry only meaningful with path)", () => {
     const params = buildWorkspaceSyncParams(
-      defaultState({ activeSessionId: "sess-1" }),
+      defaultState({
+        activeSessionId: "sess-1",
+        entryModal: { objectName: "leads", entryId: "abc" },
+      }),
       new URLSearchParams("entry=leads:abc"),
     );
     expect(params.has("entry")).toBe(false);
@@ -164,6 +190,20 @@ describe("buildWorkspaceSyncParams core behavior", () => {
     expect(params.get("view")).toBe("Active");
     expect(params.get("page")).toBe("2");
     expect(params.get("pageSize")).toBe("25");
+  });
+
+  it("drops object-view params when activePath changes (prevents stale view across tables)", () => {
+    const current = new URLSearchParams(
+      "path=tableA&view=Active&filters=e30%3D&cols=name,status&viewType=kanban&sort=W10%3D&page=2&pageSize=25&search=acme",
+    );
+    const params = buildWorkspaceSyncParams(
+      defaultState({ activePath: "tableB" }),
+      current,
+    );
+    expect(params.get("path")).toBe("tableB");
+    for (const k of ["view", "filters", "cols", "viewType", "sort", "page", "pageSize", "search"]) {
+      expect(params.has(k)).toBe(false);
+    }
   });
 
   it("does not carry object-view params in chat mode", () => {

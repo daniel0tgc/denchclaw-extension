@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -63,6 +64,27 @@ export function ProfileSwitcher({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Track the trigger's bounding box so we can portal the dropdown to the
+  // document root (escapes ancestor overflow:hidden / z-index stacking).
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null);
+  useEffect(() => {
+    if (!isOpen) {
+      setDropdownPosition(null);
+      return;
+    }
+    const update = () => {
+      const rect = dropdownRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setDropdownPosition({ top: rect.bottom + 6, left: rect.left });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [isOpen]);
 
   const fetchWorkspaces = useCallback(async () => {
     try {
@@ -92,6 +114,8 @@ export function ProfileSwitcher({
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as Element;
       if (dropdownRef.current && !dropdownRef.current.contains(target)) {
+        // Clicks inside the portaled dropdown shouldn't close it.
+        if (target.closest?.('[data-profile-switcher-portal]')) return;
         if (target.closest?.('[data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-content"]')) return;
         setIsOpen(false);
       }
@@ -204,9 +228,11 @@ export function ProfileSwitcher({
         </button>
       )}
 
-      {showSwitcher && isOpen && (
+      {showSwitcher && isOpen && dropdownPosition && typeof document !== "undefined" && createPortal(
         <div
-          className="absolute left-0 top-full mt-1.5 w-64 rounded-2xl overflow-hidden z-50 p-1 bg-neutral-100/[0.67] dark:bg-neutral-900/[0.67] border border-white dark:border-white/10 backdrop-blur-md shadow-[0_0_25px_0_rgba(0,0,0,0.16)]"
+          data-profile-switcher-portal
+          className="fixed w-64 rounded-2xl overflow-hidden z-[1000] p-1 bg-neutral-100/[0.67] dark:bg-neutral-900/[0.67] border border-white dark:border-white/10 backdrop-blur-md shadow-[0_0_25px_0_rgba(0,0,0,0.16)]"
+          style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
         >
           <div
             className="px-2.5 py-1.5 text-[11px] font-medium"
@@ -309,7 +335,8 @@ export function ProfileSwitcher({
               New Workspace
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       <Dialog open={!!confirmDelete} onOpenChange={(open) => { if (!open) setConfirmDelete(null); }}>

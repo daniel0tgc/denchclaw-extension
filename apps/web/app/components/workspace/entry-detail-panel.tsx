@@ -5,6 +5,7 @@ import { RelationSelect } from "./relation-select";
 import { FormattedFieldValue } from "./formatted-field-value";
 import { formatWorkspaceFieldValue } from "@/lib/workspace-cell-format";
 import { parseTagsValue } from "@/lib/parse-tags";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { MarkdownEditor } from "./markdown-editor";
 import type { TreeNode, MentionSearchFn } from "./slash-command";
 import { ActionButton, type ActionConfig } from "./action-button";
@@ -63,7 +64,16 @@ export type EntryDetailPanelProps = {
   tree: TreeNode[];
   searchFn?: MentionSearchFn;
   onClose: () => void;
-  onNavigateEntry?: (objectName: string, entryId: string) => void;
+  /**
+   * Open the entry's detail view. The optional `relatedObjectId` lets the
+   * parent route precisely (CRM seed people/company → dedicated profile,
+   * everything else → generic side-panel modal).
+   */
+  onNavigateEntry?: (
+    objectName: string,
+    entryId: string,
+    relatedObjectId?: string,
+  ) => void;
   onNavigateObject?: (objectName: string) => void;
   onRefresh?: () => void;
   onNavigate?: (path: string) => void;
@@ -162,17 +172,28 @@ function RelationChips({
 }: {
   value: unknown; field: Field;
   relationLabels?: Record<string, Record<string, string>>;
-  onNavigateEntry?: (objectName: string, entryId: string) => void;
+  onNavigateEntry?: (
+    objectName: string,
+    entryId: string,
+    relatedObjectId?: string,
+  ) => void;
 }) {
   const fieldLabels = relationLabels?.[field.name];
-  const ids = parseRelationValue(String(value));
+  const ids = value == null ? [] : parseRelationValue(String(value));
   if (ids.length === 0) return <EmptyValue />;
   return (
     <span className="flex items-center gap-1 flex-wrap">
       {ids.map((id) => {
         const label = fieldLabels?.[id] ?? id;
         const handleClick = field.related_object_name && onNavigateEntry
-          ? (e: React.MouseEvent<HTMLButtonElement>) => { e.stopPropagation(); onNavigateEntry(field.related_object_name!, id); }
+          ? (e: React.MouseEvent<HTMLButtonElement>) => {
+              e.stopPropagation();
+              onNavigateEntry(
+                field.related_object_name!,
+                id,
+                field.related_object_id,
+              );
+            }
           : undefined;
         return (
           <button type="button" key={id} onClick={handleClick}
@@ -286,7 +307,11 @@ function FieldValue({
   value: unknown; field: Field;
   members?: Array<{ id: string; name: string }>;
   relationLabels?: Record<string, Record<string, string>>;
-  onNavigateEntry?: (objectName: string, entryId: string) => void;
+  onNavigateEntry?: (
+    objectName: string,
+    entryId: string,
+    relatedObjectId?: string,
+  ) => void;
 }) {
   if (value === null || value === undefined || value === "") return <EmptyValue />;
   switch (field.type) {
@@ -302,22 +327,29 @@ function FieldValue({
   }
 }
 
-function ReverseRelationSection({ relation, onNavigateEntry }: { relation: ReverseRelation; onNavigateEntry?: (objectName: string, entryId: string) => void }) {
+function ReverseRelationSection({ relation, onNavigateEntry }: {
+  relation: ReverseRelation;
+  onNavigateEntry?: (
+    objectName: string,
+    entryId: string,
+    relatedObjectId?: string,
+  ) => void;
+}) {
   const displayLinks = relation.links.slice(0, 10);
   const overflow = relation.links.length - displayLinks.length;
   return (
     <div>
       <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider mb-1" style={{ color: "var(--color-text-muted)" }}>
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg>
-        <span className="capitalize">{relation.sourceObjectName}</span>
+        <span>{displayObjectName(relation.sourceObjectName)}</span>
         <span className="normal-case tracking-normal font-normal opacity-60">via {relation.fieldName}</span>
       </label>
       <div className="flex items-center gap-1 flex-wrap text-sm min-h-[1.5rem]">
         {displayLinks.map((link) => (
-          <button type="button" key={link.id} onClick={() => onNavigateEntry?.(relation.sourceObjectName, link.id)}
+          <button type="button" key={link.id} onClick={() => onNavigateEntry?.(relation.sourceObjectName, link.id, relation.sourceObjectId)}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium cursor-pointer hover:opacity-80"
             style={{ background: "rgba(192, 132, 252, 0.1)", color: "#c084fc", border: "1px solid rgba(192, 132, 252, 0.2)" }}
-            title={`Open ${link.label} in ${relation.sourceObjectName}`}
+            title={`Open ${link.label} in ${displayObjectName(relation.sourceObjectName)}`}
           >
             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}><path d="M7 7h10v10" /><path d="M7 17 17 7" /></svg>
             <span className="truncate max-w-[180px]">{link.label}</span>
@@ -555,7 +587,8 @@ export function EntryDetailPanel({
   }, [objectName, entryId, onRefresh]);
 
   const displayField = data?.effectiveDisplayField;
-  const title = displayField && data?.entry[displayField] ? safeString(data.entry[displayField]) : `${String(objectName)} entry`;
+  const objectLabel = displayObjectNameSingular(String(objectName));
+  const title = displayField && data?.entry[displayField] ? safeString(data.entry[displayField]) : `${objectLabel} entry`;
   const createdAtValue = data ? resolveEntryMetaValue(data.entry, CREATED_AT_KEYS) : undefined;
   const updatedAtValue = data ? resolveEntryMetaValue(data.entry, UPDATED_AT_KEYS) : undefined;
 
@@ -570,14 +603,14 @@ export function EntryDetailPanel({
       <div className="flex items-center justify-between px-4 py-2 border-b flex-shrink-0" style={{ borderColor: "var(--color-border)" }}>
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button type="button" onClick={() => void onNavigateObject?.(objectName)}
-            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium capitalize transition-colors hover:opacity-80 flex-shrink-0"
+            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors hover:opacity-80 flex-shrink-0"
             style={{ background: "var(--color-accent-light)", color: "var(--color-accent)", border: "1px solid var(--color-border)" }}
-            title={`Go to ${objectName}`}
+            title={`Go to ${objectLabel}`}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 3v18" /><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M3 9h18" /><path d="M3 15h18" />
             </svg>
-            {objectName}
+            {objectLabel}
           </button>
           <h2 className="text-sm font-semibold truncate" style={{ color: "var(--color-text)" }}>
             {loading ? "" : title}

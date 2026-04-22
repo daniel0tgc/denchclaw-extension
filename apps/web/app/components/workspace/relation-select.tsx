@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 
 type Option = { id: string; label: string };
 
@@ -178,7 +179,7 @@ export function RelationSelect({
 					))
 				) : (
 					<span style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>
-						{placeholder ?? `Select ${relatedObjectName}...`}
+						{placeholder ?? `Select ${displayObjectNameSingular(relatedObjectName)}...`}
 					</span>
 				)}
 				{/* Chevron */}
@@ -209,7 +210,7 @@ export function RelationSelect({
 							type="text"
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
-							placeholder={`Search ${relatedObjectName}...`}
+							placeholder={`Search ${displayObjectName(relatedObjectName)}...`}
 							className="w-full px-2.5 py-1.5 text-xs rounded-md outline-none"
 							style={{
 								background: "var(--color-surface)",

@@ -180,6 +180,9 @@ importers:
       ai:
         specifier: ^6.0.73
         version: 6.0.86(zod@4.3.6)
+      async-mutex:
+        specifier: ^0.5.0
+        version: 0.5.0
       chokidar:
         specifier: ^5.0.0
         version: 5.0.0
@@ -231,6 +234,9 @@ importers:
       posthog-node:
         specifier: ^5.27.1
         version: 5.27.1
+      psl:
+        specifier: ^1.15.0
+        version: 1.15.0
       react:
         specifier: ^19.1.0
         version: 19.2.4
@@ -6519,6 +6525,9 @@ packages:
 
   proxy-from-env@1.1.0:
     resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
+
+  psl@1.15.0:
+    resolution: {integrity: sha512-JZd3gMVBAVQkSs6HdNZo9Sdo0LNcQeMNP3CozBJb3JYC/QUYZTnKxP+f8oWRX4rHP5EurWxqAHTSwUCjlNKa1w==}
 
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
@@ -15107,6 +15116,10 @@ snapshots:
       - supports-color
 
   proxy-from-env@1.1.0: {}
+
+  psl@1.15.0:
+    dependencies:
+      punycode: 2.3.1
 
   pump@3.0.4:
     dependencies:

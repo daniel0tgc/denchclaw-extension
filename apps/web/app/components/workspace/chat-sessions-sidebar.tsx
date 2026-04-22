@@ -45,22 +45,6 @@ export type SidebarGatewaySession = {
 	};
 };
 
-export type SidebarChannelStatus = {
-	id: string;
-	configured: boolean;
-	running: boolean;
-	connected: boolean;
-	error?: string;
-};
-
-type SidebarTab = {
-	id: string;
-	label: string;
-	icon?: () => React.JSX.Element;
-	iconColor?: string;
-	count?: number;
-};
-
 type ChatSessionsSidebarProps = {
 	sessions: WebSession[];
 	activeSessionId: string | null;
@@ -82,11 +66,8 @@ type ChatSessionsSidebarProps = {
 	loading?: boolean;
 	embedded?: boolean;
 	gatewaySessions?: SidebarGatewaySession[];
-	channelStatuses?: SidebarChannelStatus[];
 	activeGatewaySessionKey?: string | null;
 	onSelectGatewaySession?: (sessionKey: string, sessionId: string) => void;
-	fileScopedSessions?: WebSession[];
-	heartbeatInfo?: { intervalMs: number; nextDueEstimateMs: number | null } | null;
 };
 
 function timeAgo(ts: number): string {
@@ -109,7 +90,7 @@ function timeAgo(ts: number): string {
 
 function PlusIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+		<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 			<path d="M5 12h14" /><path d="M12 5v14" />
 		</svg>
 	);
@@ -119,14 +100,6 @@ function SubagentIcon() {
 	return (
 		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 			<path d="M16 3h5v5" /><path d="m21 3-7 7" /><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
-		</svg>
-	);
-}
-
-function ChatBubbleIcon() {
-	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
 		</svg>
 	);
 }
@@ -195,30 +168,6 @@ function IMessageIcon() {
 	);
 }
 
-function CronIcon() {
-	return (
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-		</svg>
-	);
-}
-
-function HeartbeatIcon() {
-	return (
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-		</svg>
-	);
-}
-
-function FileIcon() {
-	return (
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-			<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" />
-		</svg>
-	);
-}
-
 function GoogleChatIcon() {
 	return (
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -244,41 +193,31 @@ const CHANNEL_META: Record<string, { label: string; icon: () => React.JSX.Elemen
 	imessage: { label: "iMessage", icon: IMessageIcon, color: "#34C759" },
 	googlechat: { label: "Google Chat", icon: GoogleChatIcon, color: "#00AC47" },
 	nostr: { label: "Nostr", icon: NostrIcon, color: "#8B5CF6" },
-	cron: { label: "Crons", icon: CronIcon, color: "var(--color-text-muted)" },
 };
 
-function ChannelIcon({ channel, size = 12 }: { channel: string; size?: number }) {
+function ChannelMark({ channel }: { channel: string }) {
 	const meta = CHANNEL_META[channel];
-	if (!meta) return <ChatBubbleIcon />;
+	if (!meta) return null;
 	const Icon = meta.icon;
 	return (
-		<span style={{ color: meta.color, width: size, height: size, display: "inline-flex" }}>
+		<span
+			className="inline-flex shrink-0 items-center justify-center"
+			style={{ color: meta.color, width: 12, height: 12 }}
+			title={meta.label}
+			aria-label={meta.label}
+		>
 			<Icon />
 		</span>
 	);
 }
 
-function ConnectionDot({ status }: { status: "connected" | "running" | "configured" | "error" }) {
-	const color = status === "connected" ? "#22c55e"
-		: status === "running" ? "#eab308"
-		: status === "error" ? "#ef4444"
-		: "var(--color-text-muted)";
-	return (
-		<span
-			className="inline-block rounded-full shrink-0"
-			style={{ width: 6, height: 6, background: color }}
-			title={status}
-		/>
-	);
-}
+// ── Native (DenchClaw) row ──
 
-// ── Reusable session row for web sessions ──
-
-function WebSessionRow({
+function NativeRow({
 	session, isActive, isHovered, isStreaming, sessionSubagents,
 	activeSubagentKey, renamingId, renameValue,
 	onHover, onLeave, onSelect, onStartRename, onCommitRename, onCancelRename, onRenameChange,
-	onDelete, onStop, onSelectSubagent, onStopSubagent, showFilePath,
+	onDelete, onStop, onSelectSubagent, onStopSubagent,
 }: {
 	session: WebSession; isActive: boolean; isHovered: boolean; isStreaming: boolean;
 	sessionSubagents?: SidebarSubagentInfo[]; activeSubagentKey?: string | null;
@@ -290,7 +229,6 @@ function WebSessionRow({
 	onRenameChange?: (val: string) => void;
 	onDelete?: (id: string) => void; onStop?: (id: string) => void;
 	onSelectSubagent?: (key: string) => void; onStopSubagent?: (key: string) => void;
-	showFilePath?: boolean;
 }) {
 	const [ctxOpen, setCtxOpen] = useState(false);
 	const showMore = isHovered || isStreaming || ctxOpen;
@@ -303,7 +241,7 @@ function WebSessionRow({
 			onMouseLeave={() => { if (!ctxOpen) onLeave(); }}
 		>
 			<div
-				className="flex items-stretch w-full rounded-xl"
+				className="flex items-stretch w-full rounded-lg"
 				style={{
 					background: isActive ? "var(--color-chat-sidebar-active-bg)"
 						: highlighted ? "var(--color-surface-hover)" : "transparent",
@@ -322,26 +260,16 @@ function WebSessionRow({
 						/>
 					</form>
 				) : (
-					<button type="button" onClick={() => onSelect(session.id)} className="flex-1 min-w-0 text-left px-2 py-2 rounded-l-lg transition-colors cursor-pointer">
+					<button type="button" onClick={() => onSelect(session.id)} className="flex-1 min-w-0 text-left px-2 py-1.5 rounded-l-lg cursor-pointer">
 						<div className="flex items-center gap-1.5">
 							{isStreaming && <UnicodeSpinner name="braille" className="text-[10px] flex-shrink-0" style={{ color: "var(--color-chat-sidebar-muted)" }} />}
 							<div className="text-xs font-medium truncate" style={{ color: isActive ? "var(--color-chat-sidebar-active-text)" : "var(--color-text)" }}>
 								{session.title || "Untitled chat"}
 							</div>
 						</div>
-						<div className="flex items-center gap-2 mt-0.5" style={{ paddingLeft: isStreaming ? "calc(0.375rem + 6px)" : undefined }}>
-							<span className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>{timeAgo(session.updatedAt)}</span>
-							{session.messageCount > 0 && (
-								<span className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>
-									{session.messageCount} msg{session.messageCount !== 1 ? "s" : ""}
-								</span>
-							)}
+						<div className="mt-0.5 text-[10px]" style={{ color: "var(--color-text-muted)", paddingLeft: isStreaming ? "calc(0.375rem + 6px)" : undefined }}>
+							{timeAgo(session.updatedAt)}
 						</div>
-						{showFilePath && session.filePath && (
-							<div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--color-text-muted)", opacity: 0.7 }}>
-								{session.filePath}
-							</div>
-						)}
 					</button>
 				)}
 				<div className={`shrink-0 flex items-center pr-1 gap-0.5 transition-opacity ${showMore ? "opacity-100" : "opacity-0"}`}>
@@ -385,7 +313,7 @@ function WebSessionRow({
 						return (
 							<div key={sa.childSessionKey} className="flex items-center">
 								<button type="button" onClick={() => onSelectSubagent?.(sa.childSessionKey)}
-									className="flex-1 text-left pl-3 pr-2 py-1.5 rounded-r-lg transition-colors cursor-pointer"
+									className="flex-1 text-left pl-3 pr-2 py-1.5 rounded-r-lg cursor-pointer"
 									style={{ background: isSubActive ? "var(--color-chat-sidebar-active-bg)" : "transparent" }}>
 									<div className="flex items-center gap-1.5">
 										{isSubRunning && <UnicodeSpinner name="braille" className="text-[9px] flex-shrink-0" style={{ color: "var(--color-chat-sidebar-muted)" }} />}
@@ -435,9 +363,9 @@ function WebSessionRow({
 	);
 }
 
-// ── Gateway session row ──
+// ── Gateway (channel) row ──
 
-function GatewaySessionRow({
+function GatewayRow({
 	gs, isActive, isHovered, onHover, onLeave, onSelect,
 }: {
 	gs: SidebarGatewaySession; isActive: boolean; isHovered: boolean;
@@ -447,23 +375,65 @@ function GatewaySessionRow({
 	return (
 		<div onMouseEnter={() => onHover(gs.sessionKey)} onMouseLeave={onLeave}>
 			<button type="button" onClick={() => onSelect(gs.sessionKey, gs.sessionId)}
-				className="w-full text-left px-2 py-2 rounded-lg transition-colors cursor-pointer"
+				className="w-full text-left px-2 py-1.5 rounded-lg cursor-pointer"
 				style={{
 					background: isActive ? "var(--color-chat-sidebar-active-bg)"
 						: isHovered ? "var(--color-surface-hover)" : "transparent",
 				}}>
 				<div className="flex items-center gap-1.5">
-					<ChannelIcon channel={gs.channel} size={11} />
+					<ChannelMark channel={gs.channel} />
 					<div className="text-xs font-medium truncate" style={{ color: isActive ? "var(--color-chat-sidebar-active-text)" : "var(--color-text)" }}>
 						{gs.title}
 					</div>
 				</div>
-				<div className="flex items-center gap-2 mt-0.5 pl-[calc(11px+0.375rem)]">
-					<span className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>{timeAgo(gs.updatedAt)}</span>
+				<div className="mt-0.5 text-[10px]" style={{ color: "var(--color-text-muted)", paddingLeft: "calc(12px + 0.375rem)" }}>
+					{timeAgo(gs.updatedAt)}
 				</div>
 			</button>
 		</div>
 	);
+}
+
+// ── Unified row plumbing ──
+
+type UnifiedRow =
+	| { kind: "native"; ts: number; session: WebSession }
+	| { kind: "gateway"; ts: number; gs: SidebarGatewaySession };
+
+type RowGroup = {
+	label: string;
+	rows: UnifiedRow[];
+};
+
+function groupRows(rows: UnifiedRow[]): RowGroup[] {
+	const now = new Date();
+	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const yesterdayStart = todayStart - 86400000;
+	const weekStart = todayStart - 7 * 86400000;
+	const monthStart = todayStart - 30 * 86400000;
+
+	const today: UnifiedRow[] = [];
+	const yesterday: UnifiedRow[] = [];
+	const thisWeek: UnifiedRow[] = [];
+	const thisMonth: UnifiedRow[] = [];
+	const older: UnifiedRow[] = [];
+
+	for (const r of rows) {
+		const t = r.ts;
+		if (t >= todayStart) today.push(r);
+		else if (t >= yesterdayStart) yesterday.push(r);
+		else if (t >= weekStart) thisWeek.push(r);
+		else if (t >= monthStart) thisMonth.push(r);
+		else older.push(r);
+	}
+
+	const groups: RowGroup[] = [];
+	if (today.length > 0) groups.push({ label: "today", rows: today });
+	if (yesterday.length > 0) groups.push({ label: "yesterday", rows: yesterday });
+	if (thisWeek.length > 0) groups.push({ label: "this week", rows: thisWeek });
+	if (thisMonth.length > 0) groups.push({ label: "this month", rows: thisMonth });
+	if (older.length > 0) groups.push({ label: "older", rows: older });
+	return groups;
 }
 
 export function ChatSessionsSidebar({
@@ -487,16 +457,12 @@ export function ChatSessionsSidebar({
 	loading = false,
 	embedded = false,
 	gatewaySessions,
-	channelStatuses,
 	activeGatewaySessionKey,
 	onSelectGatewaySession,
-	fileScopedSessions,
-	heartbeatInfo,
 }: ChatSessionsSidebarProps) {
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState("");
-	const [activeFilter, setActiveFilter] = useState("denchclaw");
 
 	const handleSelect = useCallback(
 		(id: string) => { onSelectSession(id); onClose?.(); },
@@ -545,86 +511,28 @@ export function ChatSessionsSidebar({
 		return map;
 	}, [subagents]);
 
-	const denchClawSessions = useMemo(
-		() => sessions.filter((s) => !s.id.includes(":subagent:") && !s.filePath),
-		[sessions],
-	);
-
-	const grouped = groupSessions(denchClawSessions);
-
-	const channelStatusMap = useMemo(() => {
-		const map = new Map<string, SidebarChannelStatus>();
-		if (!channelStatuses) return map;
-		for (const cs of channelStatuses) map.set(cs.id, cs);
-		return map;
-	}, [channelStatuses]);
-
-	const gatewayByChannel = useMemo(() => {
-		const map = new Map<string, SidebarGatewaySession[]>();
-		if (!gatewaySessions) return map;
-		for (const gs of gatewaySessions) {
-			let list = map.get(gs.channel);
-			if (!list) { list = []; map.set(gs.channel, list); }
-			list.push(gs);
+	const groups = useMemo(() => {
+		const rows: UnifiedRow[] = [];
+		for (const s of sessions) {
+			if (s.id.includes(":subagent:") || s.filePath) continue;
+			rows.push({ kind: "native", ts: s.updatedAt, session: s });
 		}
-		return map;
-	}, [gatewaySessions]);
-
-	const fileScopedGrouped = useMemo(
-		() => groupSessions(fileScopedSessions ?? []),
-		[fileScopedSessions],
-	);
-
-	const cronSessions = gatewayByChannel.get("cron");
-
-	// ── Dynamic tab list ──
-	const tabs = useMemo(() => {
-		const result: SidebarTab[] = [
-			{ id: "denchclaw", label: "DenchClaw", count: denchClawSessions.length },
-		];
-		const channelOrder = ["telegram", "whatsapp", "discord", "slack", "signal", "imessage", "googlechat", "nostr"];
-		for (const channel of channelOrder) {
-			const channelSessions = gatewayByChannel.get(channel);
-			if (!channelSessions?.length) continue;
-			const meta = CHANNEL_META[channel];
-			result.push({
-				id: channel,
-				label: meta?.label ?? channel,
-				icon: meta?.icon,
-				iconColor: meta?.color,
-				count: channelSessions.length,
-			});
+		if (gatewaySessions) {
+			for (const gs of gatewaySessions) {
+				if (gs.channel === "cron" || gs.channel === "unknown") continue;
+				rows.push({ kind: "gateway", ts: gs.updatedAt, gs });
+			}
 		}
-		for (const [channel, channelSessions] of gatewayByChannel.entries()) {
-			if (channelOrder.includes(channel) || channel === "cron" || channel === "unknown") continue;
-			const meta = CHANNEL_META[channel];
-			result.push({
-				id: channel,
-				label: meta?.label ?? channel,
-				icon: meta?.icon,
-				iconColor: meta?.color,
-				count: channelSessions.length,
-			});
-		}
-		if (cronSessions?.length) {
-			result.push({ id: "cron", label: "Crons", icon: CronIcon, count: cronSessions.length });
-			result.push({ id: "heartbeat", label: "Heartbeat", icon: HeartbeatIcon });
-		}
-		if ((fileScopedSessions?.length ?? 0) > 0) {
-			result.push({ id: "other", label: "Other", icon: FileIcon, count: fileScopedSessions!.length });
-		}
-		return result;
-	}, [denchClawSessions, gatewayByChannel, cronSessions, fileScopedSessions]);
+		rows.sort((a, b) => b.ts - a.ts);
+		return groupRows(rows);
+	}, [sessions, gatewaySessions]);
 
-	const hasTabs = tabs.length > 1;
+	const totalRows = groups.reduce((acc, g) => acc + g.rows.length, 0);
 
-	const width = mobile ? "280px" : (widthProp ?? 260);
 	const headerHeight = embedded ? 36 : 40;
-	const filterHeight = hasTabs ? 30 : 0;
 
-	// ── Content renderer per active filter ──
 	const renderContent = () => {
-		if (loading && sessions.length === 0 && !(gatewaySessions?.length)) {
+		if (loading && totalRows === 0) {
 			return (
 				<div className="px-4 py-8 flex flex-col items-center justify-center min-h-[120px]">
 					<UnicodeSpinner name="braille" className="text-xl mb-2" style={{ color: "var(--color-text-muted)" }} />
@@ -633,171 +541,64 @@ export function ChatSessionsSidebar({
 			);
 		}
 
-		if (activeFilter === "denchclaw") {
-			if (denchClawSessions.length === 0) {
-				return (
-					<div className="px-4 py-8 text-center">
-						<div className="mx-auto w-10 h-10 rounded-xl flex items-center justify-center mb-3" style={{ background: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
-							<ChatBubbleIcon />
-						</div>
-						<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-							No conversations yet.<br />Start a new chat to begin.
-						</p>
-					</div>
-				);
-			}
-			return (
-				<div className="px-2 py-1">
-					{grouped.map((group) => (
-						<div key={group.label}>
-							<div className="px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>
-								{group.label}
-							</div>
-							{group.sessions.map((session) => (
-								<WebSessionRow
-									key={session.id}
-									session={session}
-									isActive={session.id === activeSessionId && !activeSubagentKey && !activeGatewaySessionKey}
-									isHovered={session.id === hoveredId}
-									isStreaming={streamingSessionIds?.has(session.id) ?? false}
-									sessionSubagents={subagentsByParent.get(session.id)}
-									activeSubagentKey={activeSubagentKey}
-									renamingId={renamingId} renameValue={renameValue}
-									onHover={setHoveredId} onLeave={() => setHoveredId(null)}
-									onSelect={handleSelect}
-									onStartRename={onRenameSession ? handleStartRename : undefined}
-									onCommitRename={handleCommitRename} onCancelRename={handleCancelRename}
-									onRenameChange={setRenameValue}
-									onDelete={onDeleteSession ? handleDeleteSession : undefined}
-									onStop={onStopSession}
-									onSelectSubagent={handleSelectSubagentItem}
-									onStopSubagent={onStopSubagent}
-								/>
-							))}
-						</div>
-					))}
-				</div>
-			);
-		}
-
-		if (activeFilter === "heartbeat") {
-			return (
-				<div className="px-2 py-1">
-					{/* Gateway health card */}
-					<div className="mx-1 mb-2 p-2.5 rounded-lg" style={{ background: "var(--color-surface-hover)" }}>
-						<div className="flex items-center gap-2 mb-1.5">
-							<ConnectionDot status={channelStatuses?.some((c) => c.connected) ? "connected" : channelStatuses?.some((c) => c.running) ? "running" : "configured"} />
-							<span className="text-[11px] font-medium" style={{ color: "var(--color-text)" }}>
-								Gateway {channelStatuses?.some((c) => c.connected) ? "Connected" : "Disconnected"}
-							</span>
-						</div>
-						{heartbeatInfo && (
-							<div className="space-y-0.5">
-								<div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>
-									Interval: {Math.round(heartbeatInfo.intervalMs / 60000)}m
-								</div>
-								{heartbeatInfo.nextDueEstimateMs && (
-									<div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>
-										Next: {timeAgo(heartbeatInfo.nextDueEstimateMs).replace(" ago", "")} from now
-									</div>
-								)}
-							</div>
-						)}
-						{!heartbeatInfo && (
-							<div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>No heartbeat data</div>
-						)}
-					</div>
-					{/* Cron sessions */}
-					{cronSessions?.map((gs) => (
-						<GatewaySessionRow
-							key={gs.sessionKey} gs={gs}
-							isActive={activeGatewaySessionKey === gs.sessionKey}
-							isHovered={hoveredId === gs.sessionKey}
-							onHover={setHoveredId} onLeave={() => setHoveredId(null)}
-							onSelect={handleSelectGateway}
-						/>
-					))}
-					{!cronSessions?.length && (
-						<div className="px-4 py-6 text-center">
-							<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>No cron sessions</p>
-						</div>
-					)}
-				</div>
-			);
-		}
-
-		if (activeFilter === "other") {
-			if (!fileScopedSessions?.length) {
-				return (
-					<div className="px-4 py-8 text-center">
-						<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>No file-scoped sessions</p>
-					</div>
-				);
-			}
-			return (
-				<div className="px-2 py-1">
-					{fileScopedGrouped.map((group) => (
-						<div key={group.label}>
-							<div className="px-2 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>
-								{group.label}
-							</div>
-							{group.sessions.map((session) => (
-								<WebSessionRow
-									key={session.id}
-									session={session}
-									isActive={session.id === activeSessionId && !activeSubagentKey && !activeGatewaySessionKey}
-									isHovered={session.id === hoveredId}
-									isStreaming={streamingSessionIds?.has(session.id) ?? false}
-									renamingId={renamingId} renameValue={renameValue}
-									onHover={setHoveredId} onLeave={() => setHoveredId(null)}
-									onSelect={handleSelect}
-									onCommitRename={handleCommitRename} onCancelRename={handleCancelRename}
-									onRenameChange={setRenameValue}
-									onDelete={onDeleteSession ? handleDeleteSession : undefined}
-									showFilePath
-								/>
-							))}
-						</div>
-					))}
-				</div>
-			);
-		}
-
-		// Channel-specific tab (telegram, whatsapp, discord, cron, etc.)
-		const channelSessions = gatewayByChannel.get(activeFilter);
-		const status = channelStatusMap.get(activeFilter);
-		const connectionState = status?.connected ? "connected"
-			: status?.running ? "running"
-			: status?.error ? "error"
-			: status?.configured ? "configured"
-			: undefined;
-
-		if (!channelSessions?.length) {
+		if (totalRows === 0) {
 			return (
 				<div className="px-4 py-8 text-center">
-					<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>No sessions</p>
+					<p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+						No conversations yet.
+					</p>
 				</div>
 			);
 		}
 
 		return (
 			<div className="px-2 py-1">
-				{connectionState && (
-					<div className="px-2 pt-2 pb-1 flex items-center gap-1.5">
-						<ConnectionDot status={connectionState} />
-						<span className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>
-							{connectionState === "connected" ? "Connected" : connectionState === "running" ? "Running" : connectionState === "error" ? "Error" : "Configured"}
-						</span>
+				{groups.map((group) => (
+					<div key={group.label}>
+						<div
+							className="px-2 pt-4 pb-1 text-[9px] lowercase"
+							style={{ color: "var(--color-text-muted)", letterSpacing: "0.05em" }}
+						>
+							{group.label}
+						</div>
+						{group.rows.map((row) => {
+							if (row.kind === "native") {
+								const session = row.session;
+								return (
+									<NativeRow
+										key={`n-${session.id}`}
+										session={session}
+										isActive={session.id === activeSessionId && !activeSubagentKey && !activeGatewaySessionKey}
+										isHovered={session.id === hoveredId}
+										isStreaming={streamingSessionIds?.has(session.id) ?? false}
+										sessionSubagents={subagentsByParent.get(session.id)}
+										activeSubagentKey={activeSubagentKey}
+										renamingId={renamingId} renameValue={renameValue}
+										onHover={setHoveredId} onLeave={() => setHoveredId(null)}
+										onSelect={handleSelect}
+										onStartRename={onRenameSession ? handleStartRename : undefined}
+										onCommitRename={handleCommitRename} onCancelRename={handleCancelRename}
+										onRenameChange={setRenameValue}
+										onDelete={onDeleteSession ? handleDeleteSession : undefined}
+										onStop={onStopSession}
+										onSelectSubagent={handleSelectSubagentItem}
+										onStopSubagent={onStopSubagent}
+									/>
+								);
+							}
+							const gs = row.gs;
+							return (
+								<GatewayRow
+									key={`g-${gs.sessionKey}`}
+									gs={gs}
+									isActive={activeGatewaySessionKey === gs.sessionKey}
+									isHovered={hoveredId === gs.sessionKey}
+									onHover={setHoveredId} onLeave={() => setHoveredId(null)}
+									onSelect={handleSelectGateway}
+								/>
+							);
+						})}
 					</div>
-				)}
-				{channelSessions.map((gs) => (
-					<GatewaySessionRow
-						key={gs.sessionKey} gs={gs}
-						isActive={activeGatewaySessionKey === gs.sessionKey}
-						isHovered={hoveredId === gs.sessionKey}
-						onHover={setHoveredId} onLeave={() => setHoveredId(null)}
-						onSelect={handleSelectGateway}
-					/>
 				))}
 			</div>
 		);
@@ -805,76 +606,58 @@ export function ChatSessionsSidebar({
 
 	const content = (
 		<div className="flex-1 min-h-0 relative">
-			<div className="absolute inset-0 overflow-y-auto" style={{ paddingTop: headerHeight + filterHeight }}>
+			<div
+				className="absolute inset-0 overflow-y-auto"
+				// Embedded mode has no sticky header — the host (sidebar tab row)
+				// already provides the "Chats" label and the + New action, so
+				// reserving extra top padding leaves a weird empty strip above
+				// the list.
+				style={embedded ? undefined : { paddingTop: headerHeight }}
+			>
 				{renderContent()}
 			</div>
 
-			{/* Header */}
-			<div
-			className={`absolute top-0 left-0 right-0 z-10 backdrop-blur-md ${embedded ? "" : "border-b"}`}
-			style={{
-				borderColor: embedded ? undefined : "var(--color-border)",
-				background: "color-mix(in srgb, var(--color-bg) 80%, transparent)",
-				boxShadow: embedded ? "inset 0 -1px 0 0 var(--color-border)" : undefined,
-			}}
-			>
-				<div className="flex items-center justify-between px-4" style={{ height: headerHeight }}>
-					<div className="min-w-0 flex-1 flex items-center gap-1.5">
-						{onCollapse && (
-							<button type="button" onClick={onCollapse}
-								className="p-1 rounded-md shrink-0 transition-colors hover:bg-black/5"
-								style={{ color: "var(--color-text-muted)" }} title="Hide chat sidebar">
+			{!embedded && (
+				<div
+					className="absolute top-0 left-0 right-0 z-10 backdrop-blur-md border-b"
+					style={{
+						borderColor: "var(--color-border)",
+						background: "color-mix(in srgb, var(--color-bg) 80%, transparent)",
+					}}
+				>
+					<div className="flex items-center justify-between px-3" style={{ height: headerHeight }}>
+						{onCollapse ? (
+							<button
+								type="button" onClick={onCollapse}
+								className="p-1 rounded-md transition-colors hover:bg-black/5"
+								style={{ color: "var(--color-text-muted)" }}
+								title="Hide chat sidebar"
+							>
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
 									<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M15 3v18" />
 								</svg>
 							</button>
-						)}
-						<span className="text-xs font-medium truncate block" style={{ color: "var(--color-text)" }}>
-							Chats
-						</span>
+						) : <span />}
+						<button
+							type="button" onClick={onNewSession}
+							className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
+							style={{ color: "var(--color-text-muted)" }}
+							onMouseEnter={(e) => {
+								(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text)";
+							}}
+							onMouseLeave={(e) => {
+								(e.currentTarget as HTMLElement).style.background = "transparent";
+								(e.currentTarget as HTMLElement).style.color = "var(--color-text-muted)";
+							}}
+							title="New chat"
+						>
+							<PlusIcon />
+							New
+						</button>
 					</div>
-					<button type="button" onClick={onNewSession}
-						className={`flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer shrink-0 ml-1.5 ${embedded ? "hover:bg-neutral-400/15" : ""}`}
-						style={{
-							color: embedded ? "var(--color-text)" : "var(--color-chat-sidebar-active-text)",
-							background: embedded ? "transparent" : "var(--color-chat-sidebar-active-bg)",
-						}}
-						title="New chat">
-						<PlusIcon />
-						New
-					</button>
 				</div>
-				{/* Dynamic tab strip */}
-				{hasTabs && (
-					<div className="flex items-center gap-0.5 px-2 pb-1.5 overflow-x-auto scrollbar-none">
-						{tabs.map((tab) => {
-							const isActive = activeFilter === tab.id;
-							const TabIcon = tab.icon;
-							return (
-								<button
-									key={tab.id} type="button"
-									onClick={() => setActiveFilter(tab.id)}
-									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap"
-									style={{
-										color: isActive ? "var(--color-chat-sidebar-active-text)" : "var(--color-text-muted)",
-										background: isActive ? "var(--color-chat-sidebar-active-bg)" : "transparent",
-									}}
-								>
-									{TabIcon && (
-										<span style={{ color: isActive ? undefined : (tab.iconColor ?? "var(--color-text-muted)"), display: "inline-flex" }}>
-											<TabIcon />
-										</span>
-									)}
-									{tab.label}
-									{tab.count !== undefined && tab.count > 0 && (
-										<span className="text-[9px] opacity-60">{tab.count}</span>
-									)}
-								</button>
-							);
-						})}
-					</div>
-				)}
-			</div>
+			)}
 		</div>
 	);
 
@@ -882,6 +665,7 @@ export function ChatSessionsSidebar({
 		return content;
 	}
 
+	const width = mobile ? "280px" : (widthProp ?? 260);
 	const sidebar = (
 		<aside
 			className={`flex flex-col h-full shrink-0 ${mobile ? "drawer-right" : "border-l"}`}
@@ -906,42 +690,4 @@ export function ChatSessionsSidebar({
 			</div>
 		</div>
 	);
-}
-
-// ── Grouping helpers ──
-
-type SessionGroup = {
-	label: string;
-	sessions: WebSession[];
-};
-
-function groupSessions(sessions: WebSession[]): SessionGroup[] {
-	const now = new Date();
-	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-	const yesterdayStart = todayStart - 86400000;
-	const weekStart = todayStart - 7 * 86400000;
-	const monthStart = todayStart - 30 * 86400000;
-
-	const today: WebSession[] = [];
-	const yesterday: WebSession[] = [];
-	const thisWeek: WebSession[] = [];
-	const thisMonth: WebSession[] = [];
-	const older: WebSession[] = [];
-
-	for (const s of sessions) {
-		const t = s.updatedAt;
-		if (t >= todayStart) today.push(s);
-		else if (t >= yesterdayStart) yesterday.push(s);
-		else if (t >= weekStart) thisWeek.push(s);
-		else if (t >= monthStart) thisMonth.push(s);
-		else older.push(s);
-	}
-
-	const groups: SessionGroup[] = [];
-	if (today.length > 0) groups.push({ label: "Today", sessions: today });
-	if (yesterday.length > 0) groups.push({ label: "Yesterday", sessions: yesterday });
-	if (thisWeek.length > 0) groups.push({ label: "This Week", sessions: thisWeek });
-	if (thisMonth.length > 0) groups.push({ label: "This Month", sessions: thisMonth });
-	if (older.length > 0) groups.push({ label: "Older", sessions: older });
-	return groups;
 }

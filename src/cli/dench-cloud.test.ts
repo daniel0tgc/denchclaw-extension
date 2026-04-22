@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 import {
   buildDenchCloudConfigPatch,
   fetchDenchCloudCatalog,
@@ -6,12 +7,8 @@ import {
   readConfiguredDenchCloudSettings,
   validateDenchCloudApiKey,
 } from "./dench-cloud.js";
-import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 
-function createJsonResponse(params?: {
-  status?: number;
-  payload?: unknown;
-}): Response {
+function createJsonResponse(params?: { status?: number; payload?: unknown }): Response {
   const status = params?.status ?? 200;
   return {
     status,
@@ -77,6 +74,7 @@ describe("dench-cloud helpers", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://gateway.merseoriginals.com/v1/public/models");
     expect(result.source).toBe("fallback");
     expect(result.models.map((model) => model.stableId)).toEqual([
+      "moonshotai.kimi-k2.5",
       "anthropic.claude-opus-4-6-v1",
       "gpt-5.4",
       "anthropic.claude-sonnet-4-6-v1",
@@ -86,7 +84,9 @@ describe("dench-cloud helpers", () => {
   it("rejects invalid Dench Cloud API keys with an actionable message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => createJsonResponse({ status: 401, payload: {} })) as unknown as typeof fetch,
+      vi.fn(async () =>
+        createJsonResponse({ status: 401, payload: {} }),
+      ) as unknown as typeof fetch,
     );
 
     await expect(

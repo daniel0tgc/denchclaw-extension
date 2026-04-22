@@ -17,7 +17,7 @@ await dench.ui.toast("Something went wrong", { type: "error" });
 await dench.ui.toast("Processing...", { type: "info" });
 
 // Navigate DenchClaw to a workspace path (opens object, file, or app)
-await dench.ui.navigate("/people");           // open the people object
+await dench.ui.navigate("/people"); // open the people object
 await dench.ui.navigate("/apps/my-app.dench.app"); // open another app
 
 // Open an entry detail modal
@@ -28,11 +28,15 @@ await dench.ui.setTitle("My App — 5 results");
 
 // Show a confirmation dialog
 const confirmed = await dench.ui.confirm("Delete this record?");
-if (confirmed) { /* proceed */ }
+if (confirmed) {
+  /* proceed */
+}
 
 // Show a prompt dialog
 const name = await dench.ui.prompt("Enter a name:", "Default Name");
-if (name !== null) { /* use name */ }
+if (name !== null) {
+  /* use name */
+}
 ```
 
 ## Per-App KV Store (`store` permission required)
@@ -76,13 +80,13 @@ const result = await dench.http.fetch("https://api.example.com/submit", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "Authorization": "Bearer sk-..."
+    Authorization: "Bearer sk-...",
   },
-  body: JSON.stringify({ query: "test" })
+  body: JSON.stringify({ query: "test" }),
 });
 
-console.log(result.status);  // 200
-console.log(result.body);    // response body as string
+console.log(result.status); // 200
+console.log(result.body); // response body as string
 ```
 
 Security: requests to localhost, private IPs, and internal DenchClaw URLs are blocked.
@@ -112,8 +116,12 @@ dench.events.on("object.entry.deleted", (data) => {
 });
 
 // App visibility events
-dench.events.on("app.visible", () => { resumeAnimations(); });
-dench.events.on("app.hidden", () => { pauseAnimations(); });
+dench.events.on("app.visible", () => {
+  resumeAnimations();
+});
+dench.events.on("app.hidden", () => {
+  pauseAnimations();
+});
 
 // File change events
 dench.events.on("file.changed", (data) => {
@@ -144,7 +152,7 @@ Apps can communicate with other open apps for composite workflows.
 // Send a message to another app
 await dench.apps.send("analytics-dashboard.dench.app", {
   action: "refresh",
-  filter: { status: "Active" }
+  filter: { status: "Active" },
 });
 
 // Listen for messages from other apps
@@ -167,9 +175,9 @@ Schedule recurring tasks that send messages to the agent.
 ```javascript
 // Schedule a cron job
 const { jobId } = await dench.cron.schedule({
-  expression: "0 9 * * *",          // 9 AM daily
+  expression: "0 9 * * *", // 9 AM daily
   message: "Generate the daily sales report and save it to workspace",
-  channel: "announce"                 // "announce" (delivers result) or "none" (silent)
+  channel: "announce", // "announce" (delivers result) or "none" (silent)
 });
 
 // List all cron jobs
@@ -226,9 +234,9 @@ Apps can render as compact widgets in a dashboard grid instead of full-page tabs
 name: "Quick Stats"
 display: "widget"
 widget:
-  width: 2              # Grid columns (1-4)
-  height: 1             # Grid rows (1-4)
-  refreshInterval: 60   # Auto-refresh in seconds (optional)
+  width: 2 # Grid columns (1-4)
+  height: 1 # Grid rows (1-4)
+  refreshInterval: 60 # Auto-refresh in seconds (optional)
 permissions:
   - database
 ```
@@ -246,37 +254,54 @@ permissions:
 ```html
 <!DOCTYPE html>
 <html>
-<head>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, sans-serif;
-      padding: 16px;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    body.dark { background: #0f0f1a; color: #e8e8f0; }
-    body.light { background: #fff; color: #1a1a2e; }
-    .metric { font-size: 48px; font-weight: 700; }
-    .label { font-size: 13px; opacity: 0.6; margin-bottom: 4px; }
-  </style>
-</head>
-<body>
-  <div class="label">Total Records</div>
-  <div class="metric" id="count">—</div>
-  <script>
-    async function init() {
-      const theme = await dench.app.getTheme().catch(() => "dark");
-      document.body.className = theme;
-      
-      const result = await dench.db.query("SELECT SUM(entry_count) as total FROM objects");
-      document.getElementById("count").textContent = result.rows[0]?.total ?? 0;
-    }
-    init();
-  </script>
-</body>
+  <head>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, sans-serif;
+        padding: 16px;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      body.dark {
+        background: #0f0f1a;
+        color: #e8e8f0;
+      }
+      body.light {
+        background: #fff;
+        color: #1a1a2e;
+      }
+      .metric {
+        font-size: 48px;
+        font-weight: 700;
+      }
+      .label {
+        font-size: 13px;
+        opacity: 0.6;
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="label">Total Records</div>
+    <div class="metric" id="count">—</div>
+    <script>
+      async function init() {
+        const theme = await dench.app.getTheme().catch(() => "dark");
+        document.body.className = theme;
+
+        const result = await dench.db.query("SELECT SUM(entry_count) as total FROM objects");
+        document.getElementById("count").textContent = result.rows[0]?.total ?? 0;
+      }
+      init();
+    </script>
+  </body>
 </html>
 ```
 
@@ -292,8 +317,8 @@ Build a dashboard that aggregates data from multiple widget apps:
 // In the main dashboard app
 async function loadWidgetData() {
   const apps = await dench.apps.list();
-  const widgets = apps.filter(a => a.manifest.display === "widget");
-  
+  const widgets = apps.filter((a) => a.manifest.display === "widget");
+
   for (const widget of widgets) {
     // Request data from each widget app
     await dench.apps.send(widget.name, { action: "getData" });
@@ -313,7 +338,7 @@ dench.apps.on("message", (event) => {
 // Fetch data from an external API via proxy
 async function loadWeather(city) {
   const result = await dench.http.fetch(
-    `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=YOUR_KEY`
+    `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=YOUR_KEY`,
   );
   if (result.status === 200) {
     const weather = JSON.parse(result.body);
@@ -329,9 +354,9 @@ async function loadWeather(city) {
 async function setupAutomation() {
   const { jobId } = await dench.cron.schedule({
     expression: "0 */6 * * *",
-    message: "Check the tasks object for overdue items and send a summary to Telegram"
+    message: "Check the tasks object for overdue items and send a summary to Telegram",
   });
-  
+
   await dench.store.set("automationJobId", jobId);
   dench.ui.toast("Automation scheduled every 6 hours", { type: "success" });
 }

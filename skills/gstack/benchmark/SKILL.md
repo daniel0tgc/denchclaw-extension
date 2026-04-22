@@ -17,23 +17,27 @@ Establish baselines and catch regressions.
 ## What to Measure
 
 ### Core Web Vitals
+
 - **LCP** (Largest Contentful Paint) — Target: < 2.5s
 - **FID** (First Input Delay) — Target: < 100ms
 - **CLS** (Cumulative Layout Shift) — Target: < 0.1
 
 ### Page Load
+
 - **TTFB** (Time to First Byte)
 - **DOMContentLoaded**
 - **Load event**
 - **Full page load** (all resources)
 
 ### Bundle Size
+
 - **JavaScript bundle size** (compressed + uncompressed)
 - **CSS bundle size**
 - **Total transfer size**
 - **Number of requests**
 
 ### Resource Analysis
+
 - **Largest assets** by size
 - **Uncompressed assets** that should be compressed
 - **Unused JavaScript** (tree-shakeable)

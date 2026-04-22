@@ -19,6 +19,24 @@ type ViewSettingsPopoverProps = {
 	settings: ViewTypeSettings;
 	fields: Field[];
 	onSettingsChange: (settings: ViewTypeSettings) => void;
+	/** Optional description shown at the top of the popover. */
+	description?: string;
+	/** Currently selected display field name. */
+	displayField?: string;
+	/** Fields eligible to be the display field. */
+	displayFieldCandidates?: Field[];
+	/** Called when the user selects a new display field. */
+	onDisplayFieldChange?: (name: string) => void;
+	/** Whether the display field is currently being updated on the server. */
+	updatingDisplayField?: boolean;
+	/** Column visibility map (fieldId -> visible). When provided, a Columns section is rendered. */
+	columnVisibility?: Record<string, boolean>;
+	/** Called when the user toggles a column's visibility. */
+	onColumnVisibilityChange?: (next: Record<string, boolean>) => void;
+	/** Whether the first column is frozen/sticky. */
+	stickyFirstColumn?: boolean;
+	/** Called when the user toggles the freeze first column option. */
+	onStickyFirstColumnChange?: (next: boolean) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -297,11 +315,160 @@ function GearIcon() {
 	);
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+	return (
+		<div
+			className="text-[10px] font-semibold uppercase tracking-wider"
+			style={{ color: "var(--color-text-muted)" }}
+		>
+			{children}
+		</div>
+	);
+}
+
+function DescriptionSection({ description }: { description: string }) {
+	return (
+		<div className="flex flex-col gap-1">
+			<SectionLabel>About</SectionLabel>
+			<p
+				className="text-[12px] leading-snug"
+				style={{ color: "var(--color-text)" }}
+			>
+				{description}
+			</p>
+		</div>
+	);
+}
+
+function DisplayFieldSection({
+	displayField,
+	candidates,
+	onChange,
+	updating,
+}: {
+	displayField: string | undefined;
+	candidates: Field[];
+	onChange: (name: string) => void;
+	updating: boolean;
+}) {
+	return (
+		<div className="flex flex-col gap-1">
+			<SectionLabel>Display field</SectionLabel>
+			<div className="flex items-center gap-1.5">
+				<select
+					value={displayField ?? ""}
+					onChange={(e) => onChange(e.target.value)}
+					disabled={updating}
+					className="text-[12px] rounded-md border px-2 py-1.5 flex-1 outline-none cursor-pointer"
+					style={{
+						borderColor: "var(--color-border)",
+						color: "var(--color-text)",
+						background: "var(--color-surface)",
+						opacity: updating ? 0.5 : 1,
+					}}
+				>
+					{candidates.map((f) => (
+						<option key={f.id} value={f.name}>
+							{f.name}
+						</option>
+					))}
+				</select>
+				{updating && (
+					<div
+						className="w-3 h-3 border border-t-transparent rounded-full animate-spin shrink-0"
+						style={{ borderColor: "var(--color-text-muted)" }}
+					/>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function ColumnsSection({
+	fields,
+	columnVisibility,
+	onColumnVisibilityChange,
+	stickyFirstColumn,
+	onStickyFirstColumnChange,
+}: {
+	fields: Field[];
+	columnVisibility: Record<string, boolean>;
+	onColumnVisibilityChange: (next: Record<string, boolean>) => void;
+	stickyFirstColumn?: boolean;
+	onStickyFirstColumnChange?: (next: boolean) => void;
+}) {
+	const toggle = (fieldId: string) => {
+		const current = columnVisibility[fieldId] !== false;
+		onColumnVisibilityChange({ ...columnVisibility, [fieldId]: !current });
+	};
+
+	return (
+		<div className="flex flex-col gap-1.5">
+			<SectionLabel>Columns</SectionLabel>
+			{onStickyFirstColumnChange && (
+				<label
+					className="flex items-center gap-2 text-[12px] cursor-pointer"
+					style={{ color: "var(--color-text)" }}
+				>
+					<input
+						type="checkbox"
+						checked={Boolean(stickyFirstColumn)}
+						onChange={(e) => onStickyFirstColumnChange(e.target.checked)}
+						className="cursor-pointer"
+					/>
+					Freeze first column
+				</label>
+			)}
+			<div
+				className="flex flex-col gap-1 max-h-48 overflow-y-auto rounded-md border p-1.5"
+				style={{ borderColor: "var(--color-border)" }}
+			>
+				{fields.length === 0 ? (
+					<div
+						className="text-[11px] px-1 py-0.5"
+						style={{ color: "var(--color-text-muted)" }}
+					>
+						No columns
+					</div>
+				) : (
+					fields.map((field) => {
+						const visible = columnVisibility[field.id] !== false;
+						return (
+							<label
+								key={field.id}
+								className="flex items-center gap-2 text-[12px] cursor-pointer px-1 py-0.5 rounded hover:bg-[var(--color-surface-hover)]"
+								style={{ color: "var(--color-text)" }}
+							>
+								<input
+									type="checkbox"
+									checked={visible}
+									onChange={() => toggle(field.id)}
+									className="cursor-pointer"
+								/>
+								<span className="truncate">{field.name}</span>
+							</label>
+						);
+					})
+				)}
+			</div>
+		</div>
+	);
+}
+
 export function ViewSettingsPopover({
 	viewType,
 	settings,
 	fields,
 	onSettingsChange,
+	description,
+	displayField,
+	displayFieldCandidates,
+	onDisplayFieldChange,
+	updatingDisplayField,
+	columnVisibility,
+	onColumnVisibilityChange,
+	stickyFirstColumn,
+	onStickyFirstColumnChange,
 }: ViewSettingsPopoverProps) {
 	const [open, setOpen] = useState(false);
 	const popoverRef = useRef<HTMLDivElement>(null);
@@ -317,11 +484,21 @@ export function ViewSettingsPopover({
 		return () => document.removeEventListener("mousedown", handler);
 	}, [open]);
 
-	// Table has no settings
-	if (viewType === "table") {return null;}
+	const hasDescription = Boolean(description && description.trim());
+	const hasDisplayField =
+		Boolean(displayFieldCandidates && displayFieldCandidates.length > 0 && onDisplayFieldChange);
+	const hasColumns = Boolean(onColumnVisibilityChange && viewType === "table");
+	const effectiveColumnVisibility = columnVisibility ?? {};
+
+	const viewTypeHasSettings = viewType !== "table";
+
+	const hasAnyContent =
+		hasDescription || hasDisplayField || hasColumns || viewTypeHasSettings;
+
+	if (!hasAnyContent) {return null;}
 
 	const panelTitle: Record<ViewType, string> = {
-		table: "",
+		table: "Table Settings",
 		kanban: "Board Settings",
 		calendar: "Calendar Settings",
 		timeline: "Timeline Settings",
@@ -334,16 +511,17 @@ export function ViewSettingsPopover({
 			<button
 				type="button"
 				onClick={() => setOpen(!open)}
-				className="p-1.5 rounded-md hover:bg-[var(--color-surface-hover)] transition-colors"
+				className="flex items-center justify-center w-7 h-7 rounded-md hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
 				style={{ color: "var(--color-text-muted)" }}
 				title="View settings"
+				aria-label="View settings"
 			>
 				<GearIcon />
 			</button>
 
 			{open && (
 				<div
-					className="absolute right-0 top-full mt-1 z-50 rounded-lg border shadow-lg p-3 min-w-[200px] sm:min-w-[240px] max-w-[calc(100vw-2rem)] flex flex-col gap-3"
+					className="absolute right-0 top-full mt-1 z-50 rounded-lg border shadow-lg p-3 min-w-[220px] sm:min-w-[260px] max-w-[calc(100vw-2rem)] flex flex-col gap-3"
 					style={{
 						borderColor: "var(--color-border)",
 						background: "var(--color-surface)",
@@ -353,6 +531,17 @@ export function ViewSettingsPopover({
 					<div className="text-[11px] font-semibold" style={{ color: "var(--color-text)" }}>
 						{panelTitle[viewType]}
 					</div>
+
+					{hasDescription && <DescriptionSection description={description!} />}
+
+					{hasDisplayField && (
+						<DisplayFieldSection
+							displayField={displayField}
+							candidates={displayFieldCandidates!}
+							onChange={onDisplayFieldChange!}
+							updating={Boolean(updatingDisplayField)}
+						/>
+					)}
 
 					{viewType === "kanban" && (
 						<KanbanSettings settings={settings} fields={fields} onSettingsChange={onSettingsChange} />
@@ -368,6 +557,16 @@ export function ViewSettingsPopover({
 					)}
 					{viewType === "list" && (
 						<ListSettings settings={settings} fields={fields} onSettingsChange={onSettingsChange} />
+					)}
+
+					{hasColumns && (
+						<ColumnsSection
+							fields={fields}
+							columnVisibility={effectiveColumnVisibility}
+							onColumnVisibilityChange={onColumnVisibilityChange!}
+							stickyFirstColumn={stickyFirstColumn}
+							onStickyFirstColumnChange={onStickyFirstColumnChange}
+						/>
 					)}
 				</div>
 			)}

@@ -201,12 +201,19 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 					class: `chat-editor-content ${compact ? "chat-editor-compact" : ""}`,
 					style: `color: var(--color-text);`,
 				},
-				handleKeyDown: (_view, event) => {
-					// Enter without shift = submit
-					if (event.key === "Enter" && !event.shiftKey) {
-						// Don't submit if suggestion popup is active
-						// The suggestion plugin handles Enter in that case
-						return false;
+				handleKeyDown: (view, event) => {
+					// Enter without shift = submit. Return true so ProseMirror
+					// doesn't apply its default behavior (insert a new paragraph).
+					// The actual submit still happens in the DOM keydown listener
+					// below (which also runs synchronously on the same event).
+					if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+						// Let the file-mention suggestion popup handle Enter
+						// when it's active (selecting a mention item).
+						const suggestState = chatFileMentionPluginKey.getState(view.state);
+						if (suggestState?.active) {
+							return false;
+						}
+						return true;
 					}
 					return false;
 				},
@@ -328,12 +335,15 @@ export const ChatEditor = forwardRef<ChatEditorHandle, ChatEditorProps>(
 
 					event.preventDefault();
 					const { text, mentionedFiles } = serializeContent(editor);
+					// Always forward Enter to the submit handler — even when the
+					// input is blank — so the panel can react (e.g. release the
+					// first queued message while the agent is still streaming).
+					const html = editor.getHTML();
+					submitRef.current(text, mentionedFiles, html);
 					if (text.trim() || mentionedFiles.length > 0) {
-						const html = editor.getHTML();
-						submitRef.current(text, mentionedFiles, html);
 						editor.commands.clearContent(true);
-						requestAnimationFrame(() => editor.commands.focus());
 					}
+					requestAnimationFrame(() => editor.commands.focus());
 				}
 			};
 

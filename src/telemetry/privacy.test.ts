@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { stripSecrets, redactMessages, sanitizeForCapture, redactMessagesStructured, redactOutputChoicesStructured, sanitizeMessages, sanitizeOutputChoices } from "../../extensions/posthog-analytics/lib/privacy.js";
+import {
+  stripSecrets,
+  redactMessages,
+  sanitizeForCapture,
+  redactMessagesStructured,
+  redactOutputChoicesStructured,
+  sanitizeMessages,
+  sanitizeOutputChoices,
+} from "../../extensions/posthog-analytics/lib/privacy.js";
 
 // ---------------------------------------------------------------------------
 // stripSecrets — security-critical: prevents credential leakage
@@ -106,7 +114,8 @@ describe("stripSecrets", () => {
   });
 
   it("handles multiple credentials in a single string (prevents partial redaction)", () => {
-    const input = "keys: sk-aaaabbbbccccddddeeeeffffgggg1234 and ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+    const input =
+      "keys: sk-aaaabbbbccccddddeeeeffffgggg1234 and ghp_abcdefghijklmnopqrstuvwxyz1234567890";
     const result = stripSecrets(input) as string;
     expect(result).not.toContain("sk-");
     expect(result).not.toContain("ghp_");
@@ -137,7 +146,12 @@ describe("redactMessages", () => {
 
   it("preserves tool metadata fields while redacting content (keeps trace linkage intact)", () => {
     const messages = [
-      { role: "tool", name: "web_search", tool_call_id: "call_abc123", content: "search results..." },
+      {
+        role: "tool",
+        name: "web_search",
+        tool_call_id: "call_abc123",
+        content: "search results...",
+      },
     ];
     const result = redactMessages(messages) as Array<Record<string, unknown>>;
     expect(result[0].name).toBe("web_search");
@@ -200,10 +214,10 @@ describe("sanitizeForCapture", () => {
   });
 
   it("strips credential property names even with privacy off (structured credentials never leak)", () => {
-    const result = sanitizeForCapture(
-      { apiKey: "secret", data: "visible" },
-      false,
-    ) as Record<string, unknown>;
+    const result = sanitizeForCapture({ apiKey: "secret", data: "visible" }, false) as Record<
+      string,
+      unknown
+    >;
     expect(result.apiKey).toBe("[REDACTED]");
     expect(result.data).toBe("visible");
   });
@@ -233,8 +247,16 @@ describe("redactMessagesStructured", () => {
         role: "assistant",
         content: "Let me run that.",
         tool_calls: [
-          { id: "call_1", type: "function", function: { name: "exec", arguments: '{"cmd":"ls -la"}' } },
-          { id: "call_2", type: "function", function: { name: "read", arguments: '{"path":"/etc/passwd"}' } },
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "exec", arguments: '{"cmd":"ls -la"}' },
+          },
+          {
+            id: "call_2",
+            type: "function",
+            function: { name: "read", arguments: '{"path":"/etc/passwd"}' },
+          },
         ],
       },
     ];
@@ -300,7 +322,13 @@ describe("redactOutputChoicesStructured", () => {
       {
         role: "assistant",
         content: "Here you go",
-        tool_calls: [{ id: "c1", type: "function", function: { name: "web_search", arguments: '{"q":"test"}' } }],
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "web_search", arguments: '{"q":"test"}' },
+          },
+        ],
       },
     ];
     const result = redactOutputChoicesStructured(choices) as Array<Record<string, unknown>>;
@@ -312,7 +340,11 @@ describe("redactOutputChoicesStructured", () => {
 
   it("sets content to null when original content is null (no-text tool-only responses)", () => {
     const choices = [
-      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "exec" } }] },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "exec" } }],
+      },
     ];
     const result = redactOutputChoicesStructured(choices) as Array<Record<string, unknown>>;
     expect(result[0].content).toBe(null);
@@ -323,7 +355,11 @@ describe("sanitizeMessages", () => {
   it("uses structural redaction when privacy is on (preserves role/tool structure)", () => {
     const messages = [
       { role: "user", content: "secret" },
-      { role: "assistant", content: "response", tool_calls: [{ id: "c", type: "function", function: { name: "exec", arguments: "{}" } }] },
+      {
+        role: "assistant",
+        content: "response",
+        tool_calls: [{ id: "c", type: "function", function: { name: "exec", arguments: "{}" } }],
+      },
     ];
     const result = sanitizeMessages(messages, true) as Array<Record<string, unknown>>;
     expect(result[0].role).toBe("user");

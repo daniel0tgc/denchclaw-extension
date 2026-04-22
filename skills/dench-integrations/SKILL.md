@@ -20,6 +20,7 @@ Use the **Dench Integrations tools** for all connected third-party app tasks in 
 4. Call `dench_execute_integrations` with `tool_slug` and the correct `arguments`.
 
 Do **not** use:
+
 - `gog`, shell CLIs for Gmail / Calendar / Drive / Slack / GitHub / Notion / Linear (unless you need to as last resort or if explicitly asked)
 - `curl` or raw gateway HTTP calls (unless explicitly asked)
 - Direct provider REST calls (unless explicitly asked)
@@ -27,6 +28,7 @@ Do **not** use:
 ## Multi-account handling
 
 When `dench_search_integrations` shows `account_count > 1` for a toolkit:
+
 1. The `accounts` array lists each connected account with `connected_account_id`, `label`, and `email`.
 2. Ask the user which account they want to use.
 3. Pass the chosen `connected_account_id` to `dench_execute_integrations`.
@@ -123,65 +125,65 @@ When only one account is connected, the gateway auto-selects it — no `connecte
 
 ### Gmail
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| List recent mail | `GMAIL_FETCH_EMAILS` | `label_ids`: `["INBOX"]`, `max_results`: `10` |
-| Read one message | `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID` | `message_id` from list results |
-| Send mail | `GMAIL_SEND_EMAIL` | `to`, `subject`, `body` |
+| Intent           | Tool                                | Key arguments                                 |
+| ---------------- | ----------------------------------- | --------------------------------------------- |
+| List recent mail | `GMAIL_FETCH_EMAILS`                | `label_ids`: `["INBOX"]`, `max_results`: `10` |
+| Read one message | `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID` | `message_id` from list results                |
+| Send mail        | `GMAIL_SEND_EMAIL`                  | `to`, `subject`, `body`                       |
 
 **Gotcha:** `label_ids` must be an array like `["INBOX"]`, never a single string.
 
 ### Slack
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| Send a message | `SLACK_SEND_MESSAGE` | `channel`, `text` |
-| List channels | `SLACK_LIST_CONVERSATIONS` | Use schema filters |
+| Intent         | Tool                       | Key arguments      |
+| -------------- | -------------------------- | ------------------ |
+| Send a message | `SLACK_SEND_MESSAGE`       | `channel`, `text`  |
+| List channels  | `SLACK_LIST_CONVERSATIONS` | Use schema filters |
 
 **Gotcha:** `channel` is usually a channel ID (starts with `C`), not the display name.
 
 ### GitHub
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| List repos | `GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER` | Pagination per schema |
-| Find pull requests | `GITHUB_FIND_PULL_REQUESTS` | Best for broad PR search |
-| List pull requests | `GITHUB_LIST_PULL_REQUESTS` | `owner`, `repo` |
-| Create issue | `GITHUB_CREATE_AN_ISSUE` | `owner`, `repo`, `title`, `body` |
+| Intent             | Tool                                                  | Key arguments                    |
+| ------------------ | ----------------------------------------------------- | -------------------------------- |
+| List repos         | `GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER` | Pagination per schema            |
+| Find pull requests | `GITHUB_FIND_PULL_REQUESTS`                           | Best for broad PR search         |
+| List pull requests | `GITHUB_LIST_PULL_REQUESTS`                           | `owner`, `repo`                  |
+| Create issue       | `GITHUB_CREATE_AN_ISSUE`                              | `owner`, `repo`, `title`, `body` |
 
 ### Notion
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| Search | `NOTION_SEARCH` | Query string |
-| Read page | `NOTION_GET_PAGE` | Page ID |
+| Intent      | Tool                 | Key arguments            |
+| ----------- | -------------------- | ------------------------ |
+| Search      | `NOTION_SEARCH`      | Query string             |
+| Read page   | `NOTION_GET_PAGE`    | Page ID                  |
 | Create page | `NOTION_CREATE_PAGE` | Parent object per schema |
 
 ### Google Calendar
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| List calendars | `GOOGLE_CALENDAR_CALENDAR_LIST` | Optional params |
-| List events | `GOOGLE_CALENDAR_EVENTS_LIST` | `calendar_id`, `time_min`/`time_max` (RFC3339) |
-| Create event | `GOOGLE_CALENDAR_CREATE_EVENT` | Calendar id + event payload |
+| Intent         | Tool                            | Key arguments                                  |
+| -------------- | ------------------------------- | ---------------------------------------------- |
+| List calendars | `GOOGLE_CALENDAR_CALENDAR_LIST` | Optional params                                |
+| List events    | `GOOGLE_CALENDAR_EVENTS_LIST`   | `calendar_id`, `time_min`/`time_max` (RFC3339) |
+| Create event   | `GOOGLE_CALENDAR_CREATE_EVENT`  | Calendar id + event payload                    |
 
 **Gotcha:** Datetimes should be RFC3339 strings.
 
 ### Linear
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| List issues | `LINEAR_LIST_ISSUES` | Filters per schema |
+| Intent       | Tool                  | Key arguments               |
+| ------------ | --------------------- | --------------------------- |
+| List issues  | `LINEAR_LIST_ISSUES`  | Filters per schema          |
 | Create issue | `LINEAR_CREATE_ISSUE` | Team id, title, description |
 
 ### Stripe
 
-| Intent | Tool | Key arguments |
-|--------|------|---------------|
-| List subscriptions | `STRIPE_LIST_SUBSCRIPTIONS` | Use schema filters |
+| Intent               | Tool                          | Key arguments               |
+| -------------------- | ----------------------------- | --------------------------- |
+| List subscriptions   | `STRIPE_LIST_SUBSCRIPTIONS`   | Use schema filters          |
 | Search subscriptions | `STRIPE_SEARCH_SUBSCRIPTIONS` | Customer or filter-specific |
-| List customers | `STRIPE_LIST_CUSTOMERS` | For customer lookup |
-| Retrieve balance | `STRIPE_RETRIEVE_BALANCE` | Current balance snapshot |
+| List customers       | `STRIPE_LIST_CUSTOMERS`       | For customer lookup         |
+| Retrieve balance     | `STRIPE_RETRIEVE_BALANCE`     | Current balance snapshot    |
 
 ## Subagent handoff
 

@@ -53,17 +53,17 @@ A shared helper `isDaemonlessMode(opts?: { skipDaemonInstall?: boolean })` in a 
 - **Skip** the gateway health probe loop (line 2440-2444) — no daemon to probe
 - Read `DENCHCLAW_DAEMONLESS` env var as fallback for `opts.skipDaemonInstall`
 
-`**update`** ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `updateWebRuntimeCommand`):
+`**update`\*\* ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `updateWebRuntimeCommand`):
 
 - **Skip** `restartGatewayDaemon()` entirely — `stop`/`install`/`start` all operate on a registered service that doesn't exist
 - Skip `installWebRuntimeLaunchAgent` as `startFn` — let `ensureManagedWebRuntime` use its default `startManagedWebRuntime` (spawns child process, works everywhere)
 - Skip `uninstallWebRuntimeLaunchAgent` call
 
-`**start`/`restart`** ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `startWebRuntimeCommand`):
+`**start`/`restart`\*\* ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `startWebRuntimeCommand`):
 
 - Same as update: skip `restartGatewayDaemon` entirely, skip LaunchAgent, use `startManagedWebRuntime`
 
-`**stop`** ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `stopWebRuntimeCommand`):
+`**stop`\*\* ([src/cli/web-runtime-command.ts](src/cli/web-runtime-command.ts) `stopWebRuntimeCommand`):
 
 - Skip `uninstallWebRuntimeLaunchAgent` (avoids noisy `launchctl` errors in containers)
 
@@ -93,7 +93,7 @@ This runs the gateway as a regular process (no service manager needed). In daemo
 
 ### README addition (under Commands section)
 
-```markdown
+````markdown
 ### Daemonless / Docker
 
 For containers or environments without systemd/launchd, set:
@@ -101,6 +101,7 @@ For containers or environments without systemd/launchd, set:
 ```bash
 export DENCHCLAW_DAEMONLESS=1
 ```
+````
 
 This skips all gateway daemon management (install/start/stop/restart) and launchd LaunchAgent installation across all commands. You must start the gateway yourself as a foreground process:
 
@@ -118,4 +119,3 @@ npx denchclaw update --skip-daemon-install
 ```
 
 ```
-

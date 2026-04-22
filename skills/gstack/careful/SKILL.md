@@ -17,23 +17,27 @@ When active, warn before any potentially destructive operation. The user must ex
 ## Destructive Commands to Guard
 
 ### File System
+
 - `rm -rf` — Recursive force delete
 - `rm -r` on important directories
 - Any operation that removes entire directories
 
 ### Database
+
 - `DROP TABLE` / `DROP DATABASE`
 - `DELETE` without `WHERE` clause
 - `TRUNCATE TABLE`
 - `ALTER TABLE DROP COLUMN`
 
 ### Git
+
 - `git push --force` / `git push -f` (especially to main/master)
 - `git reset --hard`
 - `git clean -fd`
 - `git branch -D` on shared branches
 
 ### Infrastructure
+
 - Destroying cloud resources (terraform destroy, kubectl delete)
 - Modifying production environment variables
 - Stopping production services

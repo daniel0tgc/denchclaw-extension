@@ -102,12 +102,23 @@ function normalizeInputKinds(input: unknown, supportsImages: boolean): Array<"te
   return [...kinds];
 }
 
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === url.length ? url : url.slice(0, end);
+}
+
 export function normalizeDenchGatewayUrl(value: string | undefined): string {
   const raw = (value || DEFAULT_DENCH_CLOUD_GATEWAY_URL).trim();
-  const withProtocol = raw.startsWith("http://") || raw.startsWith("https://")
-    ? raw
-    : `https://${raw}`;
-  return withProtocol.replace(/\/+$/, "").replace(/\/v1$/u, "");
+  const withProtocol =
+    raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+  let base = stripTrailingSlashes(withProtocol);
+  if (base.endsWith("/v1")) {
+    base = stripTrailingSlashes(base.slice(0, -3));
+  }
+  return base;
 }
 
 export function buildDenchGatewayApiBaseUrl(gatewayUrl: string | undefined): string {
@@ -118,9 +129,32 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
-export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-opus-4.6";
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "kimi-k2.5";
 
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
+  {
+    id: "kimi-k2.5",
+    stableId: "moonshotai.kimi-k2.5",
+    displayName: "Kimi K2.5",
+    provider: "moonshot",
+    transportProvider: "bedrock",
+    api: "openai-responses",
+    input: ["text", "image"],
+    reasoning: true,
+    contextWindow: 262000,
+    maxTokens: 64000,
+    supportsStreaming: true,
+    supportsImages: true,
+    supportsResponses: true,
+    supportsReasoning: true,
+    cost: {
+      input: markupCost(0.6),
+      output: markupCost(3),
+      cacheRead: 0,
+      cacheWrite: 0,
+      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+    },
+  },
   {
     id: "claude-opus-4.6",
     stableId: "anthropic.claude-opus-4-6-v1",
@@ -211,18 +245,26 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
   const displayName = readString(record, "name", "displayName", "display_name");
   const provider = readString(record, "provider");
   const transportProvider = readString(record, "transportProvider", "transport_provider");
-  if (!publicId || !stableId || !displayName || !isNonEmptyString(provider) || !isNonEmptyString(transportProvider)) {
+  if (
+    !publicId ||
+    !stableId ||
+    !displayName ||
+    !isNonEmptyString(provider) ||
+    !isNonEmptyString(transportProvider)
+  ) {
     return null;
   }
 
   const supportsImages = readBoolean(record, "supportsImages", "supports_images") ?? false;
   const supportsStreaming = readBoolean(record, "supportsStreaming", "supports_streaming") ?? true;
   const supportsResponses = readBoolean(record, "supportsResponses", "supports_responses") ?? true;
-  const supportsReasoning = readBoolean(record, "supportsReasoning", "supports_reasoning")
-    ?? readBoolean(record, "reasoning")
-    ?? false;
+  const supportsReasoning =
+    readBoolean(record, "supportsReasoning", "supports_reasoning") ??
+    readBoolean(record, "reasoning") ??
+    false;
   const contextWindow = readNumber(record, "contextWindow", "context_window") ?? 200000;
-  const maxTokens = readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
+  const maxTokens =
+    readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
 
   const costRecord = asRecord(record.cost) ?? {};
   const inputCost = readNumber(costRecord, "input") ?? 0;
@@ -308,10 +350,7 @@ export function resolveDenchCloudModel(
 ): DenchCloudCatalogModel | undefined {
   const normalized = requestedId?.trim();
   if (!normalized) {
-    return (
-      models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) ||
-      models[0]
-    );
+    return models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) || models[0];
   }
 
   return models.find((model) => model.id === normalized || model.stableId === normalized);

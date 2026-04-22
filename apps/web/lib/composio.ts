@@ -466,21 +466,58 @@ export async function initiateComposioConnect(
   return res.json() as Promise<ComposioConnectResponse>;
 }
 
+export type DisconnectComposioAppResult = {
+  deleted: boolean;
+  /**
+   * True when the upstream connection was already gone (HTTP 404 from
+   * Composio) before we tried to delete it. From the user's
+   * perspective the intent is achieved either way, so we surface this
+   * as success — the caller can decide whether to whisper "already
+   * disconnected" in the UI vs. saying nothing at all.
+   *
+   * Without this, a stale localStorage cache showing a connection that
+   * Composio revoked upstream produces a misleading "Failed to
+   * disconnect (HTTP 404)" error when the user clicks Disconnect on a
+   * row that's already history.
+   */
+  alreadyGone?: boolean;
+};
+
 export async function disconnectComposioApp(
   gatewayUrl: string,
   apiKey: string,
   connectionId: string,
-): Promise<{ deleted: boolean }> {
+): Promise<DisconnectComposioAppResult> {
   const res = await gatewayFetch(
     gatewayUrl,
     apiKey,
     `/v1/composio/connections/${encodeURIComponent(connectionId)}`,
     { method: "DELETE" },
   );
+  if (res.status === 404) {
+    // Connection isn't on Composio anymore — either we revoked it on
+    // their side (dashboard, support ticket) or the OAuth provider
+    // pulled the rug. The local state needs cleaning up regardless,
+    // and the caller's `refreshIntegrationsRuntime()` will re-sync the
+    // gateway-visible truth into the rest of the app.
+    return { deleted: true, alreadyGone: true };
+  }
   if (!res.ok) {
     throw new Error(`Failed to disconnect (HTTP ${res.status})`);
   }
-  return res.json() as Promise<{ deleted: boolean }>;
+  // Some Composio responses return an empty body on successful DELETE
+  // (typical REST behaviour); fall back to a synthesized success in
+  // that case rather than surfacing "Unexpected end of JSON input".
+  const body = await res.text().catch(() => "");
+  if (!body.trim()) {
+    return { deleted: true };
+  }
+  try {
+    const parsed = JSON.parse(body) as Partial<DisconnectComposioAppResult>;
+    return { deleted: parsed.deleted ?? true };
+  } catch {
+    return { deleted: true };
+  }
 }
 
 // ---------------------------------------------------------------------------

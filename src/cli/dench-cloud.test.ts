@@ -57,13 +57,15 @@ describe("dench-cloud helpers", () => {
         displayName: "GPT-5.4",
         contextWindow: 128000,
         maxTokens: 128000,
-        cost: expect.objectContaining({
+        cost: {
           input: 3.375,
           output: 20.25,
-          marginPercent: 0.35,
-        }),
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
       }),
     ]);
+    expect(models[0]?.cost).not.toHaveProperty("marginPercent");
   });
 
   it("falls back to the bundled model list when the public catalog is unavailable", async () => {
@@ -119,7 +121,6 @@ describe("dench-cloud helpers", () => {
             output: 33.75,
             cacheRead: 0,
             cacheWrite: 0,
-            marginPercent: 0.35,
           },
         },
       ],
@@ -181,7 +182,6 @@ describe("dench-cloud helpers", () => {
             output: 33.75,
             cacheRead: 0,
             cacheWrite: 0,
-            marginPercent: 0.35,
           },
         },
       ],

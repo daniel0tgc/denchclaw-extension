@@ -69,6 +69,13 @@ jobs:
             echo "${TAG} release does not exist yet"
           fi
 
+      - name: Install DuckDB CLI
+        if: steps.npm.outputs.published != 'true'
+        run: |
+          curl -fsSL https://install.duckdb.org | sh
+          echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
+          "$HOME/.duckdb/cli/latest/duckdb" --version
+
       - name: Validate release checks
         if: steps.npm.outputs.published != 'true'
         env:

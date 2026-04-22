@@ -268,9 +268,16 @@ export function buildWorkspaceSyncParams(
       if (state.cronRun != null) params.set("cronRun", String(state.cronRun));
     }
 
-    for (const k of OBJECT_VIEW_PARAMS) {
-      const v = currentParams.get(k);
-      if (v) params.set(k, v);
+    // Only preserve object-view params when staying on the same path.
+    // Switching to a different object (or to a different path entirely)
+    // must drop the previous table's view/filters/cols/etc. so they don't
+    // bleed across tables — see workspace-sync-params test
+    // "drops object-view params when activePath changes".
+    if (currentParams.get("path") === state.activePath) {
+      for (const k of OBJECT_VIEW_PARAMS) {
+        const v = currentParams.get(k);
+        if (v) params.set(k, v);
+      }
     }
   } else if (state.activeSessionId) {
     params.set("chat", state.activeSessionId);

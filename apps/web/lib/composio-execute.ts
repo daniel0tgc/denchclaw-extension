@@ -94,11 +94,35 @@ export class ComposioToolNoConnectionError extends ComposioToolError {
 // ---------------------------------------------------------------------------
 
 const RETRY_STATUS = new Set<number>([408, 425, 429, 500, 502, 503, 504]);
+// Substrings that Composio returns (lowercased) when the upstream OAuth
+// connection is gone — either revoked by the provider, hand-deleted in
+// Composio's dashboard, or expired without a refresh token.
+//
+// We classify these as `ComposioToolNoConnectionError` so callers
+// (notably `tickPoller`) surface a "Reconnect from Integrations" toast
+// instead of a generic 4xx/5xx that the silent-failure catch swallows.
+//
+// Additions are easy to discover after the fact: Composio's response
+// body always lowercases cleanly via `body.toLowerCase()`, and the
+// substring check is permissive on whitespace + punctuation. When in
+// doubt, run the failing tool with curl and grep the response for a
+// stable phrase before adding it here.
 const NO_CONNECTION_HINTS = [
   "composio_account_selection_required",
   "no active connection",
   "no connection found",
   "connected_account_id is required",
+  // Observed 2026-04 against a revoked Gmail OAuth connection — the
+  // exact phrasing from Composio's `composio_client_error` body. Without
+  // this, the error fell through as a generic ComposioToolError and the
+  // poll loop swallowed it silently for days.
+  "is not active or does not exist",
+  // Defensive: catch slight wording variants Composio has used on other
+  // toolkits (Slack/Notion) for the same root cause.
+  "account is not active",
+  "account does not exist",
+  "connection has been disabled",
+  "connection is disabled",
 ];
 const DEFAULT_MAX_RETRIES = 6;
 const FIRST_RETRY_DELAY_MS = 1_000;
@@ -130,7 +154,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function isLikelyNoConnection(status: number, body: string): boolean {
+/**
+ * Decide whether a Composio HTTP response is the "your account is gone,
+ * reconnect" failure mode (vs. a transient or unrelated 4xx/5xx).
+ *
+ * Exported only so the unit tests can pin down the substring matrix in
+ * `NO_CONNECTION_HINTS` without going through a full executeComposioTool
+ * round-trip.
+ */
+export function isLikelyNoConnection(status: number, body: string): boolean {
   if (status !== 400 && status !== 404 && status !== 422) {return false;}
   const lower = body.toLowerCase();
   return NO_CONNECTION_HINTS.some((hint) => lower.includes(hint));

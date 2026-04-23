@@ -5,6 +5,7 @@ import {
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
 import { resolveComposioConnectToolkitSlug } from "@/lib/composio-normalization";
+import { resolveAppPublicOrigin } from "@/lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const origin = new URL(request.url).origin;
+  const origin = resolveAppPublicOrigin(request);
   const callbackUrl = `${origin}/api/composio/callback`;
   const gatewayUrl = resolveComposioGatewayUrl();
   const requestedToolkit = body.toolkit.trim();

@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseDurationToMs } from "@/lib/duration";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -44,39 +45,6 @@ function computeNextWakeAtMs(jobs: Array<Record<string, unknown>>): number | nul
     }
   }
   return min;
-}
-
-/**
- * Parse OpenClaw duration strings like "24h", "30m", "1h30m", "45s", "2d"
- * into milliseconds. Compound units sum (e.g. "1h30m" -> 5_400_000).
- * Returns null for empty input or strings with no recognisable units.
- */
-export function parseDurationToMs(value: string): number | null {
-  if (typeof value !== "string") {return null;}
-  const trimmed = value.trim();
-  if (!trimmed) {return null;}
-  const unitMs: Record<string, number> = {
-    s: 1_000,
-    m: 60_000,
-    h: 3_600_000,
-    d: 86_400_000,
-  };
-  const matches = trimmed.matchAll(/(\d+)\s*([smhd])/gi);
-  let total = 0;
-  let matched = false;
-  let consumed = 0;
-  for (const m of matches) {
-    matched = true;
-    const amount = Number(m[1]);
-    const unit = m[2].toLowerCase();
-    total += amount * unitMs[unit];
-    consumed += m[0].length;
-  }
-  if (!matched) {return null;}
-  // Reject inputs with junk between/around the duration tokens (e.g. "24h junk").
-  const stripped = trimmed.replaceAll(/\s+/g, "");
-  if (consumed !== stripped.length) {return null;}
-  return total;
 }
 
 /**

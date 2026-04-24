@@ -119,7 +119,7 @@ describe("Cron API routes", () => {
 
   describe("parseDurationToMs", () => {
     it("parses single-unit durations", async () => {
-      const { parseDurationToMs } = await import("./jobs/route.js");
+      const { parseDurationToMs } = await import("@/lib/duration");
       expect(parseDurationToMs("24h")).toBe(24 * 60 * 60_000);
       expect(parseDurationToMs("30m")).toBe(30 * 60_000);
       expect(parseDurationToMs("45s")).toBe(45_000);
@@ -127,18 +127,18 @@ describe("Cron API routes", () => {
     });
 
     it("sums compound durations like 1h30m", async () => {
-      const { parseDurationToMs } = await import("./jobs/route.js");
+      const { parseDurationToMs } = await import("@/lib/duration");
       expect(parseDurationToMs("1h30m")).toBe(60 * 60_000 + 30 * 60_000);
       expect(parseDurationToMs("1d12h")).toBe(36 * 60 * 60_000);
     });
 
     it("is case-insensitive on units", async () => {
-      const { parseDurationToMs } = await import("./jobs/route.js");
+      const { parseDurationToMs } = await import("@/lib/duration");
       expect(parseDurationToMs("24H")).toBe(24 * 60 * 60_000);
     });
 
     it("returns null for unparseable input", async () => {
-      const { parseDurationToMs } = await import("./jobs/route.js");
+      const { parseDurationToMs } = await import("@/lib/duration");
       expect(parseDurationToMs("")).toBeNull();
       expect(parseDurationToMs("forever")).toBeNull();
       expect(parseDurationToMs("24h junk")).toBeNull();

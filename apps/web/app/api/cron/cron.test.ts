@@ -69,6 +69,80 @@ describe("Cron API routes", () => {
       const json = await res.json();
       expect(json.jobs).toEqual([]);
     });
+
+    it("returns the heartbeat interval from agents.defaults.heartbeat.every", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockImplementation((p) => String(p).endsWith("openclaw.json"));
+      vi.mocked(mockReadFile).mockImplementation((p) => {
+        if (String(p).endsWith("openclaw.json")) {
+          return JSON.stringify({
+            agents: { defaults: { heartbeat: { every: "24h" } } },
+          }) as never;
+        }
+        return "" as never;
+      });
+
+      const { GET } = await import("./jobs/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.heartbeat.intervalMs).toBe(24 * 60 * 60_000);
+    });
+
+    it("falls back to 24h when heartbeat.every is missing", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockImplementation((p) => String(p).endsWith("openclaw.json"));
+      vi.mocked(mockReadFile).mockImplementation((p) => {
+        if (String(p).endsWith("openclaw.json")) {
+          return JSON.stringify({ agents: { defaults: {} } }) as never;
+        }
+        return "" as never;
+      });
+
+      const { GET } = await import("./jobs/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.heartbeat.intervalMs).toBe(24 * 60 * 60_000);
+    });
+
+    it("falls back to 24h when openclaw.json is missing entirely", async () => {
+      const { existsSync: mockExists } = await import("node:fs");
+      vi.mocked(mockExists).mockReturnValue(false);
+
+      const { GET } = await import("./jobs/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.heartbeat.intervalMs).toBe(24 * 60 * 60_000);
+    });
+  });
+
+  // ─── parseDurationToMs ───────────────────────────────────────────
+
+  describe("parseDurationToMs", () => {
+    it("parses single-unit durations", async () => {
+      const { parseDurationToMs } = await import("./jobs/route.js");
+      expect(parseDurationToMs("24h")).toBe(24 * 60 * 60_000);
+      expect(parseDurationToMs("30m")).toBe(30 * 60_000);
+      expect(parseDurationToMs("45s")).toBe(45_000);
+      expect(parseDurationToMs("2d")).toBe(2 * 24 * 60 * 60_000);
+    });
+
+    it("sums compound durations like 1h30m", async () => {
+      const { parseDurationToMs } = await import("./jobs/route.js");
+      expect(parseDurationToMs("1h30m")).toBe(60 * 60_000 + 30 * 60_000);
+      expect(parseDurationToMs("1d12h")).toBe(36 * 60 * 60_000);
+    });
+
+    it("is case-insensitive on units", async () => {
+      const { parseDurationToMs } = await import("./jobs/route.js");
+      expect(parseDurationToMs("24H")).toBe(24 * 60 * 60_000);
+    });
+
+    it("returns null for unparseable input", async () => {
+      const { parseDurationToMs } = await import("./jobs/route.js");
+      expect(parseDurationToMs("")).toBeNull();
+      expect(parseDurationToMs("forever")).toBeNull();
+      expect(parseDurationToMs("24h junk")).toBeNull();
+    });
   });
 
   // ─── GET /api/cron/jobs/[jobId]/runs ────────────────────────────

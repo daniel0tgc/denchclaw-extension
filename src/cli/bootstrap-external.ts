@@ -1020,6 +1020,10 @@ async function ensureAgentDefaults(openclawCommand: string, profile: string): Pr
     ["agents.defaults.elevatedDefault", "on"],
     ["commands.bash", "true"],
     ["commands.config", "true"],
+    // Heartbeat: once a day instead of OpenClaw's stock 30m. Heartbeats wake
+    // the agent for autonomous follow-ups; 30m is too chatty for Dench's
+    // always-on workspace UX. See agents.defaults.heartbeat in openclaw.json.
+    ["agents.defaults.heartbeat.every", "24h"],
   ];
   for (const [key, value] of settings) {
     await runOpenClawOrThrow({

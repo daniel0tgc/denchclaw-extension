@@ -6,6 +6,12 @@ export const dynamic = "force-dynamic";
 
 const CRON_DIR = join(resolveOpenClawStateDir(), "cron");
 const JOBS_FILE = join(CRON_DIR, "jobs.json");
+const OPENCLAW_CONFIG_FILE = join(resolveOpenClawStateDir(), "openclaw.json");
+
+// Default when the user hasn't customized agents.defaults.heartbeat.every.
+// Mirrors the bootstrap default applied by ensureAgentDefaults() in
+// src/cli/bootstrap-external.ts.
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 24 * 60 * 60_000;
 
 type CronStoreFile = {
   version: 1;
@@ -40,14 +46,71 @@ function computeNextWakeAtMs(jobs: Array<Record<string, unknown>>): number | nul
   return min;
 }
 
-/** Read heartbeat config from ~/.openclaw/config.yaml (best-effort). */
-function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null } {
-  const defaults = { intervalMs: 30 * 60_000, nextDueEstimateMs: null as number | null };
+/**
+ * Parse OpenClaw duration strings like "24h", "30m", "1h30m", "45s", "2d"
+ * into milliseconds. Compound units sum (e.g. "1h30m" -> 5_400_000).
+ * Returns null for empty input or strings with no recognisable units.
+ */
+export function parseDurationToMs(value: string): number | null {
+  if (typeof value !== "string") {return null;}
+  const trimmed = value.trim();
+  if (!trimmed) {return null;}
+  const unitMs: Record<string, number> = {
+    s: 1_000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+  };
+  const matches = trimmed.matchAll(/(\d+)\s*([smhd])/gi);
+  let total = 0;
+  let matched = false;
+  let consumed = 0;
+  for (const m of matches) {
+    matched = true;
+    const amount = Number(m[1]);
+    const unit = m[2].toLowerCase();
+    total += amount * unitMs[unit];
+    consumed += m[0].length;
+  }
+  if (!matched) {return null;}
+  // Reject inputs with junk between/around the duration tokens (e.g. "24h junk").
+  const stripped = trimmed.replaceAll(/\s+/g, "");
+  if (consumed !== stripped.length) {return null;}
+  return total;
+}
 
-  // Try to read agent session stores to estimate next heartbeat from lastRunMs
+/**
+ * Read agents.defaults.heartbeat.every from the active openclaw.json and
+ * return the configured interval in milliseconds. Falls back to the
+ * Dench-recommended default (24h) when the key is missing or unparseable
+ * so the dashboard never silently shows a wrong number.
+ */
+function readHeartbeatIntervalMs(): number {
+  try {
+    if (!existsSync(OPENCLAW_CONFIG_FILE)) {return DEFAULT_HEARTBEAT_INTERVAL_MS;}
+    const raw = readFileSync(OPENCLAW_CONFIG_FILE, "utf-8");
+    const cfg = JSON.parse(raw) as Record<string, unknown>;
+    const agents = cfg.agents as { defaults?: { heartbeat?: { every?: unknown } } } | undefined;
+    const every = agents?.defaults?.heartbeat?.every;
+    if (typeof every === "string") {
+      const parsed = parseDurationToMs(every);
+      if (parsed != null && parsed > 0) {return parsed;}
+    }
+  } catch {
+    // ignore — fall through to default
+  }
+  return DEFAULT_HEARTBEAT_INTERVAL_MS;
+}
+
+/**
+ * Estimate when the next heartbeat will fire based on the most recent agent
+ * session activity plus the configured interval. Returns null when no session
+ * activity is available.
+ */
+function estimateNextHeartbeatMs(intervalMs: number): number | null {
   try {
     const agentsDir = join(resolveOpenClawStateDir(), "agents");
-    if (!existsSync(agentsDir)) {return defaults;}
+    if (!existsSync(agentsDir)) {return null;}
 
     const agentDirs = readdirSync(agentsDir, { withFileTypes: true });
     let latestHeartbeat: number | null = null;
@@ -72,14 +135,18 @@ function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | 
       }
     }
 
-    if (latestHeartbeat) {
-      defaults.nextDueEstimateMs = latestHeartbeat + defaults.intervalMs;
-    }
+    if (latestHeartbeat) {return latestHeartbeat + intervalMs;}
   } catch {
     // ignore
   }
+  return null;
+}
 
-  return defaults;
+/** Read heartbeat config + estimated next fire time. */
+function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null } {
+  const intervalMs = readHeartbeatIntervalMs();
+  const nextDueEstimateMs = estimateNextHeartbeatMs(intervalMs);
+  return { intervalMs, nextDueEstimateMs };
 }
 
 /** GET /api/cron/jobs -- list all cron jobs with heartbeat & status info */

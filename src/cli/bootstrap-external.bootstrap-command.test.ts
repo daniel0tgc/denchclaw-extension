@@ -2111,6 +2111,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
       { key: "agents.defaults.elevatedDefault", value: "on" },
       { key: "commands.bash", value: "true" },
       { key: "commands.config", value: "true" },
+      { key: "agents.defaults.heartbeat.every", value: "24h" },
     ];
 
     for (const { key, value } of elevatedSettings) {
@@ -2207,6 +2208,7 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(finalConfig.commands?.bash).toBe(true);
     expect(finalConfig.commands?.config).toBe(true);
     expect(finalConfig.agents?.defaults?.timeoutSeconds).toBe(86400);
+    expect(finalConfig.agents?.defaults?.heartbeat?.every).toBe("24h");
     expect(finalConfig.tools?.profile).toBe("full");
   });
 

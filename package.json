@@ -38,6 +38,7 @@
   "scripts": {
     "build": "tsdown",
     "build:plugin-env": "node scripts/build-plugin-env.mjs",
+    "build:seed-duckdb": "node scripts/build-seed-duckdb.mjs",
     "check": "pnpm format:check && pnpm lint",
     "denchclaw": "node denchclaw.mjs",
     "deploy": "bash scripts/with-root-env.sh bash scripts/deploy.sh",
@@ -50,7 +51,7 @@
     "format:check": "oxfmt --check",
     "github:sync-secrets": "bash scripts/with-root-env.sh bash scripts/sync-github-secrets.sh",
     "lint": "oxlint --type-aware",
-    "prepack": "pnpm build:plugin-env && pnpm build && pnpm web:build && pnpm web:prepack",
+    "prepack": "pnpm build:seed-duckdb && pnpm build:plugin-env && pnpm build && pnpm web:build && pnpm web:prepack",
     "start": "node denchclaw.mjs",
     "test": "pnpm test:cli && pnpm --dir apps/web test",
     "test:cli": "vitest run --config vitest.unit.config.ts src/cli/run-main.test.ts src/cli/bootstrap-external.test.ts src/cli/bootstrap-external.bootstrap-command.test.ts src/cli/dench-cloud.test.ts src/cli/workspace-seed.test.ts src/cli/web-runtime.test.ts src/cli/web-runtime-command.test.ts src/cli/flatten-standalone-deps.test.ts src/cli/sync-poll.test.ts && vitest run --config extensions/vitest.config.ts extensions/dench-identity/index.test.ts extensions/dench-identity/composio-cheat-sheet.test.ts extensions/dench-ai-gateway/index.test.ts",

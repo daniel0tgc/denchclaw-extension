@@ -3470,6 +3470,20 @@ export async function bootstrapCommand(
   // to the raw JSON file.  Post-onboard re-application via the CLI happens after
   // `openclaw onboard` creates the profile.
 
+  // ── Seed the workspace BEFORE openclaw onboard ──
+  // Previously this ran AFTER onboard, but a slow / killed onboard (e.g. when
+  // an outer wrapper SIGTERM's bootstrap, or when onboard exceeds its 12min
+  // budget) left the workspace without a `workspace.duckdb`, leading to the
+  // "No workspace database found" error in the web UI on warm-pool slots.
+  // The seed only depends on `workspaceDir` (mkdir'd at line 3382 above) and
+  // `packageRoot` (the npm package install dir) — it has no dependency on the
+  // openclaw profile being initialized, so it's safe to run early.
+  preOnboardSpinner?.message("Seeding workspace…");
+  const workspaceSeed = seedWorkspaceFromAssets({
+    workspaceDir,
+    packageRoot,
+  });
+
   preOnboardSpinner?.stop("Ready to onboard.");
 
   const onboardArgv = [
@@ -3490,6 +3504,14 @@ export async function bootstrapCommand(
   }
   if (denchCloudSelection.enabled) {
     onboardArgv.push("--auth-choice", "skip");
+  }
+  // `--skip-search` and `--skip-skills` skip two interactive wizard prompts
+  // that would otherwise hang non-interactive bootstrap (the prompts have no
+  // safe default that matches Dench's intent). They're also a known onboard-
+  // time sink in the dench-cloud path. Always pass them in non-interactive
+  // mode regardless of `denchCloudSelection.enabled` so warm-pool / sandbox
+  // bootstraps don't stall waiting for impossible prompt input.
+  if (nonInteractive) {
     onboardArgv.push("--skip-search");
     onboardArgv.push("--skip-skills");
   }
@@ -3527,11 +3549,6 @@ export async function bootstrapCommand(
       gatewayLogPath: daemonless ? undefined : path.join(stateDir, "logs", "gateway.log"),
     });
   }
-
-  const workspaceSeed = seedWorkspaceFromAssets({
-    workspaceDir,
-    packageRoot,
-  });
 
   const postOnboardSpinner = !opts.json ? spinner() : null;
   postOnboardSpinner?.start("Finalizing configuration…");

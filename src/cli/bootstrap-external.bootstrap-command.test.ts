@@ -245,6 +245,8 @@ describe("bootstrapCommand always-onboard behavior", () => {
   let pendingDeviceRequests: Array<Record<string, unknown>> = [];
   let pairedDevices: Array<Record<string, unknown>> = [];
   let approvedDeviceRequestIds: string[] = [];
+  let onboardExitCode = 0;
+  let onboardStderr = "";
 
   beforeEach(() => {
     homeDir = createTempStateDir();
@@ -262,6 +264,8 @@ describe("bootstrapCommand always-onboard behavior", () => {
     pendingDeviceRequests = [];
     pairedDevices = [];
     approvedDeviceRequestIds = [];
+    onboardExitCode = 0;
+    onboardStderr = "";
     process.env = {
       ...originalEnv,
       HOME: homeDir,
@@ -348,6 +352,12 @@ describe("bootstrapCommand always-onboard behavior", () => {
       if (commandString === "openclaw" && argList.includes("onboard")) {
         if (driftGatewayModeAfterOnboard) {
           gatewayModeConfigValue = "remote\n";
+        }
+        if (onboardExitCode !== 0) {
+          return createMockChild({
+            code: onboardExitCode,
+            stderr: onboardStderr || "onboard failed\n",
+          }) as never;
         }
         return createMockChild({ code: 0, stdout: "ok\n" }) as never;
       }
@@ -1357,6 +1367,78 @@ describe("bootstrapCommand always-onboard behavior", () => {
     expect(summary.workspaceSeed?.seeded).toBe(true);
     expect(summary.workspaceSeed?.reason).toBe("seeded");
     expect(summary.workspaceSeed?.workspaceDir).toBe(workspaceDir);
+  });
+
+  // Regression: warm-pool slots were shipping without `workspace.duckdb`
+  // because `seedWorkspaceFromAssets` used to run AFTER `openclaw onboard`. A
+  // slow / killed onboard meant the seed step never ran, leaving the web UI
+  // showing "No workspace database found." Seeding now happens BEFORE onboard
+  // so it survives an onboard failure.
+  it("still seeds workspace.duckdb when openclaw onboard fails", async () => {
+    const runtime: RuntimeEnv = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+    const workspaceDir = path.join(stateDir, "workspace");
+    const workspaceDbPath = path.join(workspaceDir, "workspace.duckdb");
+    expect(existsSync(workspaceDbPath)).toBe(false);
+
+    onboardExitCode = 1;
+    onboardStderr = "onboard exploded mid-flight\n";
+
+    await expect(
+      bootstrapCommand(
+        {
+          nonInteractive: true,
+          noOpen: true,
+          skipUpdate: true,
+        },
+        runtime,
+      ),
+    ).rejects.toThrow();
+
+    // The load-bearing assertions: seed artifacts must exist on disk even
+    // though bootstrap aborted at the onboard step.
+    expect(existsSync(workspaceDbPath)).toBe(true);
+    expect(existsSync(path.join(workspaceDir, "people", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(workspaceDir, "company", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(workspaceDir, "task", ".object.yaml"))).toBe(true);
+    expect(existsSync(path.join(workspaceDir, "WORKSPACE.md"))).toBe(true);
+
+    const onboardCalls = spawnCalls.filter(
+      (call) => call.command === "openclaw" && call.args.includes("onboard"),
+    );
+    expect(onboardCalls.length).toBeGreaterThan(0);
+  });
+
+  // Regression: --skip-search and --skip-skills used to be gated on
+  // `denchCloudSelection.enabled`. In non-interactive mode the user can never
+  // answer those prompts, so onboard would stall waiting forever. Always
+  // pass them when nonInteractive is true.
+  it("always passes --skip-search and --skip-skills when nonInteractive (no dench-cloud)", async () => {
+    const runtime: RuntimeEnv = {
+      log: vi.fn(),
+      error: vi.fn(),
+      exit: vi.fn(),
+    };
+
+    await bootstrapCommand(
+      {
+        nonInteractive: true,
+        noOpen: true,
+        skipUpdate: true,
+      },
+      runtime,
+    );
+
+    const onboardCall = spawnCalls.find(
+      (call) => call.command === "openclaw" && call.args.includes("onboard"),
+    );
+    expect(onboardCall).toBeDefined();
+    expect(onboardCall!.args).toContain("--skip-search");
+    expect(onboardCall!.args).toContain("--skip-skills");
+    expect(onboardCall!.args).toContain("--non-interactive");
   });
 
   it("skips workspace seeding when workspace.duckdb already exists", async () => {

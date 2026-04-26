@@ -70,10 +70,10 @@ describe("cron-heartbeat helpers", () => {
 	});
 
 	describe("readHeartbeatSetting", () => {
-		it("returns default 30m when no config exists", async () => {
+		it("returns default 1d (24h) when no config exists", async () => {
 			const { readHeartbeatSetting } = await import("./cron-heartbeat.js");
 			const result = readHeartbeatSetting();
-			expect(result).toEqual({ value: 30, unit: "m", intervalMs: 1_800_000, raw: "30m" });
+			expect(result).toEqual({ value: 1, unit: "d", intervalMs: 86_400_000, raw: "1d" });
 		});
 
 		it("reads agents.defaults.heartbeat.every from config", async () => {
@@ -102,8 +102,8 @@ describe("cron-heartbeat helpers", () => {
 
 			const { readHeartbeatSetting } = await import("./cron-heartbeat.js");
 			const result = readHeartbeatSetting();
-			expect(result.value).toBe(30);
-			expect(result.unit).toBe("m");
+			expect(result.value).toBe(1);
+			expect(result.unit).toBe("d");
 		});
 	});
 

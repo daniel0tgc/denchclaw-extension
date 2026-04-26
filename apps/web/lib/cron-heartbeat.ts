@@ -11,8 +11,8 @@ export type HeartbeatSetting = {
 	raw: string;
 };
 
-const DEFAULT_INTERVAL_MS = 30 * 60_000;
-const DEFAULT_SETTING: HeartbeatSetting = { value: 30, unit: "m", intervalMs: DEFAULT_INTERVAL_MS, raw: "30m" };
+const DEFAULT_INTERVAL_MS = 24 * 60 * 60_000;
+const DEFAULT_SETTING: HeartbeatSetting = { value: 1, unit: "d", intervalMs: DEFAULT_INTERVAL_MS, raw: "1d" };
 
 const UNIT_TO_MS: Record<HeartbeatUnit, number> = {
 	m: 60_000,

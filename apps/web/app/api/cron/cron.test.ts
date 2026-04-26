@@ -256,7 +256,7 @@ describe("Cron API routes", () => {
       expect(json.heartbeat.every).toBe("2h");
     });
 
-    it("falls back to 30m when heartbeat config is absent", async () => {
+    it("falls back to 1d (24h) when heartbeat config is absent", async () => {
       const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
       vi.mocked(mockExists).mockReturnValue(false);
       vi.mocked(mockReadFile).mockReturnValue("" as never);
@@ -264,8 +264,8 @@ describe("Cron API routes", () => {
       const { GET } = await import("./jobs/route.js");
       const res = await GET();
       const json = await res.json();
-      expect(json.heartbeat.intervalMs).toBe(1_800_000);
-      expect(json.heartbeat.every).toBe("30m");
+      expect(json.heartbeat.intervalMs).toBe(86_400_000);
+      expect(json.heartbeat.every).toBe("1d");
     });
   });
 

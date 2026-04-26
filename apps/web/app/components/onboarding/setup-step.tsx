@@ -166,6 +166,8 @@ export function SetupStep({
   const [activeToolkit, setActiveToolkit] = useState<ToolkitKey | null>(null);
   const [toolkitError, setToolkitError] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState(false);
+  const [skipGmailDialogOpen, setSkipGmailDialogOpen] = useState(false);
+  const [skippingGmail, setSkippingGmail] = useState(false);
 
   const popupRef = useRef<Window | null>(null);
   const popupPollRef = useRef<number | null>(null);
@@ -432,6 +434,46 @@ export function SetupStep({
     }
   }
 
+  // Gmail is optional: when the user explicitly skips, jump the state
+  // machine straight to `complete` and drop them into the workspace. They
+  // can come back later via Settings to wire Gmail (and Calendar) up. This
+  // intentionally bypasses Calendar and the backfill step, because without
+  // Gmail neither has anything to chew on.
+  async function handleSkipGmail() {
+    setToolkitError(null);
+    setSkippingGmail(true);
+    try {
+      const res = await fetch("/api/onboarding/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: state.currentStep,
+          to: "complete",
+          skipping: "gmail",
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const next = (await res.json()) as OnboardingState;
+      onAdvance(next);
+      setSkipGmailDialogOpen(false);
+      // Full navigation (not router.push) so the server-rendered `/`
+      // re-evaluates `isOnboardingComplete()` and the user lands directly
+      // in the workspace shell, skipping Setup → Sync → Complete.
+      window.location.assign("/");
+    } catch (err) {
+      // Close the dialog on failure so the inline error banner under the
+      // setup cards becomes visible — otherwise the dialog occludes it.
+      setSkipGmailDialogOpen(false);
+      setSkippingGmail(false);
+      setToolkitError(
+        err instanceof Error ? err.message : "Could not skip Gmail.",
+      );
+    }
+  }
+
   // Calendar is optional: when the user explicitly skips we still need to
   // advance the state machine to `backfill`.
   async function handleSkipCalendar() {
@@ -677,9 +719,8 @@ export function SetupStep({
           </form>
         )}
 
-        {/* Gmail */}
+        {/* Gmail (recommended, but skippable with confirmation) */}
         <ConnectionCard
-          required
           icon={<GmailIcon />}
           title="Gmail"
           description="We read your inbox so People and Companies can appear."
@@ -694,12 +735,22 @@ export function SetupStep({
           disabledReason={gmailBlocked ? "Requires Dench Cloud." : undefined}
           actions={
             gmailConnected ? null : (
-              <PrimaryAction
-                onClick={() => void startConnect("gmail")}
-                disabled={gmailBlocked || activeToolkit !== null}
-              >
-                {activeToolkit === "gmail" ? "Authorizing…" : "Connect"}
-              </PrimaryAction>
+              <div className="flex items-center gap-3">
+                {!gmailBlocked && (
+                  <GhostAction
+                    onClick={() => setSkipGmailDialogOpen(true)}
+                    disabled={activeToolkit !== null || skippingGmail}
+                  >
+                    Skip
+                  </GhostAction>
+                )}
+                <PrimaryAction
+                  onClick={() => void startConnect("gmail")}
+                  disabled={gmailBlocked || activeToolkit !== null || skippingGmail}
+                >
+                  {activeToolkit === "gmail" ? "Authorizing…" : "Connect"}
+                </PrimaryAction>
+              </div>
             )
           }
         />
@@ -761,7 +812,7 @@ export function SetupStep({
           {requiredComplete
             ? null
             : denchCloudConnected
-              ? "Gmail is required to continue."
+              ? "Connect Gmail for the full experience, or skip ahead."
               : "Dench Cloud unlocks the other two."}
         </p>
         <button
@@ -785,6 +836,15 @@ export function SetupStep({
           {advancing ? "Opening sync…" : "Continue"}
         </button>
       </div>
+
+      <SkipGmailDialog
+        open={skipGmailDialogOpen}
+        submitting={skippingGmail}
+        onCancel={() => {
+          if (!skippingGmail) {setSkipGmailDialogOpen(false);}
+        }}
+        onConfirm={() => void handleSkipGmail()}
+      />
     </div>
   );
 }
@@ -796,4 +856,117 @@ export function SetupStep({
 function formatAccountLabel(value: string | null | undefined): string {
   if (typeof value === "string" && value.includes("@")) {return value;}
   return "Connected";
+}
+
+/**
+ * Confirmation dialog for skipping Gmail. Skipping Gmail also bypasses
+ * Calendar + the backfill step and drops the user straight into the
+ * workspace, so we ask explicitly rather than silently committing.
+ *
+ * Style mirrors `keyboard-shortcuts-help.tsx` for visual consistency:
+ * fixed overlay + centered surface, themed via the project's CSS
+ * variables, ESC + backdrop click both dismiss. Two choices only
+ * (Hick: keep the decision narrow), with the destructive-feeling action
+ * on the right and a quiet Cancel on the left so muscle memory from
+ * other dialogs in the app carries over.
+ */
+function SkipGmailDialog({
+  open,
+  submitting,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  submitting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {return;}
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) {
+        event.preventDefault();
+        onCancel();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, submitting, onCancel]);
+
+  if (!open) {return null;}
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skip-gmail-title"
+        aria-describedby="skip-gmail-desc"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[420px] overflow-hidden rounded-2xl"
+        style={{
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-border-strong)",
+          boxShadow: "var(--shadow-xl, 0 24px 60px rgba(0,0,0,0.25))",
+        }}
+      >
+        <div className="px-6 pt-6 pb-2">
+          <h2
+            id="skip-gmail-title"
+            className="font-instrument text-[24px] leading-tight tracking-tight"
+            style={{ color: "var(--color-text)" }}
+          >
+            Skip Gmail and head to the workspace?
+          </h2>
+          <p
+            id="skip-gmail-desc"
+            className="mt-3 text-[13.5px] leading-relaxed"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Your workspace will open empty — People, Companies, and the calendar
+            sync stay off until you connect Gmail later from Settings.
+          </p>
+        </div>
+        <div
+          className="flex items-center justify-end gap-4 px-6 py-4"
+          style={{ borderTop: "1px solid var(--color-border)" }}
+        >
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="text-[13px] underline-offset-4 transition-colors hover:underline disabled:opacity-50"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            autoFocus
+            className="flex h-10 items-center justify-center rounded-lg px-5 text-[13.5px] font-medium transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50"
+            style={{
+              background: "var(--color-accent)",
+              color: "#fff",
+            }}
+            onMouseEnter={(e) => {
+              if (!submitting) {
+                (e.currentTarget as HTMLElement).style.opacity = "0.92";
+              }
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "1";
+            }}
+          >
+            {submitting ? "Skipping…" : "Yes, skip Gmail"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

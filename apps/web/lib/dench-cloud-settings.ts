@@ -12,8 +12,15 @@ import {
   RECOMMENDED_DENCH_CLOUD_MODEL_ID,
 } from "../../../src/cli/dench-cloud";
 import {
+  applyDenchIntegrationToggleDraft,
+  getIntegrationsState,
+  readIntegrationsMetadata,
   refreshIntegrationsRuntime,
+  type DenchIntegrationId,
+  type DenchIntegrationToggleDraft,
   type IntegrationRuntimeRefresh,
+  type IntegrationsState,
+  writeIntegrationsMetadata,
 } from "./integrations";
 
 type UnknownRecord = Record<string, unknown>;
@@ -68,6 +75,12 @@ function resolveDenchApiKey(config: UnknownRecord): string | null {
   if (process.env.DENCH_CLOUD_API_KEY?.trim()) return process.env.DENCH_CLOUD_API_KEY.trim();
   if (process.env.DENCH_API_KEY?.trim()) return process.env.DENCH_API_KEY.trim();
   return null;
+}
+
+function readDenchEnrichmentMaxModeEnabled(config: UnknownRecord): boolean {
+  const models = asRecord(config.models);
+  const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
+  return provider?.enrichmentMaxMode === true;
 }
 
 function resolveGatewayUrl(config: UnknownRecord): string {
@@ -237,6 +250,7 @@ export type CloudSettingsState = {
   selectedDenchModel: string | null;
   selectedVoiceId: string | null;
   elevenLabsEnabled: boolean;
+  enrichmentMaxModeEnabled: boolean;
   models: DenchCloudCatalogModel[];
   recommendedModelId: string;
   validationError?: string;
@@ -246,9 +260,16 @@ export type CloudSettingsUpdateResult = {
   state: CloudSettingsState;
   changed: boolean;
   refresh: IntegrationRuntimeRefresh;
+  integrationsState?: IntegrationsState;
   error?: string;
 };
 
+export type SaveActiveCloudSettingsInput = {
+  stableId: string | null;
+  voiceId: string | null;
+  integrations: DenchIntegrationToggleDraft;
+  enrichmentMaxModeEnabled: boolean;
+};
 export async function getCloudVoiceState(): Promise<CloudVoiceState> {
   const config = readConfig();
   const apiKey = resolveDenchApiKey(config);
@@ -305,6 +326,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
   const isDenchPrimary = Boolean(primaryModel?.startsWith("dench-cloud/"));
   const settings = readConfiguredDenchCloudSettings(config);
   const voiceState = await getCloudVoiceState();
+  const enrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled(config);
 
   if (voiceState.status === "no_key") {
     return {
@@ -316,6 +338,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
       selectedDenchModel: null,
       selectedVoiceId: voiceState.selectedVoiceId,
       elevenLabsEnabled: voiceState.elevenLabsEnabled,
+      enrichmentMaxModeEnabled,
       models: [],
       recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
     };
@@ -331,6 +354,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
       selectedDenchModel: null,
       selectedVoiceId: voiceState.selectedVoiceId,
       elevenLabsEnabled: voiceState.elevenLabsEnabled,
+      enrichmentMaxModeEnabled,
       models: [],
       recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
       validationError: voiceState.validationError,
@@ -348,6 +372,7 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
     selectedDenchModel: settings.selectedModel ?? null,
     selectedVoiceId: voiceState.selectedVoiceId,
     elevenLabsEnabled: voiceState.elevenLabsEnabled,
+    enrichmentMaxModeEnabled,
     models: catalog.models,
     recommendedModelId: RECOMMENDED_DENCH_CLOUD_MODEL_ID,
   };
@@ -499,6 +524,151 @@ export async function saveVoiceId(voiceId: string | null): Promise<CloudSettings
 
   return {
     state: await getCloudSettingsState(),
+    changed: true,
+    refresh,
+  };
+}
+
+export async function saveActiveCloudSettings(
+  input: SaveActiveCloudSettingsInput,
+): Promise<CloudSettingsUpdateResult> {
+  const config = readConfig();
+  const currentPrimaryModel = resolvePrimaryModel(config);
+  const desiredPrimaryModel = input.stableId ? `dench-cloud/${input.stableId}` : currentPrimaryModel;
+  const currentVoiceId = readSelectedVoiceId(config);
+  const currentEnrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled(config);
+  const nextVoiceId = input.voiceId?.trim() || null;
+  const nextEnrichmentMaxModeEnabled = input.enrichmentMaxModeEnabled === true;
+  let changed = false;
+  let requiresRefresh = false;
+
+  if (input.stableId && desiredPrimaryModel !== currentPrimaryModel) {
+    const apiKey = resolveDenchApiKey(config);
+    const gatewayUrl = resolveGatewayUrl(config);
+
+    if (!apiKey) {
+      return {
+        state: await getCloudSettingsState(),
+        integrationsState: getIntegrationsState(),
+        changed: false,
+        refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+        error: "No Dench Cloud API key configured.",
+      };
+    }
+
+    const catalog = await fetchDenchCloudCatalog(gatewayUrl);
+    const patch = buildDenchCloudConfigPatch({
+      gatewayUrl,
+      apiKey,
+      models: catalog.models,
+    });
+
+    const models = ensureRecord(config, "models");
+    models.mode = "merge";
+    const providers = ensureRecord(models, "providers");
+    const denchCloud = ensureRecord(providers, "dench-cloud");
+    const patchProvider = asRecord(asRecord(asRecord(patch.models)?.providers)?.["dench-cloud"]);
+    if (patchProvider) {
+      Object.assign(denchCloud, patchProvider);
+    }
+
+    const agents = ensureRecord(config, "agents");
+    const defaults = ensureRecord(agents, "defaults");
+    const modelSetting = ensureRecord(defaults, "model");
+    modelSetting.primary = desiredPrimaryModel;
+
+    const patchAgentModels = asRecord(asRecord(patch.agents)?.defaults);
+    if (patchAgentModels?.models) {
+      const existingModels = asRecord(defaults.models) ?? {};
+      defaults.models = { ...existingModels, ...(asRecord(patchAgentModels.models) ?? {}) };
+    }
+
+    syncEnabledElevenLabsCredentials(config, { gatewayUrl, apiKey });
+
+    const patchMcp = asRecord((patch as UnknownRecord).mcp);
+    if (patchMcp) {
+      const mcp = ensureRecord(config, "mcp");
+      const servers = ensureRecord(mcp, "servers");
+      const patchServers = asRecord(patchMcp.servers);
+      if (patchServers) {
+        Object.assign(servers, patchServers);
+      }
+    }
+
+    changed = true;
+    requiresRefresh = true;
+  }
+
+  if (currentVoiceId !== nextVoiceId) {
+    setSelectedVoiceId(config, nextVoiceId);
+    changed = true;
+  }
+
+  if (currentEnrichmentMaxModeEnabled !== nextEnrichmentMaxModeEnabled) {
+    const models = ensureRecord(config, "models");
+    const providers = ensureRecord(models, "providers");
+    const denchCloud = ensureRecord(providers, "dench-cloud");
+    if (nextEnrichmentMaxModeEnabled) {
+      denchCloud.enrichmentMaxMode = true;
+    } else {
+      delete denchCloud.enrichmentMaxMode;
+    }
+    changed = true;
+  }
+
+  const requestedIntegrations = input.integrations ?? {};
+  const metadata = readIntegrationsMetadata();
+  let nextMetadata = metadata;
+
+  for (const id of ["exa", "apollo", "elevenlabs"] as DenchIntegrationId[]) {
+    const requested = requestedIntegrations[id];
+    if (typeof requested !== "boolean") {
+      continue;
+    }
+
+    const result = applyDenchIntegrationToggleDraft({
+      config,
+      metadata: nextMetadata,
+      id,
+      enabled: requested,
+    });
+    if (result.error) {
+      return {
+        state: await getCloudSettingsState(),
+        integrationsState: getIntegrationsState(),
+        changed: false,
+        refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+        error: result.error,
+      };
+    }
+    nextMetadata = result.metadata;
+    if (result.changed) {
+      changed = true;
+      requiresRefresh = true;
+    }
+  }
+
+  if (!changed) {
+    return {
+      state: await getCloudSettingsState(),
+      integrationsState: getIntegrationsState(),
+      changed: false,
+      refresh: { attempted: false, restarted: false, error: null, profile: "default" },
+    };
+  }
+
+  writeConfig(config);
+  if (JSON.stringify(nextMetadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(nextMetadata);
+  }
+
+  const refresh = requiresRefresh
+    ? await refreshIntegrationsRuntime()
+    : { attempted: false, restarted: false, error: null, profile: "default" };
+
+  return {
+    state: await getCloudSettingsState(),
+    integrationsState: getIntegrationsState(),
     changed: true,
     refresh,
   };

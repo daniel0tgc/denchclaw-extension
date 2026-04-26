@@ -12,6 +12,7 @@ import {
 	useState,
 } from "react";
 import { HeroSuggestions } from "./hero-suggestions";
+import { HeroRecommendedAppsBadge } from "./hero-recommended-apps-badge";
 import { ChatMessage } from "./chat-message";
 import { ChatEditor, type ChatEditorHandle } from "./tiptap/chat-editor";
 import { ChatVoiceInputButton } from "./chat-voice-input-button";
@@ -38,7 +39,7 @@ import {
 } from "./chat-stream-status";
 import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
-
+import { prepareFilesForChatUpload } from "@/lib/chat-image-preparation";
 
 // ── Attachment types & helpers ──
 
@@ -831,6 +832,8 @@ type ChatPanelProps = {
 	onRuntimeStateChange?: (state: ChatPanelRuntimeState) => void;
 	/** Called when the conversation advances and the hosting tab should persist. */
 	onConversationActivity?: () => void;
+	/** Open the Cloud settings surface using the parent workspace navigation flow. */
+	onOpenCloudSettings?: () => void;
 	/** Gateway session key for channel sessions (telegram, discord, etc.). */
 	gatewaySessionKey?: string;
 	/** Gateway session UUID for loading transcripts. */
@@ -900,6 +903,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			headerRightSlot,
 			onRuntimeStateChange,
 			onConversationActivity,
+			onOpenCloudSettings,
 			gatewaySessionKey,
 			gatewaySessionId,
 			gatewayChannel: _gatewayChannel,
@@ -956,6 +960,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Stream-level error (empty response detection) ──
 		const [streamError, setStreamError] = useState<string | null>(null);
+		const [attachmentError, setAttachmentError] = useState<string | null>(null);
 
 		// Track persisted messages to avoid double-saves
 		const savedMessageIdsRef = useRef<Set<string>>(new Set());
@@ -1866,9 +1871,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							body: JSON.stringify({ sessionKey: gatewaySessionKey, message: messageText }),
 						});
 						if (res.ok && res.body) {
+							setStreamError(null);
 							await attemptReconnect(gatewaySessionKey, [], { sessionKey: gatewaySessionKey });
+						} else {
+							const gatewayError = await res.text().catch(() => "");
+							setStreamError(gatewayError || "Failed to send message.");
 						}
-					} catch { /* ignore */ }
+					} catch {
+						setStreamError("Failed to send message.");
+					}
 				} else {
 					void sendMessage({ text: messageText });
 				}
@@ -2160,8 +2171,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		/** Upload native files (e.g. dropped from Finder/Desktop) and attach them.
 		 *  Shows files instantly with a local preview, then uploads in the background. */
 		const uploadAndAttachNativeFiles = useCallback(
-			(files: FileList) => {
-				const fileArray = Array.from(files);
+			async (files: FileList) => {
+				setAttachmentError(null);
+				const {
+					files: preparedFiles,
+					errors: preparationErrors,
+				} = await prepareFilesForChatUpload(files);
+				if (preparationErrors.length > 0) {
+					const summary = preparationErrors.length === 1
+						? preparationErrors[0]
+						: `${preparationErrors.length} images couldn't be prepared for vision. ${preparationErrors[0]}`;
+					setAttachmentError(summary);
+				}
+				if (preparedFiles.length === 0) {
+					return;
+				}
+				const fileArray = preparedFiles;
 
 				// Immediately add placeholder entries with local blob URLs
 				const placeholders: AttachedFile[] = fileArray.map((file) => ({
@@ -2328,7 +2353,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 									className="hidden"
 									onChange={(e) => {
 										if (e.target.files && e.target.files.length > 0) {
-											uploadAndAttachNativeFiles(e.target.files);
+											void uploadAndAttachNativeFiles(e.target.files);
 										}
 										e.target.value = "";
 									}}
@@ -2445,7 +2470,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (files && files.length > 0) {
 				e.preventDefault();
 				e.stopPropagation();
-				uploadAndAttachNativeFiles(files);
+				void uploadAndAttachNativeFiles(files);
 			}
 		};
 
@@ -2598,7 +2623,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					) : (showHeroState && !mounted) ? (
 						<div className={`flex items-center justify-center h-full ${compact ? "min-h-[40vh]" : "min-h-[60vh]"}`} />
 					) : showHeroState ? (
-						<div className={`flex flex-col items-center justify-center py-8 md:py-12 ${compact ? "min-h-[60vh]" : "min-h-[75vh]"}`}>
+						<div className={`relative flex flex-col items-center justify-center py-8 md:py-12 ${compact ? "min-h-[60vh]" : "min-h-[75vh]"}`}>
 							{/* Hero greeting */}
 							{greeting && (
 								<h1
@@ -2622,6 +2647,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							<HeroSuggestions
 								compact={!!compact}
 								onPromptClick={handlePromptClick}
+							/>
+							<HeroRecommendedAppsBadge
+								className="absolute inset-x-0 bottom-6 md:bottom-10"
 							/>
 						</div>
 					) : optimisticUserText !== null && messages.length === 0 ? (
@@ -2719,8 +2747,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					)}
 				</div>
 
-				{/* Transport / stream-level error display */}
-				{(error || streamError) && (
+				{/* Transport / attachment error display */}
+				{(error || streamError || attachmentError) && (
 					<div
 						className="px-3 py-2 flex items-center gap-2 sticky bottom-[72px] z-10"
 						style={{
@@ -2754,7 +2782,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								y2="16"
 							/>
 						</svg>
-						<p className="text-xs">{error?.message ?? streamError}</p>
+						<p className="text-xs">{error?.message ?? streamError ?? attachmentError}</p>
 					</div>
 				)}
 				</div>

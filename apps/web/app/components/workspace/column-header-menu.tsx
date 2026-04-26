@@ -75,7 +75,7 @@ export function FieldTypeIcon({ type, size = 14, className }: { type: string; si
 /* ─── Column Header Menu ─── */
 
 export type ColumnHeaderMenuProps = {
-	field: { id: string; name: string; type: string };
+	field: { id: string; name: string; type: string; default_value?: string };
 	sortDirection: "asc" | "desc" | false;
 	onSort: (desc: boolean) => void;
 	onHide: () => void;
@@ -85,14 +85,31 @@ export type ColumnHeaderMenuProps = {
 	canMoveRight: boolean;
 	onMoveLeft: () => void;
 	onMoveRight: () => void;
+	onReEnrich?: (scope: "all" | "empty" | number) => void;
+	/** Controlled open state for programmatic opening (e.g. header click). */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 };
 
 export function ColumnHeaderMenu({
 	field, sortDirection, onSort, onHide, onRename, onDelete,
-	canMoveLeft, canMoveRight, onMoveLeft, onMoveRight,
+	canMoveLeft, canMoveRight, onMoveLeft, onMoveRight, onReEnrich,
+	open: controlledOpen, onOpenChange,
 }: ColumnHeaderMenuProps) {
+	const isEnrichment = (() => {
+		if (!field.default_value) return false;
+		try {
+			const parsed = JSON.parse(field.default_value);
+			return !!parsed?.enrichment?.key;
+		} catch { return false; }
+	})();
+
+	const dropdownProps = controlledOpen !== undefined
+		? { open: controlledOpen, onOpenChange }
+		: {};
+
 	return (
-		<DropdownMenu>
+		<DropdownMenu {...dropdownProps}>
 			<DropdownMenuTrigger
 				className="col-header-menu-trigger shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-60 aria-expanded:opacity-100 hover:!opacity-100 transition-opacity ml-auto"
 				style={{ color: "var(--color-text-muted)" }}
@@ -107,12 +124,32 @@ export function ColumnHeaderMenu({
 				<div className="flex items-center gap-2 px-2.5 py-1.5 text-xs normal-case tracking-normal" style={{ color: "var(--color-text-muted)" }}>
 					<FieldTypeIcon type={field.type} size={14} className="shrink-0" />
 					<span className="font-medium">{fieldTypeLabel(field.type)}</span>
+					{isEnrichment && (
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-warning, #f59e0b)" }}><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+					)}
 				</div>
 				<DropdownMenuSeparator />
 				<DropdownMenuItem onSelect={onRename}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
 					Rename
 				</DropdownMenuItem>
+				{isEnrichment && onReEnrich && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem onSelect={() => onReEnrich("empty")}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+							Enrich empty rows
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={() => onReEnrich("all")}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+							Enrich all rows
+						</DropdownMenuItem>
+						<DropdownMenuItem onSelect={() => onReEnrich(50)}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+							Enrich top 50
+						</DropdownMenuItem>
+					</>
+				)}
 				<DropdownMenuSeparator />
 				<DropdownMenuItem onSelect={() => onSort(false)}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 7-7 7 7" /></svg>
@@ -206,12 +243,29 @@ export function InlineRenameInput({
 
 /* ─── Add Column Popover ─── */
 
+type AddColumnField = { id: string; name: string; type: string };
+
+export type EnrichmentStartPayload = {
+	fieldId: string;
+	fieldName: string;
+	apolloPath: string;
+	category: "people" | "company";
+	inputFieldName: string;
+	scope: "all" | "empty" | number;
+};
+
 export function AddColumnPopover({
 	objectName,
 	onCreated,
+	fields,
+	enrichmentAvailable: enrichmentAvailableProp,
+	onEnrichmentStart,
 }: {
 	objectName: string;
 	onCreated: () => void;
+	fields?: AddColumnField[];
+	enrichmentAvailable?: boolean;
+	onEnrichmentStart?: (payload: EnrichmentStartPayload) => void;
 }) {
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
@@ -220,10 +274,59 @@ export function AddColumnPopover({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
+	// Enrichment state
+	const [selectedEnrichCol, setSelectedEnrichCol] = useState<{
+		label: string; key: string; fieldType: string; apolloPath: string;
+	} | null>(null);
+	const [enrichInputField, setEnrichInputField] = useState<string>("");
+	const [enrichCategory, setEnrichCategory] = useState<"people" | "company" | null>(null);
+	const [enrichColumns, setEnrichColumns] = useState<Array<{
+		label: string; key: string; fieldType: string; apolloPath: string;
+	}>>([]);
+
+	// Self-contained enrichment availability check so parent re-renders
+	// don't remount this component (which resets the popover open state).
+	const [selfEnrichAvailable, setSelfEnrichAvailable] = useState<boolean | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		fetch("/api/workspace/enrichment-status")
+			.then((r) => r.json())
+			.then((d) => {
+					if (!cancelled) setSelfEnrichAvailable(d.available === true);
+			})
+			.catch(() => { if (!cancelled) setSelfEnrichAvailable(false); });
+		return () => { cancelled = true; };
+	}, []);
+	const enrichmentAvailable = selfEnrichAvailable ?? enrichmentAvailableProp ?? false;
+
+	// Refs for props that change frequently so they don't need to be in
+	// the parent's useMemo deps (avoids remounting).
+	const fieldsRef = useRef(fields);
+	fieldsRef.current = fields;
+	const onEnrichmentStartRef = useRef(onEnrichmentStart);
+	onEnrichmentStartRef.current = onEnrichmentStart;
+
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [position, setPosition] = useState({ top: 0, left: 0 });
+
+	// Load enrichment columns lazily
+	useEffect(() => {
+		if (!enrichmentAvailable) return;
+		import("@/lib/enrichment-columns").then(({ detectEnrichmentCategory, getEnrichmentColumns, autoDetectInputField }) => {
+			const cat = detectEnrichmentCategory(objectName);
+			setEnrichCategory(cat);
+			if (cat) {
+				setEnrichColumns(getEnrichmentColumns(cat));
+				const currentFields = fieldsRef.current;
+				if (currentFields) {
+					const autoInput = autoDetectInputField(cat, currentFields);
+					if (autoInput) setEnrichInputField(autoInput.name);
+				}
+			}
+		});
+	}, [enrichmentAvailable, objectName]);
 
 	const handleOpen = useCallback(() => {
 		const rect = triggerRef.current?.getBoundingClientRect();
@@ -240,19 +343,21 @@ export function AddColumnPopover({
 		setType("text");
 		setEnumInput("");
 		setError(null);
+		setSelectedEnrichCol(null);
 	}, []);
 
 	const handleClose = useCallback(() => {
 		setOpen(false);
 		setError(null);
+		setSelectedEnrichCol(null);
 	}, []);
 
 	useEffect(() => {
-		if (open) {
+		if (open && !selectedEnrichCol) {
 			const timer = setTimeout(() => inputRef.current?.focus(), 50);
 			return () => clearTimeout(timer);
 		}
-	}, [open]);
+	}, [open, selectedEnrichCol]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -305,6 +410,55 @@ export function AddColumnPopover({
 		}
 	}, [name, type, enumInput, objectName, handleClose, onCreated]);
 
+	const handleEnrichCreate = useCallback(async () => {
+		if (!selectedEnrichCol || !enrichCategory || !enrichInputField) return;
+		setSaving(true);
+		setError(null);
+		try {
+			const { buildEnrichmentMeta } = await import("@/lib/enrichment-columns");
+			const meta = buildEnrichmentMeta(enrichCategory, selectedEnrichCol, enrichInputField);
+
+			const body: Record<string, unknown> = {
+				name: selectedEnrichCol.label,
+				type: selectedEnrichCol.fieldType === "number" ? "number" : selectedEnrichCol.fieldType === "email" ? "email" : selectedEnrichCol.fieldType === "url" ? "url" : "text",
+				default_value: JSON.stringify(meta),
+			};
+
+			const res = await fetch(`/api/workspace/objects/${encodeURIComponent(objectName)}/fields`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({ error: "Failed" }));
+				setError(data.error ?? "Failed to create enrichment field");
+				return;
+			}
+
+			const result = await res.json();
+			handleClose();
+			onCreated();
+
+			if (onEnrichmentStartRef.current && result.fieldId) {
+				onEnrichmentStartRef.current({
+					fieldId: result.fieldId,
+					fieldName: selectedEnrichCol.label,
+					apolloPath: selectedEnrichCol.apolloPath,
+					category: enrichCategory,
+					inputFieldName: enrichInputField,
+					scope: "all",
+				});
+			}
+		} catch {
+			setError("Network error");
+		} finally {
+			setSaving(false);
+		}
+	}, [selectedEnrichCol, enrichCategory, enrichInputField, objectName, handleClose, onCreated]);
+
+	const showEnrichment = enrichmentAvailable && enrichCategory && enrichColumns.length > 0;
+
 	return (
 		<>
 			<button
@@ -331,101 +485,206 @@ export function AddColumnPopover({
 						background: "var(--color-bg)",
 						border: "1px solid var(--color-border)",
 						boxShadow: "0 8px 32px rgba(0,0,0,0.16), 0 0 1px rgba(0,0,0,0.1)",
+						maxHeight: "min(500px, calc(100vh - 64px))",
+						display: "flex",
+						flexDirection: "column",
 					}}
 					onClick={(e) => e.stopPropagation()}
 					onPointerDown={(e) => e.stopPropagation()}
 				>
-					<div className="p-3 pb-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
-						<input
-							ref={inputRef}
-							type="text"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							onKeyDown={(e) => {
-								e.stopPropagation();
-								if (e.key === "Enter" && name.trim()) { void handleCreate(); }
-								if (e.key === "Escape") { handleClose(); }
-							}}
-							placeholder="Column name..."
-							className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
-							style={{
-								background: "var(--color-surface)",
-								color: "var(--color-text)",
-								border: "1px solid var(--color-border)",
-							}}
-						/>
-					</div>
-
-					<div className="p-2">
-						<div className="text-[10px] font-medium uppercase tracking-wider px-1 mb-1.5" style={{ color: "var(--color-text-muted)" }}>
-							Type
-						</div>
-						<div className="grid grid-cols-2 gap-0.5">
-							{FIELD_TYPES.map((ft) => (
+					{/* Enrichment detail view */}
+					{selectedEnrichCol ? (
+						<>
+							<div className="p-3 pb-2 flex items-center gap-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
 								<button
-									key={ft.value}
 									type="button"
-									onClick={() => setType(ft.value)}
-									className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition-all text-left"
-									style={{
-										color: type === ft.value ? "var(--color-accent)" : "var(--color-text)",
-										background: type === ft.value ? "var(--color-accent-light, rgba(99,102,241,0.08))" : "transparent",
-										fontWeight: type === ft.value ? 600 : 400,
-									}}
+									onClick={() => setSelectedEnrichCol(null)}
+									className="p-0.5 rounded hover:opacity-70"
+									style={{ color: "var(--color-text-muted)" }}
 								>
-									<FieldTypeIcon type={ft.value} size={14} className="shrink-0" />
-									{ft.label}
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg>
 								</button>
-							))}
-						</div>
-					</div>
+								<span className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+									{selectedEnrichCol.label}
+								</span>
+							</div>
+							<div className="p-3 space-y-3">
+								<div>
+									<label className="text-[10px] font-medium uppercase tracking-wider mb-1 block" style={{ color: "var(--color-text-muted)" }}>
+										Input column
+									</label>
+									<select
+										value={enrichInputField}
+										onChange={(e) => setEnrichInputField(e.target.value)}
+										className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
+										style={{
+											background: "var(--color-surface)",
+											color: "var(--color-text)",
+											border: "1px solid var(--color-border)",
+										}}
+									>
+										<option value="">Select input column...</option>
+										{(fields ?? []).map((f) => (
+											<option key={f.id} value={f.name}>{f.name}</option>
+										))}
+									</select>
+								</div>
+								{enrichInputField && (
+									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-text-muted)" }}>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+										Will enrich using &ldquo;{enrichInputField}&rdquo; column
+									</div>
+								)}
+								{error && (
+									<p className="text-xs" style={{ color: "var(--color-error)" }}>{error}</p>
+								)}
+							</div>
+							<div className="flex items-center justify-end gap-2 px-3 py-2.5 mt-auto" style={{ borderTop: "1px solid var(--color-border)" }}>
+								<button
+									type="button"
+									onClick={handleClose}
+									className="px-3 py-1.5 text-xs rounded-lg transition-colors hover:opacity-70"
+									style={{ color: "var(--color-text-muted)" }}
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={() => void handleEnrichCreate()}
+									disabled={saving || !enrichInputField}
+									className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+									style={{ background: "var(--color-accent)", color: "white" }}
+								>
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+									{saving ? "Creating..." : "Create & Enrich All"}
+								</button>
+							</div>
+						</>
+					) : (
+						/* Standard column creation view */
+						<>
+							<div className="p-3 pb-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
+								<input
+									ref={inputRef}
+									type="text"
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+									onKeyDown={(e) => {
+										e.stopPropagation();
+										if (e.key === "Enter" && name.trim()) { void handleCreate(); }
+										if (e.key === "Escape") { handleClose(); }
+									}}
+									placeholder="Column name..."
+									className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
+									style={{
+										background: "var(--color-surface)",
+										color: "var(--color-text)",
+										border: "1px solid var(--color-border)",
+									}}
+								/>
+							</div>
 
-					{type === "enum" && (
-						<div className="px-3 pb-2">
-							<input
-								type="text"
-								value={enumInput}
-								onChange={(e) => setEnumInput(e.target.value)}
-								onKeyDown={(e) => {
-									e.stopPropagation();
-									if (e.key === "Enter" && name.trim()) { void handleCreate(); }
-								}}
-								placeholder="Options (comma-separated)"
-								className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
-								style={{
-									background: "var(--color-surface)",
-									color: "var(--color-text)",
-									border: "1px solid var(--color-border)",
-								}}
-							/>
-						</div>
+							<div className="flex-1 overflow-y-auto">
+								<div className="p-2">
+									<div className="text-[10px] font-medium uppercase tracking-wider px-1 mb-1.5" style={{ color: "var(--color-text-muted)" }}>
+										Type
+									</div>
+									<div className="grid grid-cols-2 gap-0.5">
+										{FIELD_TYPES.map((ft) => (
+											<button
+												key={ft.value}
+												type="button"
+												onClick={() => setType(ft.value)}
+												className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition-all text-left"
+												style={{
+													color: type === ft.value ? "var(--color-accent)" : "var(--color-text)",
+													background: type === ft.value ? "var(--color-accent-light, rgba(99,102,241,0.08))" : "transparent",
+													fontWeight: type === ft.value ? 600 : 400,
+												}}
+											>
+												<FieldTypeIcon type={ft.value} size={14} className="shrink-0" />
+												{ft.label}
+											</button>
+										))}
+									</div>
+								</div>
+
+								{showEnrichment && (
+									<div className="p-2 pt-0">
+										<div className="mb-1.5" style={{ borderTop: "1px solid var(--color-border)" }} />
+										<div className="text-[10px] font-medium uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1" style={{ color: "var(--color-text-muted)" }}>
+											<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+											Enrichment
+										</div>
+										<div className="grid grid-cols-2 gap-0.5">
+											{enrichColumns.map((col) => (
+												<button
+													key={col.key}
+													type="button"
+													onClick={() => setSelectedEnrichCol(col)}
+													className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition-all text-left hover:opacity-80"
+													style={{
+														color: "var(--color-text)",
+														background: "transparent",
+													}}
+												>
+													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-warning, #f59e0b)" }}><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+													{col.label}
+												</button>
+											))}
+										</div>
+									</div>
+								)}
+							</div>
+
+							{type === "enum" && (
+								<div className="px-3 pb-2">
+									<input
+										type="text"
+										value={enumInput}
+										onChange={(e) => setEnumInput(e.target.value)}
+										onKeyDown={(e) => {
+											e.stopPropagation();
+											if (e.key === "Enter" && name.trim()) { void handleCreate(); }
+										}}
+										placeholder="Options (comma-separated)"
+										className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
+										style={{
+											background: "var(--color-surface)",
+											color: "var(--color-text)",
+											border: "1px solid var(--color-border)",
+										}}
+									/>
+								</div>
+							)}
+
+							{error && (
+								<div className="px-3 pb-2">
+									<p className="text-xs" style={{ color: "var(--color-error)" }}>{error}</p>
+								</div>
+							)}
+
+							<div className="flex items-center justify-end gap-2 px-3 py-2.5" style={{ borderTop: "1px solid var(--color-border)" }}>
+								<button
+									type="button"
+									onClick={handleClose}
+									className="px-3 py-1.5 text-xs rounded-lg transition-colors hover:opacity-70"
+									style={{ color: "var(--color-text-muted)" }}
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={() => void handleCreate()}
+									disabled={saving || !name.trim()}
+									className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-40"
+									style={{ background: "var(--color-accent)", color: "white" }}
+								>
+									{saving ? "Creating..." : "Create"}
+								</button>
+							</div>
+						</>
 					)}
-
-					{error && (
-						<div className="px-3 pb-2">
-							<p className="text-xs" style={{ color: "var(--color-error)" }}>{error}</p>
-						</div>
-					)}
-
-					<div className="flex items-center justify-end gap-2 px-3 py-2.5" style={{ borderTop: "1px solid var(--color-border)" }}>
-						<button
-							type="button"
-							onClick={handleClose}
-							className="px-3 py-1.5 text-xs rounded-lg transition-colors hover:opacity-70"
-							style={{ color: "var(--color-text-muted)" }}
-						>
-							Cancel
-						</button>
-						<button
-							type="button"
-							onClick={() => void handleCreate()}
-							disabled={saving || !name.trim()}
-							className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-40"
-							style={{ background: "var(--color-accent)", color: "white" }}
-						>
-							{saving ? "Creating..." : "Create"}
-						</button>
-					</div>
 				</div>,
 				document.body,
 			)}

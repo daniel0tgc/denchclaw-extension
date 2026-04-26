@@ -1,18 +1,12 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseDurationToMs } from "@/lib/duration";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
+import { readHeartbeatSetting } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 
 const CRON_DIR = join(resolveOpenClawStateDir(), "cron");
 const JOBS_FILE = join(CRON_DIR, "jobs.json");
-const OPENCLAW_CONFIG_FILE = join(resolveOpenClawStateDir(), "openclaw.json");
-
-// Default when the user hasn't customized agents.defaults.heartbeat.every.
-// Mirrors the bootstrap default applied by ensureAgentDefaults() in
-// src/cli/bootstrap-external.ts.
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 24 * 60 * 60_000;
 
 type CronStoreFile = {
   version: 1;
@@ -48,29 +42,6 @@ function computeNextWakeAtMs(jobs: Array<Record<string, unknown>>): number | nul
 }
 
 /**
- * Read agents.defaults.heartbeat.every from the active openclaw.json and
- * return the configured interval in milliseconds. Falls back to the
- * Dench-recommended default (24h) when the key is missing or unparseable
- * so the dashboard never silently shows a wrong number.
- */
-function readHeartbeatIntervalMs(): number {
-  try {
-    if (!existsSync(OPENCLAW_CONFIG_FILE)) {return DEFAULT_HEARTBEAT_INTERVAL_MS;}
-    const raw = readFileSync(OPENCLAW_CONFIG_FILE, "utf-8");
-    const cfg = JSON.parse(raw) as Record<string, unknown>;
-    const agents = cfg.agents as { defaults?: { heartbeat?: { every?: unknown } } } | undefined;
-    const every = agents?.defaults?.heartbeat?.every;
-    if (typeof every === "string") {
-      const parsed = parseDurationToMs(every);
-      if (parsed != null && parsed > 0) {return parsed;}
-    }
-  } catch {
-    // ignore — fall through to default
-  }
-  return DEFAULT_HEARTBEAT_INTERVAL_MS;
-}
-
-/**
  * Estimate when the next heartbeat will fire based on the most recent agent
  * session activity plus the configured interval. Returns null when no session
  * activity is available.
@@ -90,7 +61,6 @@ function estimateNextHeartbeatMs(intervalMs: number): number | null {
       try {
         const raw = readFileSync(storePath, "utf-8");
         const store = JSON.parse(raw) as Record<string, { updatedAt?: number }>;
-        // Look for the main agent session (shortest key, most recently updated)
         for (const [key, entry] of Object.entries(store)) {
           if (key.startsWith("agent:") && !key.includes(":cron:") && entry.updatedAt) {
             if (latestHeartbeat === null || entry.updatedAt > latestHeartbeat) {
@@ -110,11 +80,17 @@ function estimateNextHeartbeatMs(intervalMs: number): number | null {
   return null;
 }
 
-/** Read heartbeat config + estimated next fire time. */
-function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null } {
-  const intervalMs = readHeartbeatIntervalMs();
-  const nextDueEstimateMs = estimateNextHeartbeatMs(intervalMs);
-  return { intervalMs, nextDueEstimateMs };
+/**
+ * Read heartbeat config from openclaw.json + estimate next due from agent sessions.
+ * Returns interval, raw config string, and estimated next-fire timestamp.
+ */
+function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null; every: string } {
+  const setting = readHeartbeatSetting();
+  return {
+    intervalMs: setting.intervalMs,
+    nextDueEstimateMs: estimateNextHeartbeatMs(setting.intervalMs),
+    every: setting.raw,
+  };
 }
 
 /** GET /api/cron/jobs -- list all cron jobs with heartbeat & status info */

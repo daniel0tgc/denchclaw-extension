@@ -249,11 +249,14 @@ function asRecord(
 function parseAttachments(
 	text: string,
 ): { paths: string[]; message: string } | null {
-	const match = text.match(/\[Attached files: (.+?)\]/);
-	if (!match) {return null;}
-	const afterIdx = (match.index ?? 0) + match[0].length;
-	const message = text.slice(afterIdx).trim();
-	const paths = match[1]
+	const prefix = "[Attached files: ";
+	const start = text.indexOf(prefix);
+	if (start === -1) {return null;}
+	const contentStart = start + prefix.length;
+	const end = text.indexOf("]", contentStart);
+	if (end === -1) {return null;}
+	const message = text.slice(end + 1).trim();
+	const paths = text.slice(contentStart, end)
 		.split(", ")
 		.map((p) => p.trim())
 		.filter(Boolean);
@@ -487,68 +490,91 @@ function _AttachFileIcon({ category }: { category: string }) {
 }
 
 function AttachedFilesCard({ paths }: { paths: string[] }) {
-	const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+	const [openImage, setOpenImage] = useState<{ src: string; alt: string } | null>(null);
 
 	return (
 		<>
-		<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
-			{paths.map((filePath, i) => {
-				const category = getCategoryFromPath(filePath);
-				const src = category === "image"
-					? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
-					: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
-				const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
+			<div className="flex flex-wrap gap-1.5 mb-2 justify-end">
+				{paths.map((filePath, i) => {
+					const category = getCategoryFromPath(filePath);
+					const src = category === "image"
+						? `/api/workspace/raw-file?path=${encodeURIComponent(filePath)}`
+						: `/api/workspace/thumbnail?path=${encodeURIComponent(filePath)}&size=200`;
+					const alt = filePath.split("/").pop() ?? "";
+					const ext = filePath.split(".").pop()?.toUpperCase() ?? "";
 
-				return (
-					<div
-						key={i}
-						className="relative rounded-xl overflow-hidden shrink-0 cursor-pointer transition-all duration-200 hover:opacity-95"
-						onClick={() => setPreviewSrc(src)}
-					>
-						<img
-							src={src}
-							alt={filePath.split("/").pop() ?? ""}
-							className="block rounded-xl object-cover"
-							style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
-							loading="lazy"
-							onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-						/>
-						{category !== "image" && (
-							<span
-								className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
-								style={{
-									background: "rgba(255,255,255,0.85)",
-									color: "rgba(0,0,0,0.5)",
-									backdropFilter: "blur(4px)",
-								}}
-							>
-								{ext}
-							</span>
-						)}
-					</div>
-				);
-			})}
-		</div>
-		<Dialog open={previewSrc !== null} onOpenChange={(open) => { if (!open) {setPreviewSrc(null);} }}>
-			<DialogContent className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-[0_0_120px_rgba(0,0,0,0.4)]" showCloseButton={false}>
-				<button
-					type="button"
-					onClick={() => setPreviewSrc(null)}
-					className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer outline-none transition-all hover:opacity-85"
-					style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
+					return (
+						<div
+							key={i}
+							className="relative rounded-xl overflow-hidden shrink-0"
+						>
+							{category === "image" ? (
+								<button
+									type="button"
+									className="block cursor-zoom-in transition-all duration-200 hover:opacity-95"
+									aria-label={`Open image ${alt}`}
+									onClick={() => setOpenImage({ src, alt })}
+								>
+									<img
+										src={src}
+										alt={alt}
+										className="block rounded-xl object-cover"
+										style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+										loading="lazy"
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+								</button>
+							) : (
+								<>
+									<img
+										src={src}
+										alt={alt}
+										className="block rounded-xl object-cover"
+										style={{ maxHeight: 140, maxWidth: 160, background: "rgba(0,0,0,0.04)" }}
+										loading="lazy"
+										onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+									/>
+									<span
+										className="absolute bottom-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase"
+										style={{
+											background: "rgba(255,255,255,0.85)",
+											color: "rgba(0,0,0,0.5)",
+											backdropFilter: "blur(4px)",
+										}}
+									>
+										{ext}
+									</span>
+								</>
+							)}
+						</div>
+					);
+				})}
+			</div>
+			<Dialog open={openImage !== null} onOpenChange={(open) => { if (!open) {setOpenImage(null);} }}>
+				<DialogContent
+					aria-label={openImage ? `Image preview ${openImage.alt}` : "Image preview"}
+					className="!max-w-[90vw] !w-auto !p-0 !rounded-2xl !bg-transparent !border-none !shadow-[0_0_120px_rgba(0,0,0,0.4)]"
+					showCloseButton={false}
 				>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-				</button>
-				{previewSrc && (
-					<img
-						src={previewSrc}
-						alt="Preview"
-						className="block rounded-xl"
-						style={{ maxHeight: "80vh", maxWidth: "85vw", objectFit: "contain" }}
-					/>
-				)}
-			</DialogContent>
-		</Dialog>
+					<button
+						type="button"
+						aria-label="Close image preview"
+						onClick={() => setOpenImage(null)}
+						className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer outline-none transition-all hover:opacity-85"
+						style={{ background: "rgba(0,0,0,0.55)", color: "white", backdropFilter: "blur(4px)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+					</button>
+					{openImage && (
+						<img
+							src={openImage.src}
+							alt={openImage.alt}
+							className="block rounded-xl"
+							style={{ maxHeight: "80vh", maxWidth: "85vw", objectFit: "contain" }}
+						/>
+					)}
+				</DialogContent>
+			</Dialog>
 		</>
 	);
 }

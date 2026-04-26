@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import { useState, useRef, useEffect, type ReactElement } from "react";
 import { type ViewType, VIEW_TYPES } from "@/lib/object-filters";
 
 // ---------------------------------------------------------------------------
@@ -56,6 +56,14 @@ function ListIcon() {
 	);
 }
 
+function ChevronDownIcon() {
+	return (
+		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+			<path d="m6 9 6 6 6-6" />
+		</svg>
+	);
+}
+
 const VIEW_TYPE_META: Record<ViewType, { icon: () => ReactElement; label: string }> = {
 	table: { icon: TableIcon, label: "Table" },
 	kanban: { icon: KanbanIcon, label: "Board" },
@@ -72,11 +80,80 @@ const VIEW_TYPE_META: Record<ViewType, { icon: () => ReactElement; label: string
 type ViewTypeSwitcherProps = {
 	value: ViewType;
 	onChange: (type: ViewType) => void;
+	collapsed?: boolean;
 };
 
-export function ViewTypeSwitcher({ value, onChange }: ViewTypeSwitcherProps) {
+export function ViewTypeSwitcher({ value, onChange, collapsed = false }: ViewTypeSwitcherProps) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const handler = (e: MouseEvent) => {
+			if (ref.current && !ref.current.contains(e.target as Node)) {
+				setOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [open]);
+
+	if (collapsed) {
+		const activeMeta = VIEW_TYPE_META[value];
+		const ActiveIcon = activeMeta.icon;
+		return (
+			<div ref={ref} className="relative inline-block flex-shrink-0">
+				<button
+					type="button"
+					onClick={() => setOpen((v) => !v)}
+					className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded-md transition-colors cursor-pointer"
+					style={{
+						background: "var(--color-surface-hover)",
+						color: "var(--color-text)",
+						fontWeight: 500,
+					}}
+				>
+					<ActiveIcon />
+					<span>{activeMeta.label}</span>
+					<ChevronDownIcon />
+				</button>
+				{open && (
+					<div
+						className="absolute z-50 mt-1 left-0 rounded-lg shadow-lg border py-1 min-w-[140px]"
+						style={{
+							background: "var(--color-surface)",
+							borderColor: "var(--color-border)",
+						}}
+					>
+						{VIEW_TYPES.map((vt) => {
+							const meta = VIEW_TYPE_META[vt];
+							const Icon = meta.icon;
+							const isActive = vt === value;
+							return (
+								<button
+									key={vt}
+									type="button"
+									onClick={() => { onChange(vt); setOpen(false); }}
+									className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors cursor-pointer text-left"
+									style={{
+										background: isActive ? "var(--color-accent-light, rgba(99,102,241,0.1))" : "transparent",
+										color: isActive ? "var(--color-accent)" : "var(--color-text)",
+										fontWeight: isActive ? 500 : 400,
+									}}
+								>
+									<Icon />
+									{meta.label}
+								</button>
+							);
+						})}
+					</div>
+				)}
+			</div>
+		);
+	}
+
 	return (
-		<div className="flex items-center gap-0.5">
+		<div className="flex items-center gap-0.5 flex-shrink-0">
 			{VIEW_TYPES.map((vt) => {
 				const meta = VIEW_TYPE_META[vt];
 				const Icon = meta.icon;

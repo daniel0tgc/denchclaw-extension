@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ""),
+  writeFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
   readdirSync: vi.fn(() => []),
   statSync: vi.fn(() => ({ mtimeMs: Date.now() })),
 }));
@@ -19,6 +21,8 @@ describe("Cron API routes", () => {
     vi.mock("node:fs", () => ({
       existsSync: vi.fn(() => false),
       readFileSync: vi.fn(() => ""),
+      writeFileSync: vi.fn(),
+      mkdirSync: vi.fn(),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ mtimeMs: Date.now() })),
     }));
@@ -222,6 +226,144 @@ describe("Cron API routes", () => {
       const req = new Request("http://localhost/api/cron/runs/search-transcript?jobId=j1&runAtMs=1000");
       const res = await GET(req);
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ─── GET /api/cron/jobs heartbeat from config ──────────────────
+
+  describe("GET /api/cron/jobs heartbeat reads config", () => {
+    it("returns heartbeat interval from openclaw.json when configured", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockImplementation((p) => {
+        const s = String(p);
+        if (s.endsWith("openclaw.json")) return true;
+        if (s.endsWith("jobs.json")) return false;
+        return false;
+      });
+      vi.mocked(mockReadFile).mockImplementation((p) => {
+        if (String(p).endsWith("openclaw.json")) {
+          return JSON.stringify({
+            agents: { defaults: { heartbeat: { every: "2h" } } },
+          }) as never;
+        }
+        return "" as never;
+      });
+
+      const { GET } = await import("./jobs/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.heartbeat.intervalMs).toBe(7_200_000);
+      expect(json.heartbeat.every).toBe("2h");
+    });
+
+    it("falls back to 1d (24h) when heartbeat config is absent", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockReturnValue(false);
+      vi.mocked(mockReadFile).mockReturnValue("" as never);
+
+      const { GET } = await import("./jobs/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.heartbeat.intervalMs).toBe(86_400_000);
+      expect(json.heartbeat.every).toBe("1d");
+    });
+  });
+
+  // ─── POST /api/cron/heartbeat ──────────────────────────────────
+
+  describe("POST /api/cron/heartbeat", () => {
+    it("rejects missing value", async () => {
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unit: "m" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects invalid unit", async () => {
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: 30, unit: "x" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects non-integer value", async () => {
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: 1.5, unit: "m" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects zero value", async () => {
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: 0, unit: "m" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("saves a valid heartbeat setting", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockReturnValue(true);
+      vi.mocked(mockReadFile).mockReturnValue(JSON.stringify({ gateway: { port: 19001 } }) as never);
+
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: 45, unit: "m" }),
+      });
+      const res = await POST(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.raw).toBe("45m");
+      expect(json.intervalMs).toBe(2_700_000);
+    });
+
+    it("rejects values exceeding max for unit", async () => {
+      const { POST } = await import("./heartbeat/route.js");
+      const req = new Request("http://localhost/api/cron/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: 31, unit: "d" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+  });
+
+  // ─── GET /api/cron/heartbeat ───────────────────────────────────
+
+  describe("GET /api/cron/heartbeat", () => {
+    it("returns the current heartbeat setting", async () => {
+      const { existsSync: mockExists, readFileSync: mockReadFile } = await import("node:fs");
+      vi.mocked(mockExists).mockReturnValue(true);
+      vi.mocked(mockReadFile).mockReturnValue(
+        JSON.stringify({ agents: { defaults: { heartbeat: { every: "1d" } } } }) as never,
+      );
+
+      const { GET } = await import("./heartbeat/route.js");
+      const res = await GET();
+      const json = await res.json();
+      expect(json.raw).toBe("1d");
+      expect(json.value).toBe(1);
+      expect(json.unit).toBe("d");
+      expect(json.intervalMs).toBe(86_400_000);
     });
   });
 });

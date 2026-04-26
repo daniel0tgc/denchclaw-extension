@@ -5,6 +5,13 @@ vi.mock("node:child_process", () => ({
   execSync: vi.fn(() => ""),
 }));
 
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(() => false),
+  mkdirSync: vi.fn(),
+  rmSync: vi.fn(),
+  statSync: vi.fn(() => ({ isDirectory: () => true })),
+}));
+
 // Mock workspace
 vi.mock("@/lib/workspace", () => ({
   duckdbPath: vi.fn(() => null),
@@ -25,6 +32,14 @@ vi.mock("@/lib/workspace", () => ({
   resolveDuckdbBin: vi.fn(() => null),
   discoverDuckDBPaths: vi.fn(() => []),
   discoverDuckDBPathsAsync: vi.fn(async () => []),
+  resolveWorkspaceRoot: vi.fn(() => "/ws"),
+  resolveFilesystemPath: vi.fn(() => ({
+    absolutePath: "/ws/folder",
+    kind: "workspaceRelative",
+    withinWorkspace: true,
+    workspaceRelativePath: "folder",
+  })),
+  writeObjectYaml: vi.fn(),
   readObjectYamlIcon: vi.fn(() => undefined),
 }));
 
@@ -33,6 +48,12 @@ describe("Workspace Objects API", () => {
     vi.resetModules();
     vi.mock("node:child_process", () => ({
       execSync: vi.fn(() => ""),
+    }));
+    vi.mock("node:fs", () => ({
+      existsSync: vi.fn(() => false),
+      mkdirSync: vi.fn(),
+      rmSync: vi.fn(),
+      statSync: vi.fn(() => ({ isDirectory: () => true })),
     }));
     vi.mock("@/lib/workspace", () => ({
       duckdbPath: vi.fn(() => null),
@@ -53,6 +74,14 @@ describe("Workspace Objects API", () => {
       resolveDuckdbBin: vi.fn(() => null),
       discoverDuckDBPaths: vi.fn(() => []),
       discoverDuckDBPathsAsync: vi.fn(async () => []),
+      resolveWorkspaceRoot: vi.fn(() => "/ws"),
+      resolveFilesystemPath: vi.fn(() => ({
+        absolutePath: "/ws/folder",
+        kind: "workspaceRelative",
+        withinWorkspace: true,
+        workspaceRelativePath: "folder",
+      })),
+      writeObjectYaml: vi.fn(),
       readObjectYamlIcon: vi.fn(() => undefined),
     }));
   });
@@ -257,6 +286,86 @@ describe("Workspace Objects API", () => {
       );
       // 404 because findDuckDBForObject returns null, but name validation passes
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ─── POST /api/workspace/objects/[name]/entries ─────────────────
+
+  describe("POST /api/workspace/objects", () => {
+    it("returns 400 for invalid object name", async () => {
+      const { POST } = await import("./objects/route.js");
+      const req = new Request("http://localhost/api/workspace/objects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "bad-name!" }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("creates an object and writes its workspace projection", async () => {
+      const {
+        duckdbPathAsync,
+        duckdbQueryOnFileAsync,
+        duckdbExecOnFileAsync,
+        writeObjectYaml,
+      } = await import("@/lib/workspace");
+      const { mkdirSync } = await import("node:fs");
+
+      vi.mocked(duckdbPathAsync).mockResolvedValue("/ws/workspace.duckdb");
+      vi.mocked(duckdbQueryOnFileAsync).mockImplementation(async (_dbFile, sql) => {
+        if (sql.includes("SELECT id FROM objects WHERE name")) {
+          return [] as never;
+        }
+        if (sql.includes("MAX(sort_order)")) {
+          return [{ max_order: 2 }] as never;
+        }
+        if (sql.includes("SELECT uuid()::VARCHAR as id")) {
+          return [{ id: "obj_new_123" }] as never;
+        }
+        return [] as never;
+      });
+      vi.mocked(duckdbExecOnFileAsync).mockResolvedValue(true);
+
+      const { POST } = await import("./objects/route.js");
+      const req = new Request("http://localhost/api/workspace/objects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "leads" }),
+      });
+      const res = await POST(req);
+
+      expect(res.status).toBe(201);
+      expect(duckdbExecOnFileAsync).toHaveBeenCalled();
+      expect(mkdirSync).toHaveBeenCalledWith("/ws/leads");
+      expect(writeObjectYaml).toHaveBeenCalledWith(
+        "/ws/leads",
+        expect.objectContaining({
+          id: "obj_new_123",
+          name: "leads",
+          icon: "table",
+          default_view: "table",
+          entry_count: 0,
+          fields: [],
+        }),
+      );
+    });
+
+    it("returns 409 when the object already exists", async () => {
+      const { duckdbPathAsync, duckdbQueryOnFileAsync } = await import("@/lib/workspace");
+
+      vi.mocked(duckdbPathAsync).mockResolvedValue("/ws/workspace.duckdb");
+      vi.mocked(duckdbQueryOnFileAsync).mockResolvedValue([{ id: "existing-object" }] as never);
+
+      const { POST } = await import("./objects/route.js");
+      const req = new Request("http://localhost/api/workspace/objects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "leads" }),
+      });
+      const res = await POST(req);
+
+      expect(res.status).toBe(409);
     });
   });
 

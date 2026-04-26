@@ -1,9 +1,11 @@
 import {
   getCloudSettingsState,
+  saveActiveCloudSettings,
   saveApiKey,
   saveVoiceId,
   selectModel,
 } from "@/lib/dench-cloud-settings";
+import type { DenchIntegrationId, DenchIntegrationToggleDraft } from "@/lib/integrations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,11 +23,17 @@ export async function GET() {
 }
 
 type PostBody = {
-  action: "save_key" | "select_model" | "save_voice";
+  action: "save_key" | "select_model" | "save_voice" | "save_active_settings";
   apiKey?: string;
   stableId?: string;
   voiceId?: string | null;
+  integrations?: DenchIntegrationToggleDraft;
+  enrichmentMaxModeEnabled?: boolean;
 };
+
+function isSupportedIntegration(id: string): id is DenchIntegrationId {
+  return id === "exa" || id === "apollo" || id === "elevenlabs";
+}
 
 export async function POST(request: Request) {
   let body: PostBody;
@@ -94,8 +102,62 @@ export async function POST(request: Request) {
     }
   }
 
+  if (body.action === "save_active_settings") {
+    try {
+      const stableId = typeof body.stableId === "string"
+        ? body.stableId.trim() || null
+        : body.stableId === undefined
+          ? null
+          : null;
+      const voiceId = typeof body.voiceId === "string"
+        ? body.voiceId.trim() || null
+        : body.voiceId === null || body.voiceId === undefined
+          ? null
+          : undefined;
+      if (voiceId === undefined) {
+        return Response.json({ error: "Field 'voiceId' must be a string or null." }, { status: 400 });
+      }
+      if (body.enrichmentMaxModeEnabled !== undefined && typeof body.enrichmentMaxModeEnabled !== "boolean") {
+        return Response.json(
+          { error: "Field 'enrichmentMaxModeEnabled' must be a boolean." },
+          { status: 400 },
+        );
+      }
+      if (body.integrations !== undefined && (!body.integrations || typeof body.integrations !== "object" || Array.isArray(body.integrations))) {
+        return Response.json({ error: "Field 'integrations' must be an object." }, { status: 400 });
+      }
+
+      const integrations: DenchIntegrationToggleDraft = {};
+      for (const [id, enabled] of Object.entries(body.integrations ?? {})) {
+        if (!isSupportedIntegration(id)) {
+          return Response.json({ error: `Unknown integration '${id}'.` }, { status: 400 });
+        }
+        if (typeof enabled !== "boolean") {
+          return Response.json({ error: `Integration '${id}' must be a boolean.` }, { status: 400 });
+        }
+        integrations[id] = enabled;
+      }
+
+      const result = await saveActiveCloudSettings({
+        stableId,
+        voiceId,
+        integrations,
+        enrichmentMaxModeEnabled: body.enrichmentMaxModeEnabled === true,
+      });
+      if (result.error) {
+        return Response.json({ error: result.error, ...result }, { status: 409 });
+      }
+      return Response.json(result);
+    } catch (err) {
+      return Response.json(
+        { error: err instanceof Error ? err.message : "Failed to save cloud settings." },
+        { status: 500 },
+      );
+    }
+  }
+
   return Response.json(
-    { error: "Unknown action. Use 'save_key', 'select_model', or 'save_voice'." },
+    { error: "Unknown action. Use 'save_key', 'select_model', 'save_voice', or 'save_active_settings'." },
     { status: 400 },
   );
 }

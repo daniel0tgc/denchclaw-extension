@@ -4,9 +4,29 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudSettingsPanel } from "./cloud-settings-panel";
+import type { DenchIntegrationState, IntegrationsState } from "@/lib/integrations";
 
 vi.mock("../integrations/dench-integrations-section", () => ({
-  DenchIntegrationsSection: () => <div>Mock Integrations</div>,
+  DenchIntegrationsSection: ({
+    data,
+    onToggle,
+  }: {
+    data?: IntegrationsState | null;
+    onToggle?: (integration: DenchIntegrationState, enabled: boolean) => void;
+  }) => (
+    <div>
+      <div>Mock Integrations</div>
+      {data?.integrations.map((integration) => (
+        <button
+          key={integration.id}
+          type="button"
+          onClick={() => onToggle?.(integration, !integration.enabled)}
+        >
+          {integration.label}:{integration.enabled ? "on" : "off"}:{integration.locked ? "locked" : "open"}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 const baseState = {
@@ -18,6 +38,7 @@ const baseState = {
   selectedDenchModel: null,
   selectedVoiceId: null,
   elevenLabsEnabled: true,
+  enrichmentMaxModeEnabled: false,
   models: [
     {
       id: "claude-opus-4.6",
@@ -50,6 +71,92 @@ const voicesPayload = {
   ],
 };
 
+const integrationsState: IntegrationsState = {
+  denchCloud: {
+    hasKey: true,
+    isPrimaryProvider: false,
+    primaryModel: null,
+  },
+  metadata: {
+    schemaVersion: 1,
+    exa: { ownsSearch: false, fallbackProvider: "duckduckgo" },
+    apollo: {},
+    elevenlabs: {},
+  },
+  search: {
+    builtIn: { enabled: true, denied: false, provider: null },
+    effectiveOwner: "web_search",
+  },
+  integrations: [
+    {
+      id: "exa",
+      label: "Exa",
+      enabled: false,
+      available: false,
+      locked: true,
+      lockReason: "dench_not_primary",
+      lockBadge: "Use Dench Cloud",
+      gatewayBaseUrl: "https://gateway.merseoriginals.com",
+      auth: { configured: true, source: "config" },
+      plugin: null,
+      managedByDench: true,
+      healthIssues: [],
+      health: {
+        status: "disabled",
+        pluginMissing: false,
+        pluginInstalledButDisabled: false,
+        configMismatch: false,
+        missingAuth: false,
+        missingGatewayOverride: false,
+      },
+    },
+    {
+      id: "apollo",
+      label: "Apollo",
+      enabled: false,
+      available: false,
+      locked: true,
+      lockReason: "dench_not_primary",
+      lockBadge: "Use Dench Cloud",
+      gatewayBaseUrl: "https://gateway.merseoriginals.com",
+      auth: { configured: true, source: "config" },
+      plugin: null,
+      managedByDench: true,
+      healthIssues: [],
+      health: {
+        status: "disabled",
+        pluginMissing: false,
+        pluginInstalledButDisabled: false,
+        configMismatch: false,
+        missingAuth: false,
+        missingGatewayOverride: false,
+      },
+    },
+    {
+      id: "elevenlabs",
+      label: "ElevenLabs",
+      enabled: false,
+      available: false,
+      locked: true,
+      lockReason: "dench_not_primary",
+      lockBadge: "Use Dench Cloud",
+      gatewayBaseUrl: "https://gateway.merseoriginals.com",
+      auth: { configured: true, source: "config" },
+      plugin: null,
+      managedByDench: true,
+      healthIssues: [],
+      health: {
+        status: "disabled",
+        pluginMissing: false,
+        pluginInstalledButDisabled: false,
+        configMismatch: false,
+        missingAuth: false,
+        missingGatewayOverride: false,
+      },
+    },
+  ],
+};
+
 describe("CloudSettingsPanel", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -61,8 +168,14 @@ describe("CloudSettingsPanel", () => {
       if (url === "/api/settings/cloud") {
         return new Response(JSON.stringify(baseState));
       }
+      if (url === "/api/integrations") {
+        return new Response(JSON.stringify(integrationsState));
+      }
       if (url === "/api/voice/voices") {
         return new Response(JSON.stringify(voicesPayload));
+      }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
@@ -75,32 +188,67 @@ describe("CloudSettingsPanel", () => {
 
     expect(screen.getByText("Choose a model...")).toBeInTheDocument();
     expect(screen.getByText("Mock Integrations")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
-  it("selects a model through the rich picker and keeps the existing POST flow", async () => {
+  it("stages model, voice, and integration changes until Save is clicked", async () => {
     const user = userEvent.setup();
-
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url === "/api/settings/cloud" && (!init || init.method === undefined)) {
         return new Response(JSON.stringify(baseState));
       }
+      if (url === "/api/integrations") {
+        return new Response(JSON.stringify(integrationsState));
+      }
       if (url === "/api/voice/voices") {
         return new Response(JSON.stringify(voicesPayload));
       }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
+      }
 
       if (url === "/api/settings/cloud" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as { action: string; stableId: string };
+        const body = JSON.parse(String(init.body)) as {
+          action: string;
+          stableId: string;
+          voiceId: string;
+        enrichmentMaxModeEnabled: boolean;
+          integrations: Record<string, boolean>;
+        };
         expect(body).toEqual({
-          action: "select_model",
+          action: "save_active_settings",
           stableId: "anthropic.claude-opus-4-6-v1",
+          voiceId: "voice_123",
+        enrichmentMaxModeEnabled: true,
+          integrations: {
+            exa: true,
+            apollo: false,
+            elevenlabs: false,
+          },
         });
         return new Response(JSON.stringify({
           state: {
             ...baseState,
             isDenchPrimary: true,
             selectedDenchModel: "anthropic.claude-opus-4-6-v1",
+            selectedVoiceId: "voice_123",
+            enrichmentMaxModeEnabled: true,
           },
+          integrationsState: {
+            ...integrationsState,
+            denchCloud: {
+              ...integrationsState.denchCloud,
+              isPrimaryProvider: true,
+              primaryModel: "dench-cloud/anthropic.claude-opus-4-6-v1",
+            },
+            integrations: integrationsState.integrations.map((integration) =>
+              integration.id === "exa"
+                ? { ...integration, enabled: true, locked: false, lockReason: null, lockBadge: null, available: true }
+                : { ...integration, locked: false, lockReason: null, lockBadge: null, available: true },
+            ),
+          },
+          changed: true,
           refresh: {
             attempted: true,
             restarted: true,
@@ -111,52 +259,14 @@ describe("CloudSettingsPanel", () => {
       }
 
       throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    });
+    global.fetch = fetchMock as typeof fetch;
 
     render(<CloudSettingsPanel />);
 
     await user.click(await screen.findByRole("button", { name: "Select primary model" }));
     await user.click(await screen.findByText("Claude Opus 4.6"));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("Switched to Claude Opus 4.6 and the dench gateway restarted successfully."),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("saves the selected ElevenLabs voice", async () => {
-    const user = userEvent.setup();
-
-    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "/api/settings/cloud" && (!init || init.method === undefined)) {
-        return new Response(JSON.stringify(baseState));
-      }
-      if (url === "/api/voice/voices") {
-        return new Response(JSON.stringify(voicesPayload));
-      }
-      if (url === "/api/settings/cloud" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as { action: string; voiceId: string };
-        expect(body).toEqual({ action: "save_voice", voiceId: "voice_123" });
-        return new Response(JSON.stringify({
-          state: {
-            ...baseState,
-            selectedVoiceId: "voice_123",
-          },
-          refresh: {
-            attempted: false,
-            restarted: false,
-            error: null,
-            profile: "default",
-          },
-        }));
-      }
-
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
-
-    render(<CloudSettingsPanel />);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     const voiceTrigger = await screen.findByRole("button", {
       name: "Select ElevenLabs voice",
@@ -166,9 +276,51 @@ describe("CloudSettingsPanel", () => {
     });
     await user.click(voiceTrigger);
     await user.click(await screen.findByRole("menuitemradio", { name: /Rachel/ }));
+    await user.click(screen.getByRole("switch", { name: "Enable enrichment max mode" }));
+    await user.click(screen.getByRole("button", { name: "Exa:off:open" }));
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Saved Rachel for ElevenLabs playback.")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(5);
     });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("shows the full provider logo lineup on the max mode card", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/settings/cloud") {
+        return new Response(JSON.stringify(baseState));
+      }
+      if (url === "/api/integrations") {
+        return new Response(JSON.stringify(integrationsState));
+      }
+      if (url === "/api/voice/voices") {
+        return new Response(JSON.stringify(voicesPayload));
+      }
+      if (url === "/api/settings/mcp") {
+        return new Response(JSON.stringify({ servers: [] }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    render(<CloudSettingsPanel />);
+
+    await screen.findByRole("switch", { name: "Enable enrichment max mode" });
+
+    expect(screen.getByTitle("Dench")).toBeInTheDocument();
+    expect(screen.getByTitle("Aviato")).toBeInTheDocument();
+    expect(screen.getByTitle("Apollo")).toBeInTheDocument();
+    expect(screen.getByTitle("People Data Labs")).toBeInTheDocument();
+    expect(screen.getByTitle("Datagma")).toBeInTheDocument();
+    expect(screen.getByTitle("RocketReach")).toBeInTheDocument();
+    expect(screen.getByTitle("Hunter")).toBeInTheDocument();
+    expect(screen.getByTitle("Better Contacts")).toBeInTheDocument();
+    expect(screen.getByTitle("Dropcontact")).toBeInTheDocument();
+    expect(screen.getByTitle("Explorium")).toBeInTheDocument();
   });
 });

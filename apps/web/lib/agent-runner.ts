@@ -1614,6 +1614,7 @@ export function spawnAgentSubscribeProcess(
 export function spawnAgentStartForSession(
 	message: string,
 	sessionKey: string,
+	attachments?: ImageAttachment[],
 ): AgentProcessHandle {
 	return new GatewayProcessHandle({
 		mode: "start",
@@ -1621,6 +1622,7 @@ export function spawnAgentStartForSession(
 		sessionKey,
 		afterSeq: 0,
 		lane: "subagent",
+		attachments,
 	});
 }
 

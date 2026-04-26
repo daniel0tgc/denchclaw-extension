@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { ChatModelSelector, type ChatModelSelectorOption } from "../chat-model-selector";
 import { Button } from "../ui/button";
 import { DenchIntegrationsSection } from "../integrations/dench-integrations-section";
+import { McpServersSection } from "./mcp-servers-section";
+import type { DenchIntegrationId, DenchIntegrationState, IntegrationsState } from "@/lib/integrations";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +14,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { Switch } from "../ui/switch";
 
 type CloudStatus = "no_key" | "invalid_key" | "valid";
 
@@ -41,6 +44,7 @@ type CloudState = {
   selectedDenchModel: string | null;
   selectedVoiceId: string | null;
   elevenLabsEnabled: boolean;
+  enrichmentMaxModeEnabled: boolean;
   models: CatalogModel[];
   recommendedModelId: string;
   validationError?: string;
@@ -58,10 +62,82 @@ type ActionNotice = {
   message: string;
 };
 
+type IntegrationDraftState = Record<DenchIntegrationId, boolean>;
+
+const MAX_MODE_PROVIDER_LOGOS = [
+  { id: "dench", name: "Dench", src: "/dench-workspace-icon.png", rounded: true },
+  { id: "aviato", name: "Aviato", src: "/integrations/aviato.ico", rounded: true },
+  { id: "apollo", name: "Apollo", src: "/integrations/apollo.ico", rounded: true },
+  { id: "pdl", name: "People Data Labs", src: "/integrations/people-data-labs.ico", rounded: true },
+  { id: "datagma", name: "Datagma", src: "/integrations/datagma.png", rounded: true },
+  { id: "rocketreach", name: "RocketReach", src: "/integrations/rocketreach.ico", rounded: true },
+  { id: "hunter", name: "Hunter", src: "/integrations/hunter.png", rounded: true },
+  { id: "bettercontacts", name: "Better Contacts", src: "/integrations/bettercontacts.png", rounded: true },
+  { id: "dropcontacts", name: "Dropcontact", src: "/integrations/dropcontacts.ico", rounded: true },
+  { id: "explorium", name: "Explorium", src: "/integrations/explorium.png", rounded: true },
+] as const;
+
 const DENCH_API_KEY_URL = "https://dench.com/api";
 
 /** Sentinel for “default voice” in radio group (empty string is avoided for Radix value). */
 const DEFAULT_VOICE_RADIO_VALUE = "__dench_default_voice__";
+const SUBTLE_PICKER_TRIGGER_CLASS =
+  "w-full max-w-full rounded-xl border border-[color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[var(--color-surface)] px-3 py-2.5 hover:opacity-100";
+
+function buildIntegrationDraft(state: IntegrationsState | null): IntegrationDraftState {
+  const enabled = new Map<DenchIntegrationId, boolean>();
+  for (const integration of state?.integrations ?? []) {
+    enabled.set(integration.id, integration.enabled);
+  }
+  return {
+    exa: enabled.get("exa") ?? false,
+    apollo: enabled.get("apollo") ?? false,
+    elevenlabs: enabled.get("elevenlabs") ?? false,
+  };
+}
+
+function applyIntegrationDraft(
+  state: IntegrationsState,
+  draft: IntegrationDraftState,
+  draftIsDenchPrimary: boolean,
+): IntegrationsState {
+  return {
+    ...state,
+    denchCloud: {
+      ...state.denchCloud,
+      isPrimaryProvider: draftIsDenchPrimary,
+      primaryModel: state.denchCloud.primaryModel,
+    },
+    integrations: state.integrations.map((integration) => {
+      if (integration.lockReason !== "dench_not_primary") {
+        return {
+          ...integration,
+          enabled: draft[integration.id],
+        };
+      }
+
+      if (draftIsDenchPrimary) {
+        return {
+          ...integration,
+          enabled: draft[integration.id],
+          locked: false,
+          lockReason: null,
+          lockBadge: null,
+          available: integration.auth.configured && Boolean(integration.gatewayBaseUrl),
+        };
+      }
+
+      return {
+        ...integration,
+        enabled: draft[integration.id],
+        locked: true,
+        lockReason: "dench_not_primary",
+        lockBadge: "Use Dench Cloud",
+        available: false,
+      };
+    }),
+  };
+}
 
 function NoticeBanner({ notice }: { notice: ActionNotice }) {
   const toneClass =
@@ -74,6 +150,60 @@ function NoticeBanner({ notice }: { notice: ActionNotice }) {
   return (
     <div className={`rounded-xl border px-4 py-3 text-sm ${toneClass}`}>
       {notice.message}
+    </div>
+  );
+}
+
+function EnrichmentMaxModeCard({
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <div
+      className="rounded-xl border px-4 py-4"
+      style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+            Enrichment Max Mode
+          </div>
+          <div className="max-w-[42rem] text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
+            Run the full Dench enrichment waterfall for people and company requests, even after an early hit.
+            This gives you richer merged results, but it can take longer and use more credits.
+          </div>
+        </div>
+        <Switch
+          aria-label="Enable enrichment max mode"
+          checked={enabled}
+          disabled={disabled}
+          onCheckedChange={onToggle}
+        />
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {MAX_MODE_PROVIDER_LOGOS.map((provider) => (
+          <div
+            key={provider.id}
+            className="flex h-8 w-8 items-center justify-center"
+            title={provider.name}
+            aria-label={provider.name}
+          >
+            <img
+              src={provider.src}
+              alt=""
+              width={24}
+              height={24}
+              className={provider.rounded ? "h-6 w-6 rounded-[6px] object-contain" : "h-6 w-6 object-contain"}
+              draggable={false}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -212,7 +342,6 @@ function ModelSelector({
   savingVoice,
   voiceLoading,
   voices,
-  notice,
 }: {
   models: CatalogModel[];
   selectedModel: string | null;
@@ -226,7 +355,6 @@ function ModelSelector({
   savingVoice: boolean;
   voiceLoading: boolean;
   voices: VoiceOption[];
-  notice: ActionNotice | null;
 }) {
   const pickerModels: ChatModelSelectorOption[] = models.map((model) => ({
     stableId: model.stableId,
@@ -246,15 +374,28 @@ function ModelSelector({
         className="flex items-center gap-3 rounded-xl border px-4 py-3"
         style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
       >
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-lg shrink-0"
-          style={{ background: "var(--color-surface-hover)", color: "var(--color-text)" }}
-        >
-          <CloudIcon />
-        </div>
+        <img
+          src="/dench-workspace-icon.png"
+          alt=""
+          width={36}
+          height={36}
+          className="h-9 w-9 shrink-0 rounded-lg object-contain"
+          draggable={false}
+        />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-            Dench Cloud
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+              Dench Cloud
+            </span>
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{
+                background: isDenchPrimary ? "rgba(16,185,129,0.15)" : "var(--color-surface-hover)",
+                color: isDenchPrimary ? "rgb(16,185,129)" : "var(--color-text-muted)",
+              }}
+            >
+              {isDenchPrimary ? "Active" : "Available"}
+            </span>
           </div>
           <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>
             {isDenchPrimary
@@ -262,15 +403,15 @@ function ModelSelector({
               : "Connected. Select a model to use Dench Cloud as your primary provider."}
           </div>
         </div>
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium"
-          style={{
-            background: isDenchPrimary ? "rgba(16,185,129,0.15)" : "var(--color-surface-hover)",
-            color: isDenchPrimary ? "rgb(16,185,129)" : "var(--color-text-muted)",
-          }}
+        <a
+          href="https://dench.com/usage"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-xs font-medium shrink-0 transition-opacity hover:opacity-80"
+          style={{ color: "var(--color-accent)" }}
         >
-          {isDenchPrimary ? "Active" : "Available"}
-        </span>
+          Usage <ExternalLinkIcon />
+        </a>
       </div>
 
       <div>
@@ -280,16 +421,19 @@ function ModelSelector({
         >
           Primary Model
         </label>
-        <ChatModelSelector
-          models={pickerModels}
-          selectedModel={isDenchPrimary ? selectedModel : null}
-          onSelect={onSelect}
-          disabled={selecting}
-          loading={selecting}
-          fallbackToFirst={isDenchPrimary}
-          placeholder="Choose a model..."
-          ariaLabel="Select primary model"
-        />
+        <div className="max-w-[420px]">
+          <ChatModelSelector
+            models={pickerModels}
+            selectedModel={isDenchPrimary ? selectedModel : null}
+            onSelect={onSelect}
+            disabled={selecting}
+            loading={selecting}
+            fallbackToFirst={isDenchPrimary}
+            placeholder="Choose a model..."
+            ariaLabel="Select primary model"
+            triggerClassName={SUBTLE_PICKER_TRIGGER_CLASS}
+          />
+        </div>
       </div>
 
       <div>
@@ -299,64 +443,69 @@ function ModelSelector({
         >
           ElevenLabs Voice
         </label>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            className="inline-flex max-w-full items-center gap-1.5 rounded-lg p-0 text-sm font-medium transition-opacity hover:opacity-100 disabled:cursor-default disabled:opacity-60 cursor-pointer outline-none ring-0 border-none"
-            style={{ color: "var(--color-text-secondary)", opacity: 0.9 }}
-            aria-label="Select ElevenLabs voice"
-            title={selectedVoice?.name ?? undefined}
-            disabled={voiceLoading || savingVoice || voices.length === 0}
-          >
-            <span
-              className="max-w-[240px] truncate"
-              style={
-                voiceLoading || (!selectedVoice && voices.length === 0)
-                  ? { color: "var(--color-text-muted)" }
-                  : undefined
-              }
-            >
-              {voiceLoading
-                ? "Loading voices..."
-                : voices.length === 0
-                  ? "No voices available"
-                  : selectedVoice
-                    ? `${selectedVoice.name}${selectedVoice.category ? ` · ${selectedVoice.category}` : ""}`
-                    : "Default voice (first available)"}
-            </span>
-            {voiceLoading || savingVoice ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            )}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            side="bottom"
-            sideOffset={8}
-            className="min-w-[15rem] max-w-[20rem] p-1.5"
-          >
-            <DropdownMenuRadioGroup
-              value={selectedVoiceId ?? DEFAULT_VOICE_RADIO_VALUE}
-              onValueChange={(value) => {
-                onSelectVoice(
-                  value === DEFAULT_VOICE_RADIO_VALUE ? null : value,
-                );
+        <div className="max-w-[420px]">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={`inline-flex items-center gap-1.5 text-sm font-medium transition-opacity disabled:cursor-default disabled:opacity-60 cursor-pointer outline-none ring-0 ${SUBTLE_PICKER_TRIGGER_CLASS}`}
+              style={{
+                color: "var(--color-text-secondary)",
+                opacity: 0.9,
               }}
+              aria-label="Select ElevenLabs voice"
+              title={selectedVoice?.name ?? undefined}
+              disabled={voiceLoading || savingVoice || voices.length === 0}
             >
-              <DropdownMenuRadioItem value={DEFAULT_VOICE_RADIO_VALUE}>
-                Default voice (first available)
-              </DropdownMenuRadioItem>
-              {voices.map((voice) => (
-                <DropdownMenuRadioItem key={voice.voiceId} value={voice.voiceId}>
-                  <span className="truncate">
-                    {voice.name}
-                    {voice.category ? ` · ${voice.category}` : ""}
-                  </span>
+              <span
+                className="max-w-[240px] truncate"
+                style={
+                  voiceLoading || (!selectedVoice && voices.length === 0)
+                    ? { color: "var(--color-text-muted)" }
+                    : undefined
+                }
+              >
+                {voiceLoading
+                  ? "Loading voices..."
+                  : voices.length === 0
+                    ? "No voices available"
+                    : selectedVoice
+                      ? `${selectedVoice.name}${selectedVoice.category ? ` · ${selectedVoice.category}` : ""}`
+                      : "Default voice (first available)"}
+              </span>
+              {voiceLoading || savingVoice ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              side="bottom"
+              sideOffset={8}
+              className="min-w-[15rem] max-w-[20rem] p-1.5"
+            >
+              <DropdownMenuRadioGroup
+                value={selectedVoiceId ?? DEFAULT_VOICE_RADIO_VALUE}
+                onValueChange={(value) => {
+                  onSelectVoice(
+                    value === DEFAULT_VOICE_RADIO_VALUE ? null : value,
+                  );
+                }}
+              >
+                <DropdownMenuRadioItem value={DEFAULT_VOICE_RADIO_VALUE}>
+                  Default voice (first available)
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                {voices.map((voice) => (
+                  <DropdownMenuRadioItem key={voice.voiceId} value={voice.voiceId}>
+                    <span className="truncate">
+                      {voice.name}
+                      {voice.category ? ` · ${voice.category}` : ""}
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <div className="mt-2 space-y-1">
           <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
             {elevenLabsEnabled
@@ -370,22 +519,32 @@ function ModelSelector({
           )}
         </div>
       </div>
-
-      {notice && <NoticeBanner notice={notice} />}
     </div>
   );
 }
 
 export function CloudSettingsPanel() {
   const [data, setData] = useState<CloudState | null>(null);
+  const [integrationsData, setIntegrationsData] = useState<IntegrationsState | null>(null);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [voiceLoading, setVoiceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [selecting, setSelecting] = useState(false);
-  const [savingVoice, setSavingVoice] = useState(false);
+  const [savingActive, setSavingActive] = useState(false);
+  const [repairingIntegrations, setRepairingIntegrations] = useState(false);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
+  const [draftModel, setDraftModel] = useState<string | null>(null);
+  const [draftVoiceId, setDraftVoiceId] = useState<string | null>(null);
+  const [draftEnrichmentMaxModeEnabled, setDraftEnrichmentMaxModeEnabled] = useState(false);
+  const [draftIntegrations, setDraftIntegrations] = useState<IntegrationDraftState>({
+    exa: false,
+    apollo: false,
+    elevenlabs: false,
+  });
+  const [draftResetKey, setDraftResetKey] = useState(0);
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -405,6 +564,36 @@ export function CloudSettingsPanel() {
   useEffect(() => {
     void fetchState();
   }, [fetchState]);
+
+  const fetchIntegrations = useCallback(async () => {
+    setIntegrationsLoading(true);
+    setIntegrationsError(null);
+    try {
+      const response = await fetch("/api/integrations");
+      if (!response.ok) {
+        throw new Error(`Failed to load integrations (${response.status})`);
+      }
+      const payload = (await response.json()) as IntegrationsState;
+      setIntegrationsData(payload);
+    } catch (err) {
+      setIntegrationsError(err instanceof Error ? err.message : "Failed to load integrations.");
+    } finally {
+      setIntegrationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (data?.status !== "valid") {
+      setIntegrationsData(null);
+      setIntegrationsError(null);
+      setIntegrationsLoading(false);
+      return;
+    }
+    void (async () => {
+      await fetchIntegrations();
+      setDraftResetKey((current) => current + 1);
+    })();
+  }, [data?.status, fetchIntegrations]);
 
   useEffect(() => {
     if (data?.status !== "valid") {
@@ -443,6 +632,26 @@ export function CloudSettingsPanel() {
       cancelled = true;
     };
   }, [data?.status, data?.gatewayUrl]);
+
+  const integrationsDataRef = useRef(integrationsData);
+  integrationsDataRef.current = integrationsData;
+
+  useEffect(() => {
+    if (data?.status !== "valid" || !integrationsDataRef.current) {
+      return;
+    }
+    setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
+    setDraftVoiceId(data.selectedVoiceId);
+    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
+    setDraftIntegrations(buildIntegrationDraft(integrationsDataRef.current));
+  }, [
+    data?.enrichmentMaxModeEnabled,
+    data?.status,
+    data?.isDenchPrimary,
+    data?.selectedDenchModel,
+    data?.selectedVoiceId,
+    draftResetKey,
+  ]);
 
   const handleSaveKey = useCallback(async (apiKey: string) => {
     setSaving(true);
@@ -486,85 +695,168 @@ export function CloudSettingsPanel() {
     }
   }, []);
 
-  const handleSelectModel = useCallback(async (stableId: string) => {
-    setSelecting(true);
+  const handleDraftModelChange = useCallback((stableId: string) => {
+    setNotice(null);
+    setDraftModel(stableId);
+  }, []);
+
+  const handleDraftVoiceChange = useCallback((voiceId: string | null) => {
+    setNotice(null);
+    setDraftVoiceId(voiceId);
+  }, []);
+
+  const handleDraftEnrichmentMaxModeChange = useCallback((enabled: boolean) => {
+    setNotice(null);
+    setDraftEnrichmentMaxModeEnabled(enabled);
+  }, []);
+
+  const handleDraftIntegrationToggle = useCallback((integration: DenchIntegrationState, enabled: boolean) => {
+    setNotice(null);
+    setDraftIntegrations((current) => ({
+      ...current,
+      [integration.id]: enabled,
+    }));
+  }, []);
+
+  const resetDraft = useCallback(() => {
+    if (data?.status !== "valid" || !integrationsData) {
+      return;
+    }
+    setNotice(null);
+    setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
+    setDraftVoiceId(data.selectedVoiceId);
+    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
+    setDraftIntegrations(buildIntegrationDraft(integrationsData));
+  }, [data, integrationsData]);
+
+  const baselineModel = data?.status === "valid" && data.isDenchPrimary ? data.selectedDenchModel : null;
+  const baselineVoiceId = data?.status === "valid" ? data.selectedVoiceId : null;
+  const baselineEnrichmentMaxModeEnabled = data?.status === "valid"
+    ? data.enrichmentMaxModeEnabled
+    : false;
+  const baselineIntegrations = useMemo(
+    () => buildIntegrationDraft(integrationsData),
+    [integrationsData],
+  );
+  const hasUnsavedChanges = Boolean(data?.status === "valid" && (
+    draftModel !== baselineModel
+    || draftVoiceId !== baselineVoiceId
+    || draftEnrichmentMaxModeEnabled !== baselineEnrichmentMaxModeEnabled
+    || draftIntegrations.exa !== baselineIntegrations.exa
+    || draftIntegrations.apollo !== baselineIntegrations.apollo
+    || draftIntegrations.elevenlabs !== baselineIntegrations.elevenlabs
+  ));
+  const draftIsDenchPrimary = Boolean(draftModel);
+  const draftIntegrationsState = useMemo(() => {
+    if (!integrationsData) {
+      return null;
+    }
+    return applyIntegrationDraft(integrationsData, draftIntegrations, draftIsDenchPrimary);
+  }, [draftIntegrations, draftIsDenchPrimary, integrationsData]);
+
+  const handleSaveActiveSettings = useCallback(async () => {
+    setSavingActive(true);
     setNotice(null);
     try {
       const res = await fetch("/api/settings/cloud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "select_model", stableId }),
+        body: JSON.stringify({
+          action: "save_active_settings",
+          stableId: draftModel,
+          voiceId: draftVoiceId,
+          enrichmentMaxModeEnabled: draftEnrichmentMaxModeEnabled,
+          integrations: draftIntegrations,
+        }),
       });
       const payload = await res.json();
       if (!res.ok) {
         setNotice({
           tone: "error",
-          message: payload.error ?? "Failed to select model.",
+          message: payload.error ?? "Failed to save cloud settings.",
         });
         return;
       }
       setData(payload.state);
+      if (payload.integrationsState) {
+        setIntegrationsData(payload.integrationsState as IntegrationsState);
+        setDraftResetKey((current) => current + 1);
+      } else {
+        void (async () => {
+          await fetchIntegrations();
+          setDraftResetKey((current) => current + 1);
+        })();
+      }
       const refresh = payload.refresh as RefreshInfo;
-      const modelName = payload.state?.models?.find(
-        (m: CatalogModel) => m.stableId === stableId,
-      )?.displayName ?? stableId;
-      if (refresh.restarted) {
+      if (!payload.changed) {
+        setNotice({ tone: "success", message: "No changes to save." });
+      } else if (refresh.restarted) {
         setNotice({
           tone: "success",
-          message: `Switched to ${modelName} and the ${refresh.profile} gateway restarted successfully.`,
+          message: `Cloud settings saved and the ${refresh.profile} gateway restarted successfully.`,
         });
       } else if (refresh.attempted) {
         setNotice({
           tone: "warning",
-          message: `Switched to ${modelName}, but the gateway restart did not complete: ${refresh.error ?? "unknown error"}.`,
+          message: `Cloud settings saved, but the gateway restart did not complete: ${refresh.error ?? "unknown error"}.`,
         });
       } else {
-        setNotice({ tone: "success", message: `Switched to ${modelName}.` });
+        setNotice({ tone: "success", message: "Cloud settings saved successfully." });
       }
     } catch (err) {
       setNotice({
         tone: "error",
-        message: err instanceof Error ? err.message : "Failed to select model.",
+        message: err instanceof Error ? err.message : "Failed to save cloud settings.",
       });
     } finally {
-      setSelecting(false);
+      setSavingActive(false);
     }
-  }, []);
+  }, [draftEnrichmentMaxModeEnabled, draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
 
-  const handleSelectVoice = useCallback(async (voiceId: string | null) => {
-    setSavingVoice(true);
+  const handleRepairIntegrations = useCallback(async () => {
+    setRepairingIntegrations(true);
     setNotice(null);
     try {
-      const res = await fetch("/api/settings/cloud", {
+      const response = await fetch("/api/integrations/repair", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save_voice", voiceId }),
       });
-      const payload = await res.json();
-      if (!res.ok) {
-        setNotice({
-          tone: "error",
-          message: payload.error ?? "Failed to save voice.",
-        });
-        return;
+      const payload = await response.json() as {
+        changed: boolean;
+        repairedIds: string[];
+        refresh: RefreshInfo;
+      } & IntegrationsState & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to repair integrations.");
       }
-      setData(payload.state);
-      const selectedName = voices.find((voice) => voice.voiceId === voiceId)?.name;
-      setNotice({
-        tone: "success",
-        message: voiceId
-          ? `Saved ${selectedName ?? "your selected voice"} for ElevenLabs playback.`
-          : "Cleared the custom ElevenLabs voice selection.",
-      });
+
+      setIntegrationsData(payload);
+      setDraftResetKey((current) => current + 1);
+      if (payload.changed && payload.refresh.restarted) {
+        const repairedNames = payload.repairedIds.length > 0 ? payload.repairedIds.join(", ") : "profiles";
+        setNotice({
+          tone: "success",
+          message: `Repair completed for ${repairedNames} and the ${payload.refresh.profile} gateway restarted successfully.`,
+        });
+      } else if (payload.changed) {
+        setNotice({
+          tone: "warning",
+          message: `Repair updated the profile, but the gateway restart did not complete: ${payload.refresh.error ?? "unknown error"}.`,
+        });
+      } else {
+        setNotice({
+          tone: "success",
+          message: "No repair changes were needed for this profile.",
+        });
+      }
     } catch (err) {
       setNotice({
         tone: "error",
-        message: err instanceof Error ? err.message : "Failed to save voice.",
+        message: err instanceof Error ? err.message : "Failed to repair integrations.",
       });
     } finally {
-      setSavingVoice(false);
+      setRepairingIntegrations(false);
     }
-  }, [voices]);
+  }, []);
 
   if (loading) {
     return (
@@ -616,22 +908,66 @@ export function CloudSettingsPanel() {
     <div className="space-y-8">
       <ModelSelector
         models={data.models}
-        selectedModel={data.selectedDenchModel}
-        selectedVoiceId={data.selectedVoiceId}
-        elevenLabsEnabled={data.elevenLabsEnabled}
-        isDenchPrimary={data.isDenchPrimary}
+        selectedModel={draftModel}
+        selectedVoiceId={draftVoiceId}
+        elevenLabsEnabled={draftIntegrations.elevenlabs}
+        isDenchPrimary={draftIsDenchPrimary}
         recommendedModelId={data.recommendedModelId}
-        onSelect={handleSelectModel}
-        onSelectVoice={handleSelectVoice}
-        selecting={selecting}
-        savingVoice={savingVoice}
+        onSelect={handleDraftModelChange}
+        onSelectVoice={handleDraftVoiceChange}
+        selecting={savingActive}
+        savingVoice={savingActive}
         voiceLoading={voiceLoading}
         voices={voices}
-        notice={notice}
       />
       <div>
         <h2 className="text-sm font-medium mb-3" style={{ color: "var(--color-text)" }}>Integrations</h2>
-        <DenchIntegrationsSection />
+        <DenchIntegrationsSection
+          data={draftIntegrationsState}
+          loading={integrationsLoading}
+          error={integrationsError}
+          savingId={null}
+          repairing={repairingIntegrations}
+          onToggle={handleDraftIntegrationToggle}
+          onRetry={() => void fetchIntegrations()}
+          onRepair={() => void handleRepairIntegrations()}
+        />
+      </div>
+      <EnrichmentMaxModeCard
+        enabled={draftEnrichmentMaxModeEnabled}
+        disabled={savingActive}
+        onToggle={handleDraftEnrichmentMaxModeChange}
+      />
+      <McpServersSection />
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <Button
+          type="button"
+          variant="ghost"
+          className="shrink-0 rounded-lg px-4 text-sm font-medium"
+          style={{
+            color: "var(--color-text-muted)",
+            background: "transparent",
+          }}
+          onClick={resetDraft}
+          disabled={!hasUnsavedChanges || savingActive}
+        >
+          Reset
+        </Button>
+        <Button
+          type="button"
+          className="min-w-28 shrink-0 rounded-lg px-5 text-sm font-semibold"
+          style={{
+            background: "var(--color-accent)",
+            color: "var(--color-bg)",
+          }}
+          onClick={() => void handleSaveActiveSettings()}
+          disabled={!hasUnsavedChanges || savingActive || integrationsLoading || Boolean(integrationsError)}
+        >
+          <span className="inline-flex items-center justify-center gap-2 leading-none">
+            {savingActive ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            <span>{savingActive ? "Saving..." : "Save"}</span>
+          </span>
+        </Button>
       </div>
     </div>
   );

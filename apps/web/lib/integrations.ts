@@ -159,7 +159,9 @@ type UnknownRecord = Record<string, unknown>;
  * every key the integrations code does not know about (meta, wizard, auth,
  * agents, gateway, etc.).
  */
-type OpenClawConfig = UnknownRecord;
+export type OpenClawConfig = UnknownRecord;
+
+export type DenchIntegrationToggleDraft = Partial<Record<DenchIntegrationId, boolean>>;
 
 const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
 const DEFAULT_FALLBACK_PROVIDER = "duckduckgo";
@@ -1044,10 +1046,10 @@ export async function refreshIntegrationsRuntime(): Promise<IntegrationRuntimeRe
   }
 }
 
-function rejectLockedEnable(
+function getLockedEnableError(
   config: OpenClawConfig,
   enabled: boolean,
-): IntegrationToggleResult | null {
+): string | null {
   if (!enabled) {
     return null;
   }
@@ -1056,10 +1058,126 @@ function rejectLockedEnable(
   if (!eligibility.locked) {
     return null;
   }
+  return getLockErrorMessage(eligibility.lockReason);
+}
+
+function rejectLockedEnable(
+  config: OpenClawConfig,
+  enabled: boolean,
+): IntegrationToggleResult | null {
+  const error = getLockedEnableError(config, enabled);
+  if (!error) {
+    return null;
+  }
   return {
     state: getIntegrationsState(),
     changed: false,
-    error: getLockErrorMessage(eligibility.lockReason),
+    error,
+  };
+}
+
+export type ApplyDenchIntegrationToggleResult = {
+  changed: boolean;
+  error: string | null;
+  metadata: DenchIntegrationMetadata;
+};
+
+export function applyDenchIntegrationToggleDraft(params: {
+  config: OpenClawConfig;
+  metadata: DenchIntegrationMetadata;
+  id: DenchIntegrationId;
+  enabled: boolean;
+}): ApplyDenchIntegrationToggleResult {
+  const { config, id, enabled } = params;
+  let metadata = params.metadata;
+  const lockError = getLockedEnableError(config, enabled);
+  if (lockError) {
+    return {
+      changed: false,
+      error: lockError,
+      metadata,
+    };
+  }
+
+  let changed = false;
+
+  switch (id) {
+    case "exa": {
+      if (enabled) {
+        changed = ensurePluginRegistration(config, EXA_PLUGIN_ID) || changed;
+        changed = setPluginEnabled(config, EXA_PLUGIN_ID, true) || changed;
+        changed = setWebSearchPolicy(config, { enabled: false, denied: true }) || changed;
+      } else {
+        changed = setPluginEnabled(config, EXA_PLUGIN_ID, false) || changed;
+        changed = setWebSearchPolicy(config, { enabled: true, denied: false }) || changed;
+      }
+
+      metadata = {
+        ...metadata,
+        schemaVersion: 1,
+        exa: {
+          ownsSearch: enabled,
+          fallbackProvider: DEFAULT_FALLBACK_PROVIDER,
+        },
+      };
+      break;
+    }
+    case "apollo": {
+      if (enabled) {
+        changed = ensurePluginRegistration(config, APOLLO_PLUGIN_ID) || changed;
+        changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, true) || changed;
+      } else {
+        changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, false) || changed;
+      }
+      break;
+    }
+    case "elevenlabs": {
+      const tts = ensureTtsConfig(config);
+      const gatewayBaseUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
+      const denchApiKey = resolveDenchApiKey(config);
+
+      if (enabled) {
+        if (tts.provider !== "elevenlabs") {
+          tts.provider = "elevenlabs";
+          changed = true;
+        }
+        const hadExistingConfig = Boolean(readTtsElevenLabsConfig(config));
+        const preferredShape = hadExistingConfig ? resolveTtsElevenLabsConfigShape(tts) : "providers";
+        const elevenlabs = ensureTtsElevenLabsConfig(config, preferredShape);
+        if (!hadExistingConfig) {
+          changed = true;
+        }
+        if (elevenlabs && elevenlabs.baseUrl !== gatewayBaseUrl) {
+          elevenlabs.baseUrl = gatewayBaseUrl;
+          changed = true;
+        }
+        if (elevenlabs && denchApiKey && elevenlabs.apiKey !== denchApiKey) {
+          elevenlabs.apiKey = denchApiKey;
+          changed = true;
+        }
+      } else {
+        changed = disableElevenLabsOverride(config) || changed;
+      }
+
+      const nextMetadata: DenchIntegrationMetadata = {
+        ...metadata,
+        schemaVersion: 1,
+      };
+      if (enabled) {
+        nextMetadata.elevenlabs = {};
+      } else {
+        delete nextMetadata.elevenlabs;
+      }
+      metadata = nextMetadata;
+      break;
+    }
+  }
+
+  const metadataChanged = JSON.stringify(metadata) !== JSON.stringify(params.metadata);
+  return {
+    changed: changed || metadataChanged,
+    error: null,
+    metadata,
   };
 }
 
@@ -1088,112 +1206,110 @@ export function repairOlderIntegrationsProfile(): IntegrationsRepairResult {
 export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
   const metadata = readIntegrationsMetadata();
-  const blocked = rejectLockedEnable(config, enabled);
-  if (blocked) {
-    return blocked;
-  }
-  let changed = false;
-
-  if (enabled) {
-    changed = ensurePluginRegistration(config, EXA_PLUGIN_ID) || changed;
-    changed = setPluginEnabled(config, EXA_PLUGIN_ID, true) || changed;
-    changed = setWebSearchPolicy(config, { enabled: false, denied: true }) || changed;
-  } else {
-    changed = setPluginEnabled(config, EXA_PLUGIN_ID, false) || changed;
-    changed = setWebSearchPolicy(config, { enabled: true, denied: false }) || changed;
-  }
-
-  const nextMetadata: DenchIntegrationMetadata = {
-    ...metadata,
-    schemaVersion: 1,
-    exa: {
-      ownsSearch: enabled,
-      fallbackProvider: DEFAULT_FALLBACK_PROVIDER,
-    },
-  };
-  if (JSON.stringify(nextMetadata) !== JSON.stringify(metadata)) {
-    writeIntegrationsMetadata(nextMetadata);
-    changed = true;
+  const result = applyDenchIntegrationToggleDraft({
+    config,
+    metadata,
+    id: "exa",
+    enabled,
+  });
+  if (result.error) {
+    return {
+      state: getIntegrationsState(),
+      changed: result.changed,
+      error: result.error,
+    };
   }
 
-  if (changed) {
+  if (JSON.stringify(result.metadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(result.metadata);
+  }
+  if (result.changed) {
     writeOpenClawConfigForIntegrations(config);
   }
 
   return {
     state: getIntegrationsState(),
-    changed,
+    changed: result.changed,
     error: null,
   };
 }
 
 export function setApolloIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
-  const blocked = rejectLockedEnable(config, enabled);
-  if (blocked) {
-    return blocked;
+  const metadata = readIntegrationsMetadata();
+  const result = applyDenchIntegrationToggleDraft({
+    config,
+    metadata,
+    id: "apollo",
+    enabled,
+  });
+  if (result.error) {
+    return {
+      state: getIntegrationsState(),
+      changed: result.changed,
+      error: result.error,
+    };
   }
-  let changed = false;
 
-  if (enabled) {
-    changed = ensurePluginRegistration(config, APOLLO_PLUGIN_ID) || changed;
-    changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, true) || changed;
-  } else {
-    changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, false) || changed;
+  if (JSON.stringify(result.metadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(result.metadata);
   }
-
-  if (changed) {
+  if (result.changed) {
     writeOpenClawConfigForIntegrations(config);
   }
 
   return {
     state: getIntegrationsState(),
-    changed,
+    changed: result.changed,
     error: null,
   };
 }
 
 export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();
-  const blocked = rejectLockedEnable(config, enabled);
-  if (blocked) {
-    return blocked;
-  }
-  const tts = ensureTtsConfig(config);
-  const gatewayBaseUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
-  const denchApiKey = resolveDenchApiKey(config);
-  let changed = false;
-
-  if (enabled) {
-    if (tts.provider !== "elevenlabs") {
-      tts.provider = "elevenlabs";
-      changed = true;
-    }
-    const hadExistingConfig = Boolean(readTtsElevenLabsConfig(config));
-    const preferredShape = hadExistingConfig ? resolveTtsElevenLabsConfigShape(tts) : "providers";
-    const elevenlabs = ensureTtsElevenLabsConfig(config, preferredShape);
-    if (!hadExistingConfig) {
-      changed = true;
-    }
-    if (elevenlabs && elevenlabs.baseUrl !== gatewayBaseUrl) {
-      elevenlabs.baseUrl = gatewayBaseUrl;
-      changed = true;
-    }
-    if (elevenlabs && denchApiKey && elevenlabs.apiKey !== denchApiKey) {
-      elevenlabs.apiKey = denchApiKey;
-      changed = true;
-    }
-  } else {
-    changed = disableElevenLabsOverride(config) || changed;
+  const metadata = readIntegrationsMetadata();
+  const result = applyDenchIntegrationToggleDraft({
+    config,
+    metadata,
+    id: "elevenlabs",
+    enabled,
+  });
+  if (result.error) {
+    return {
+      state: getIntegrationsState(),
+      changed: result.changed,
+      error: result.error,
+    };
   }
 
-  if (changed) {
+  if (JSON.stringify(result.metadata) !== JSON.stringify(metadata)) {
+    writeIntegrationsMetadata(result.metadata);
+  }
+  if (result.changed) {
     writeOpenClawConfigForIntegrations(config);
   }
 
   return {
     state: getIntegrationsState(),
-    changed,
+    changed: result.changed,
     error: null,
+  };
+}
+
+/**
+ * Resolve the Dench Cloud API key and gateway URL for server-side enrichment calls.
+ */
+export function resolveDenchGatewayCredentials(): {
+  apiKey: string | null;
+  gatewayUrl: string | null;
+  enrichmentMaxModeEnabled: boolean;
+} {
+  const config = readOpenClawConfigForIntegrations();
+  const models = asRecord(config.models);
+  const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
+  return {
+    apiKey: resolveDenchApiKey(config),
+    gatewayUrl: resolveGatewayBaseUrl(config),
+    enrichmentMaxModeEnabled: readBoolean(provider?.enrichmentMaxMode) === true,
   };
 }

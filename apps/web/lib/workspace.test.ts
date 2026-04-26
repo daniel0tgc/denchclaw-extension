@@ -986,10 +986,11 @@ describe("workspace utilities", () => {
     it("resolves absolute paths outside the workspace without re-rooting them", async () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { resolveFilesystemPath, mockExists } = await importWorkspace();
-      mockExists.mockImplementation((p) => [WS_DIR, "/tmp/note.md"].includes(String(p)));
+      const absPath = "/home/testuser/notes/note.md";
+      mockExists.mockImplementation((p) => [WS_DIR, absPath].includes(String(p)));
 
-      expect(resolveFilesystemPath("/tmp/note.md")).toEqual({
-        absolutePath: "/tmp/note.md",
+      expect(resolveFilesystemPath(absPath)).toEqual({
+        absolutePath: absPath,
         kind: "absolute",
         withinWorkspace: false,
         workspaceRelativePath: null,
@@ -1014,7 +1015,7 @@ describe("workspace utilities", () => {
       process.env.OPENCLAW_WORKSPACE = WS_DIR;
       const { resolveFilesystemPath, isProtectedSystemPath, mockExists } = await importWorkspace();
       const workspaceSystemFile = join(WS_DIR, ".object.yaml");
-      const externalSystemFile = "/tmp/.object.yaml";
+      const externalSystemFile = "/home/testuser/.object.yaml";
       mockExists.mockImplementation((p) => [WS_DIR, workspaceSystemFile, externalSystemFile].includes(String(p)));
 
       expect(isProtectedSystemPath(resolveFilesystemPath(workspaceSystemFile))).toBe(true);

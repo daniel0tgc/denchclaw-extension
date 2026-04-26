@@ -2541,6 +2541,7 @@ function WorkspacePageInner() {
                   headerLeftSlot={headerLeftSlot}
                   headerRightSlot={headerRightSlot}
                   onRuntimeStateChange={(runtime) => handleChatRuntimeStateChange(tab.id, runtime)}
+                  onOpenCloudSettings={() => handleNavigate("cloud")}
                   gatewaySessionKey={isGateway ? tab.sessionKey : undefined}
                   gatewaySessionId={isGateway ? tab.sessionId : undefined}
                   gatewayChannel={isGateway ? tab.channel : undefined}

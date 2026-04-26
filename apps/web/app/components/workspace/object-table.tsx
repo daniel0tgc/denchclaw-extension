@@ -12,7 +12,8 @@ import { ActionButton, useActionStates, type ActionConfig } from "./action-butto
 import { ConfirmDialog } from "./confirm-dialog";
 import { BulkActionBar } from "./bulk-action-bar";
 import { useToast } from "./toast";
-import { ColumnHeaderMenu, InlineRenameInput, AddColumnPopover, FieldTypeIcon } from "./column-header-menu";
+import { ColumnHeaderMenu, InlineRenameInput, AddColumnPopover, FieldTypeIcon, type EnrichmentStartPayload } from "./column-header-menu";
+import { parseEnrichmentMeta } from "@/lib/enrichment-columns";
 import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
 import { LinkPreviewWrapper } from "./workspace-link";
@@ -722,6 +723,15 @@ function parseActionConfig(defaultValue: string | null | undefined): ActionConfi
 	return [];
 }
 
+type EnrichmentProgress = {
+	fieldId: string;
+	fieldName: string;
+	current: number;
+	total: number;
+	enriched: number;
+	errors: number;
+};
+
 export function ObjectTable({
 	objectName,
 	fields,
@@ -758,6 +768,122 @@ export function ObjectTable({
 	const showToast = useToast();
 
 	const [renamingFieldId, setRenamingFieldId] = useState<string | null>(null);
+	const [openMenuFieldId, setOpenMenuFieldId] = useState<string | null>(null);
+
+	// Enrichment state
+	const [enrichmentProgress, setEnrichmentProgress] = useState<EnrichmentProgress | null>(null);
+	const [enrichedCellIds, setEnrichedCellIds] = useState<Set<string>>(new Set());
+	const enrichAbortRef = useRef<AbortController | null>(null);
+
+	const startEnrichment = useCallback((payload: EnrichmentStartPayload) => {
+		if (enrichAbortRef.current) enrichAbortRef.current.abort();
+		const ac = new AbortController();
+		enrichAbortRef.current = ac;
+
+		setEnrichmentProgress({
+			fieldId: payload.fieldId,
+			fieldName: payload.fieldName,
+			current: 0,
+			total: 0,
+			enriched: 0,
+			errors: 0,
+		});
+		setEnrichedCellIds(new Set());
+
+		(async () => {
+			try {
+				const res = await fetch(
+					`/api/workspace/objects/${encodeURIComponent(objectName)}/enrich`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							fieldId: payload.fieldId,
+							apolloPath: payload.apolloPath,
+							category: payload.category,
+							inputFieldName: payload.inputFieldName,
+							scope: payload.scope,
+						}),
+						signal: ac.signal,
+					},
+				);
+
+				if (!res.ok || !res.body) {
+					setEnrichmentProgress(null);
+					return;
+				}
+
+				const reader = res.body.getReader();
+				const decoder = new TextDecoder();
+				let buf = "";
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					buf += decoder.decode(value, { stream: true });
+
+					const lines = buf.split("\n");
+					buf = lines.pop() ?? "";
+
+					for (const line of lines) {
+						if (!line.startsWith("data: ")) continue;
+						try {
+							const evt = JSON.parse(line.slice(6));
+							if (evt.type === "progress") {
+								setEnrichmentProgress((p) => p ? {
+									...p,
+									current: evt.current,
+									total: evt.total,
+									enriched: p.enriched + 1,
+								} : p);
+								setLocalEntries((prev) =>
+									prev.map((e) => {
+										const eid = String(e.entry_id ?? "");
+										if (eid !== evt.entryId) return e;
+										return { ...e, [payload.fieldName]: evt.value };
+									}),
+								);
+								setEnrichedCellIds((prev) => {
+									const next = new Set(prev);
+									next.add(evt.entryId);
+									return next;
+								});
+							} else if (evt.type === "error") {
+								setEnrichmentProgress((p) => p ? {
+									...p,
+									current: evt.current,
+									total: evt.total,
+									errors: p.errors + 1,
+								} : p);
+							} else if (evt.type === "done") {
+								setEnrichmentProgress(null);
+								setTimeout(() => setEnrichedCellIds(new Set()), 3000);
+								onRefresh?.();
+							}
+						} catch { /* malformed SSE line */ }
+					}
+				}
+			} catch (err) {
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				setEnrichmentProgress(null);
+			}
+		})();
+	}, [objectName, onRefresh]);
+
+	const handleReEnrich = useCallback((fieldId: string, scope: "all" | "empty" | number) => {
+		const field = fields.find((f) => f.id === fieldId);
+		if (!field) return;
+		const meta = parseEnrichmentMeta(field.default_value);
+		if (!meta) return;
+		startEnrichment({
+			fieldId,
+			fieldName: field.name,
+			apolloPath: meta.enrichment.apolloPath,
+			category: meta.enrichment.category,
+			inputFieldName: meta.enrichment.inputFieldName,
+			scope,
+		});
+	}, [fields, startEnrichment]);
 
 	const dataFields = useMemo(() => fields.filter((f) => f.type !== "action"), [fields]);
 	const actionFields = useMemo(() => fields.filter((f) => f.type === "action"), [fields]);
@@ -911,13 +1037,27 @@ export function ObjectTable({
 							/>
 						);
 					}
+					const isEnriching = enrichmentProgress?.fieldId === field.id;
 					return (
-						<span className="flex items-center gap-1.5 w-full" style={{ color: "var(--color-text-muted)" }}>
+						<span
+							className="flex items-center gap-1.5 w-full"
+							style={{ color: "var(--color-text-muted)" }}
+							onClick={(e) => {
+								e.stopPropagation();
+								setOpenMenuFieldId((prev) => prev === field.id ? null : field.id);
+							}}
+						>
 							<FieldTypeIcon type={field.type} size={12} className="shrink-0 opacity-50" />
 							<span className="truncate">{field.name}</span>
 							{field.type === "relation" && field.related_object_name && (
 								<span className="text-[9px] font-normal normal-case tracking-normal opacity-60 shrink-0">
 									({displayObjectName(field.related_object_name)})
+								</span>
+							)}
+							{isEnriching && enrichmentProgress && (
+								<span className="flex items-center gap-1 text-[10px] font-medium shrink-0 animate-pulse" style={{ color: "var(--color-warning, #f59e0b)" }}>
+									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+									{enrichmentProgress.current}/{enrichmentProgress.total}
 								</span>
 							)}
 							<ColumnHeaderMenu
@@ -931,6 +1071,9 @@ export function ObjectTable({
 								canMoveRight={fieldIdx < dataFields.length - 1}
 								onMoveLeft={() => handleMoveColumn(field.id, "left")}
 								onMoveRight={() => handleMoveColumn(field.id, "right")}
+								onReEnrich={(scope) => handleReEnrich(field.id, scope)}
+								open={openMenuFieldId === field.id}
+								onOpenChange={(isOpen) => setOpenMenuFieldId(isOpen ? field.id : null)}
 							/>
 						</span>
 					);
@@ -938,8 +1081,8 @@ export function ObjectTable({
 				cell: (info: CellContext<EntryRow, unknown>) => {
 					const eid = info.row.original.entry_id;
 					const entryId = String(eid != null && typeof eid === "object" ? JSON.stringify(eid) : (eid ?? ""));
+					const justEnriched = enrichedCellIds.has(entryId) && enrichmentProgress?.fieldId === field.id;
 
-					// First column (sticky): bold link that opens the entry detail modal.
 					if (fieldIdx === 0 && onEntryClick) {
 						return (
 							<FirstColumnCell
@@ -950,7 +1093,7 @@ export function ObjectTable({
 						);
 					}
 
-					return (
+					const cellNode = (
 						<EditableCell
 							value={info.getValue()}
 							entryId={entryId}
@@ -966,6 +1109,11 @@ export function ObjectTable({
 							showUrlFavicon={fieldIdx !== 0}
 						/>
 					);
+
+					if (justEnriched) {
+						return <div className="enrich-fade-in enrich-glow -mx-3 -my-2 px-3 py-2">{cellNode}</div>;
+					}
+					return cellNode;
 				},
 				size: field.type === "richtext" ? 300 : field.type === "relation" || field.type === "tags" ? 220 : 200,
 				enableSorting: true,
@@ -1083,24 +1231,12 @@ export function ObjectTable({
 			});
 		}
 
-		cols.push({
-			id: "__add_column",
-			header: () => (
-				<AddColumnPopover objectName={objectName} onCreated={() => onRefresh?.()} />
-			),
-			cell: () => null,
-			size: 44,
-			minSize: 44,
-			enableSorting: false,
-			enableHiding: false,
-			enableResizing: false,
-		});
 
 		return cols;
 		// `onEntryClick` and `updateLocalEntryField` are read inside the `cell`
 		// closures and were missing from the original deps (stale-closure bug);
 		// they're included now.
-	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn]);
+	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn, enrichmentProgress, handleReEnrich, enrichedCellIds, openMenuFieldId]);
 
 	// Add entry handler — delegates to parent when provided, otherwise opens local modal.
 	const handleAdd = useCallback(() => {
@@ -1215,6 +1351,31 @@ export function ObjectTable({
 
 	const selectedCount = Object.keys(rowSelection).filter((k) => rowSelection[k]).length;
 
+	// Keep deps minimal — AddColumnPopover fetches enrichment status
+	// internally. Use refs for fields/startEnrichment so they don't
+	// cause a new element (which remounts the popover and resets its
+	// open state).
+	const fieldsRef = useRef(fields);
+	fieldsRef.current = fields;
+	const startEnrichmentRef = useRef(startEnrichment);
+	startEnrichmentRef.current = startEnrichment;
+
+	const stableOnCreated = useCallback(() => onRefresh?.(), [onRefresh]);
+	const stableOnEnrichmentStart = useCallback(
+		(p: EnrichmentStartPayload) => startEnrichmentRef.current(p),
+		[],
+	);
+
+	const rowActionsHeader = useMemo(() => (
+		<AddColumnPopover
+			objectName={objectName}
+			onCreated={stableOnCreated}
+			fields={fieldsRef.current}
+			onEnrichmentStart={stableOnEnrichmentStart}
+		/>
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	), [objectName, stableOnCreated, stableOnEnrichmentStart]);
+
 	return (
 	<>
 		<DataTable
@@ -1232,6 +1393,7 @@ export function ObjectTable({
 			onAdd={handleAdd}
 			addButtonLabel="+ Add"
 			rowActions={getRowActions}
+			rowActionsHeader={rowActionsHeader}
 			stickyFirstColumn
 			stickyFirstColumnValue={stickyFirstColumnValue}
 			onStickyFirstColumnChange={onStickyFirstColumnChange}
@@ -1247,6 +1409,7 @@ export function ObjectTable({
 			globalFilter={globalFilter}
 			onGlobalFilterChange={onGlobalFilterChange}
 			getFirstDataColumnFaviconUrl={getRowFaviconUrl}
+			disableHeaderClickSort
 		/>
 
 		<BulkActionBar

@@ -269,4 +269,26 @@ describe("ChatMessage", () => {
       screen.getByText(/posthog \/ POSTHOG_LIST_ALL_PROJECTS_ACROSS_ORGANIZATIONS/),
     ).toBeInTheDocument();
   });
+
+  it("opens and closes a preview for sent image attachments", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatMessage
+        message={{
+          id: "user-attachment-1",
+          role: "user",
+          parts: [{ type: "text", text: "[Attached files: assets/screenshot.png]" }],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open image screenshot.png" }));
+
+    expect(screen.getByRole("dialog", { name: "Image preview screenshot.png" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close image preview" }));
+
+    expect(screen.queryByRole("dialog", { name: "Image preview screenshot.png" })).not.toBeInTheDocument();
+  });
 });

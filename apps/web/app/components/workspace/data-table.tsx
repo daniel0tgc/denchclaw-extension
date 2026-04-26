@@ -86,6 +86,7 @@ export type DataTableProps<TData, TValue> = {
 	onRowClick?: (row: TData, index: number) => void;
 	getFirstDataColumnFaviconUrl?: (row: Row<TData>, table: Table<TData>) => string | null | undefined;
 	rowActions?: (row: TData) => RowAction<TData>[];
+	rowActionsHeader?: React.ReactNode;
 	// toolbar
 	toolbarExtra?: React.ReactNode;
 	title?: string;
@@ -105,6 +106,8 @@ export type DataTableProps<TData, TValue> = {
 	};
 	// server-side search callback (replaces client-side fuzzy filter)
 	onServerSearch?: (query: string) => void;
+	/** When true, column header click is disabled (no sort-on-click). */
+	disableHeaderClickSort?: boolean;
 	// When true, the built-in toolbar (search, columns, refresh, +Add) is not rendered.
 	// The parent is expected to provide equivalent controls externally.
 	hideToolbar?: boolean;
@@ -211,6 +214,7 @@ export function DataTable<TData, TValue>({
 	onRowClick,
 	getFirstDataColumnFaviconUrl,
 	rowActions,
+	rowActionsHeader,
 	toolbarExtra,
 	title,
 	titleIcon,
@@ -219,6 +223,7 @@ export function DataTable<TData, TValue>({
 	getRowId,
 	serverPagination,
 	onServerSearch,
+	disableHeaderClickSort = false,
 	hideToolbar = false,
 	globalFilter: globalFilterProp,
 	onGlobalFilterChange,
@@ -424,23 +429,36 @@ export function DataTable<TData, TValue>({
 			}
 		: null, [enableRowSelection]);
 
-	// Build actions column. Memoized for stable identity across renders.
-	const actionsColumn = useMemo<ColumnDef<TData> | null>(() => rowActions
-		? {
-				id: "actions",
-				header: () => null,
-				cell: ({ row }) => (
-					<RowActionsMenu
-						row={row.original}
-						actions={rowActions(row.original)}
-					/>
-				),
-				size: 48,
-				minSize: 48,
-				enableSorting: false,
-				enableHiding: false,
-			}
-		: null, [rowActions]);
+	// Build actions column — use refs so the column definition (and
+	// critically its `header` function reference) stays stable across
+	// re-renders.  When the function reference changes, TanStack's
+	// flexRender treats it as a new component and remounts the header,
+	// destroying popover state.
+	const rowActionsRef = useRef(rowActions);
+	rowActionsRef.current = rowActions;
+	const rowActionsHeaderRef = useRef(rowActionsHeader);
+	rowActionsHeaderRef.current = rowActionsHeader;
+
+	const hasRowActions = !!rowActions;
+	const actionsColumn: ColumnDef<TData> | null = useMemo(() => {
+		if (!hasRowActions) return null;
+		return {
+					id: "actions",
+					header: () => rowActionsHeaderRef.current ?? null,
+					cell: ({ row }: { row: { original: TData } }) => (
+						<RowActionsMenu
+							row={row.original}
+							actions={rowActionsRef.current?.(row.original) ?? []}
+						/>
+					),
+					size: 48,
+					minSize: 48,
+					enableSorting: false,
+					enableHiding: false,
+					enableResizing: false,
+				};
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [hasRowActions]);
 
 	const allColumns = useMemo(() => {
 		const cols: ColumnDef<TData, TValue>[] = [];
@@ -734,6 +752,7 @@ export function DataTable<TData, TValue>({
 												const isSelectCol = header.id === "select";
 												const isActionsCol = header.id === "actions";
 												const isAddCol = header.id === "__add_column";
+												const isRightSticky = isActionsCol || isAddCol;
 												const canSort = header.column.getCanSort();
 												const isSorted = header.column.getIsSorted();
 												const isLastCol = colIdx === headerGroup.headers.length - 1;
@@ -742,12 +761,13 @@ export function DataTable<TData, TValue>({
 													background: "var(--color-surface)",
 													position: "sticky",
 													top: 0,
-													zIndex: isSticky || isSelectCol ? 31 : 30,
+													zIndex: isRightSticky ? 32 : isSticky || isSelectCol ? 31 : 30,
 													...(isSticky ? {
 														left: enableRowSelection ? 40 : 0,
 														boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.15), 2px 0 4px -1px rgba(0,0,0,0.08)" : "none",
 													} : {}),
 													...(isSelectCol ? { left: 0, position: "sticky", zIndex: 31, width: 40 } : {}),
+											...(isRightSticky ? { right: 0, position: "sticky", zIndex: 32 } : {}),
 													width: `calc(var(--header-${header.id}-size) * 1px)`,
 												};
 
@@ -795,7 +815,7 @@ export function DataTable<TData, TValue>({
 															<>
 																<span
 																	className={innerClassName}
-																	onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+																	onClick={canSort && !disableHeaderClickSort ? header.column.getToggleSortingHandler() : undefined}
 																	style={{ color: "var(--color-text-muted)", cursor: "grab" }}
 																	{...dragListeners}
 																>
@@ -823,7 +843,7 @@ export function DataTable<TData, TValue>({
 												>
 													<span
 														className={innerClassName}
-														onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+														onClick={canSort && !disableHeaderClickSort ? header.column.getToggleSortingHandler() : undefined}
 														style={{ color: "var(--color-text-muted)" }}
 													>
 														{content}
@@ -1000,6 +1020,9 @@ function TableRowInner({
 				const isFirstData = colIdx === firstDataIdx;
 				const isSticky = stickyFirstColumn && isFirstData;
 				const isSelectCol = cell.column.id === "select";
+				const isActionsCol = cell.column.id === "actions";
+				const isAddCol = cell.column.id === "__add_column";
+				const isRightSticky = isActionsCol || isAddCol;
 				const isLastCol = colIdx === visibleCells.length - 1;
 				const cellFaviconUrl = isFirstData && !isSelectCol ? firstColumnFaviconUrl : undefined;
 
@@ -1021,6 +1044,14 @@ function TableRowInner({
 								zIndex: 2,
 								background: stickyBg,
 								width: 40,
+							}
+						: {}),
+					...(isRightSticky
+						? {
+								position: "sticky" as const,
+								right: 0,
+								zIndex: 2,
+								background: stickyBg,
 							}
 						: {}),
 				};

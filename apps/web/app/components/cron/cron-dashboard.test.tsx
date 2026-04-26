@@ -196,4 +196,31 @@ describe("CronDashboard calendar", () => {
     expect(screen.queryByTitle("Scheduled: Personal CRM sync (morning) at 08:00 AM")).not.toBeInTheDocument();
     expect(screen.getAllByTitle("ok: Workspace GitHub Sync at 08:00 AM").length).toBeGreaterThan(0);
   });
+
+  it("infers hours from intervalMs when heartbeat.every is missing", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/cron/jobs") {
+        return Promise.resolve(jsonResponse({
+          ...jobsResponse,
+          heartbeat: { intervalMs: 7_200_000, nextDueEstimateMs: null },
+        }));
+      }
+      const jobMatch = url.match(/^\/api\/cron\/jobs\/([^/]+)\/runs\?limit=50$/);
+      if (jobMatch) {
+        const jobId = decodeURIComponent(jobMatch[1] ?? "");
+        return Promise.resolve(jsonResponse({ entries: runsByJobId[jobId] ?? [] }));
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<CronDashboard onSelectJob={vi.fn()} />);
+
+    const valueInput = await screen.findByLabelText("Heartbeat interval value");
+    await waitFor(() => {
+      expect(valueInput).toHaveValue(2);
+    });
+    expect(screen.getByRole("button", { name: "Unit: hr" })).toHaveAttribute("aria-pressed", "true");
+  });
 });

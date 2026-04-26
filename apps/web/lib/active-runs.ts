@@ -423,7 +423,11 @@ export function subscribeToRun(
  * Reactivate a completed subscribe-only run for a follow-up message.
  * Resets status to "running" and restarts the subscribe stream.
  */
-export function reactivateSubscribeRun(sessionKey: string, message?: string): boolean {
+export function reactivateSubscribeRun(
+	sessionKey: string,
+	message?: string,
+	imageAttachments?: ImageAttachment[],
+): boolean {
 	const run = activeRuns.get(sessionKey);
 	if (!run?.isSubscribeOnly) {return false;}
 	if (run.status === "running") {return true;}
@@ -445,7 +449,7 @@ export function reactivateSubscribeRun(sessionKey: string, message?: string): bo
 	// RPC streams ALL events (including tool events) on the same connection.
 	// In passive subscribe mode, tool events are not broadcast by the gateway.
 	const newChild = message
-		? spawnAgentStartForSession(message, sessionKey)
+		? spawnAgentStartForSession(message, sessionKey, imageAttachments)
 		: spawnAgentSubscribeProcess(sessionKey, run.lastGlobalSeq);
 	run._subscribeProcess = newChild;
 	run.childProcess = newChild;

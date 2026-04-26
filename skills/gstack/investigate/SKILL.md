@@ -25,9 +25,11 @@ Gather context before forming any hypothesis.
 2. **Read the code:** Trace the code path from symptom to potential cause.
 
 3. **Check recent changes:**
+
    ```bash
    git log --oneline -20 -- <affected-files>
    ```
+
    Was this working before? What changed? A regression means the root cause is in the diff.
 
 4. **Reproduce:** Can you trigger the bug deterministically? If not, gather more evidence.
@@ -40,14 +42,14 @@ Output: **"Root cause hypothesis: ..."** — a specific, testable claim about wh
 
 Check if this bug matches a known pattern:
 
-| Pattern | Signature | Where to look |
-|---------|-----------|---------------|
-| Race condition | Intermittent, timing-dependent | Concurrent access to shared state |
-| Nil/null propagation | TypeError, undefined is not a function | Missing guards on optional values |
-| State corruption | Inconsistent data, partial updates | Transactions, callbacks, hooks |
-| Integration failure | Timeout, unexpected response | External API calls, service boundaries |
-| Configuration drift | Works locally, fails in staging | Env vars, feature flags, DB state |
-| Stale cache | Shows old data, fixes on cache clear | Redis, CDN, browser cache |
+| Pattern              | Signature                              | Where to look                          |
+| -------------------- | -------------------------------------- | -------------------------------------- |
+| Race condition       | Intermittent, timing-dependent         | Concurrent access to shared state      |
+| Nil/null propagation | TypeError, undefined is not a function | Missing guards on optional values      |
+| State corruption     | Inconsistent data, partial updates     | Transactions, callbacks, hooks         |
+| Integration failure  | Timeout, unexpected response           | External API calls, service boundaries |
+| Configuration drift  | Works locally, fails in staging        | Env vars, feature flags, DB state      |
+| Stale cache          | Shows old data, fixes on cache clear   | Redis, CDN, browser cache              |
 
 Also check TODOS.md for related known issues and `git log` for prior fixes in the same area — **recurring bugs in the same files are an architectural smell**.
 
@@ -67,6 +69,7 @@ Before writing ANY fix, verify your hypothesis.
    - C) Add logging and catch it next time
 
 **Red flags — slow down:**
+
 - "Quick fix for now" — there is no "for now." Fix it right or escalate.
 - Proposing a fix before tracing data flow — you're guessing.
 - Each fix reveals a new problem elsewhere — wrong layer, not wrong code.

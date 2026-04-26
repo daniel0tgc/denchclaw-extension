@@ -46,17 +46,17 @@ function validateContext(value: unknown): ComposioSearchContext | null {
   const accountRequired = record.account_required;
   const issuedAt = record.issued_at;
   if (
-    version !== 1
-    || (mode !== "gateway_tool_router" && mode !== "local_catalog_mcp")
-    || typeof app !== "string"
-    || app.trim().length === 0
-    || typeof toolName !== "string"
-    || toolName.trim().length === 0
-    || (sessionId !== undefined && (typeof sessionId !== "string" || sessionId.trim().length === 0))
-    || (account !== undefined && (typeof account !== "string" || account.trim().length === 0))
-    || (accountRequired !== undefined && typeof accountRequired !== "boolean")
-    || typeof issuedAt !== "string"
-    || issuedAt.trim().length === 0
+    version !== 1 ||
+    (mode !== "gateway_tool_router" && mode !== "local_catalog_mcp") ||
+    typeof app !== "string" ||
+    app.trim().length === 0 ||
+    typeof toolName !== "string" ||
+    toolName.trim().length === 0 ||
+    (sessionId !== undefined && (typeof sessionId !== "string" || sessionId.trim().length === 0)) ||
+    (account !== undefined && (typeof account !== "string" || account.trim().length === 0)) ||
+    (accountRequired !== undefined && typeof accountRequired !== "boolean") ||
+    typeof issuedAt !== "string" ||
+    issuedAt.trim().length === 0
   ) {
     return null;
   }
@@ -86,14 +86,9 @@ export function createComposioSearchContextSecret(params: {
   return seed || "denchclaw-composio-search";
 }
 
-export function signComposioSearchContext(
-  context: ComposioSearchContext,
-  secret: string,
-): string {
+export function signComposioSearchContext(context: ComposioSearchContext, secret: string): string {
   const payload = JSON.stringify(context);
-  const signature = createHmac("sha256", secret)
-    .update(payload)
-    .digest("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
   return `${toBase64Url(payload)}.${signature}`;
 }
 
@@ -113,16 +108,11 @@ export function verifyComposioSearchContext(
     return null;
   }
 
-  const expectedSignature = createHmac("sha256", secret)
-    .update(payload)
-    .digest("base64url");
+  const expectedSignature = createHmac("sha256", secret).update(payload).digest("base64url");
 
   const actualBytes = Buffer.from(encodedSignature, "utf-8");
   const expectedBytes = Buffer.from(expectedSignature, "utf-8");
-  if (
-    actualBytes.length !== expectedBytes.length
-    || !timingSafeEqual(actualBytes, expectedBytes)
-  ) {
+  if (actualBytes.length !== expectedBytes.length || !timingSafeEqual(actualBytes, expectedBytes)) {
     return null;
   }
 

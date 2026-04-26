@@ -116,7 +116,7 @@ export function CronDashboard({
   onCalendarDateChange?: (date: string | null) => void;
 }) {
   const [jobs, setJobs] = useState<CronJob[]>([]);
-  const [heartbeat, setHeartbeat] = useState<HeartbeatInfo>({ intervalMs: 30 * 60_000, nextDueEstimateMs: null });
+  const [heartbeat, setHeartbeat] = useState<HeartbeatInfo>({ intervalMs: 24 * 60 * 60_000, nextDueEstimateMs: null });
   const [cronStatus, setCronStatus] = useState<CronStatusInfo>({ enabled: false, nextWakeAtMs: null });
   const [loading, setLoading] = useState(true);
   const [allRuns, setAllRuns] = useState<CronRunLogEntry[]>([]);
@@ -126,7 +126,7 @@ export function CronDashboard({
       const res = await fetch("/api/cron/jobs");
       const data: CronJobsResponse = await res.json();
       setJobs(data.jobs ?? []);
-      setHeartbeat(data.heartbeat ?? { intervalMs: 30 * 60_000, nextDueEstimateMs: null });
+      setHeartbeat(data.heartbeat ?? { intervalMs: 24 * 60 * 60_000, nextDueEstimateMs: null });
       setCronStatus(data.cronStatus ?? { enabled: false, nextWakeAtMs: null });
 
       const jobIds = (data.jobs ?? []).map((j) => j.id);

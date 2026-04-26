@@ -7,7 +7,5 @@ const result = flattenPnpmStandaloneDeps(STANDALONE);
 if (result.skipped) {
   console.log("flatten-standalone-deps: no pnpm store found, skipping.");
 } else {
-  console.log(
-    `flatten-standalone-deps: ${result.copied} packages → standalone app node_modules`,
-  );
+  console.log(`flatten-standalone-deps: ${result.copied} packages → standalone app node_modules`);
 }

@@ -70,7 +70,7 @@ const jobsResponse = {
       },
     },
   ],
-  heartbeat: { intervalMs: 30 * 60_000, nextDueEstimateMs: null },
+  heartbeat: { intervalMs: 24 * 60 * 60_000, nextDueEstimateMs: null },
   cronStatus: { enabled: true, nextWakeAtMs: ms("2026-03-21T18:00:00-07:00") },
 };
 

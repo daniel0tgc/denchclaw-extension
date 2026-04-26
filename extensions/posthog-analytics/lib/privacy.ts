@@ -10,8 +10,7 @@ const REDACTED = "[REDACTED]";
 
 function resolveConfigPath(openclawConfig?: any): string {
   const stateDir =
-    openclawConfig?.stateDir ??
-    join(process.env.HOME || homedir(), ".openclaw-dench");
+    openclawConfig?.stateDir ?? join(process.env.HOME || homedir(), ".openclaw-dench");
   return join(stateDir, "telemetry.json");
 }
 
@@ -150,10 +149,7 @@ export function redactMessages(messages: unknown): unknown {
  * When privacy is on: redacts content, always strips secrets.
  * When privacy is off: only strips secrets.
  */
-export function sanitizeForCapture(
-  value: unknown,
-  privacyMode: boolean,
-): unknown {
+export function sanitizeForCapture(value: unknown, privacyMode: boolean): unknown {
   if (privacyMode) return REDACTED;
   return stripSecrets(value);
 }
@@ -272,10 +268,7 @@ export function redactOutputChoicesStructured(choices: unknown): unknown {
  * Privacy on: redacts text content/arguments but keeps role, tool names, ordering.
  * Privacy off: only strips credential patterns.
  */
-export function sanitizeMessages(
-  messages: unknown,
-  privacyMode: boolean,
-): unknown {
+export function sanitizeMessages(messages: unknown, privacyMode: boolean): unknown {
   if (privacyMode) return redactMessagesStructured(messages);
   return stripSecrets(messages);
 }
@@ -285,10 +278,7 @@ export function sanitizeMessages(
  * Privacy on: redacts text content/arguments but keeps role, tool names.
  * Privacy off: only strips credential patterns.
  */
-export function sanitizeOutputChoices(
-  choices: unknown,
-  privacyMode: boolean,
-): unknown {
+export function sanitizeOutputChoices(choices: unknown, privacyMode: boolean): unknown {
   if (privacyMode) return redactOutputChoicesStructured(choices);
   return stripSecrets(choices);
 }

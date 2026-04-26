@@ -45,6 +45,7 @@ cargo test        # Rust
 ```
 
 **All tests must pass.** If tests fail:
+
 1. Read the failure output
 2. Fix the failing test (if it's a real bug, fix the bug)
 3. Re-run tests

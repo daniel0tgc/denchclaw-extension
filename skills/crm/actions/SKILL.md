@@ -100,21 +100,21 @@ Each action field's `default_value` is a JSON object with an `actions` array:
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | yes | Unique identifier for this action |
-| `label` | string | yes | Button text displayed in idle state |
-| `icon` | string | no | Icon name (decorative, not rendered from icon set yet) |
-| `variant` | string | no | `"default"` \| `"primary"` \| `"destructive"` \| `"success"` \| `"warning"` |
-| `scriptPath` | string | conditional | Path to script file relative to object directory |
-| `script` | string | conditional | Inline JavaScript code (for simple actions) |
-| `runtime` | string | no | `"auto"` \| `"inline"` \| `"node"` \| `"python"` \| `"bash"` \| `"ruby"` |
-| `confirmMessage` | string | no | If set, shows confirmation dialog before running |
-| `loadingLabel` | string | no | Text shown while script is running |
-| `successLabel` | string | no | Text shown on success |
-| `errorLabel` | string | no | Text shown on failure |
-| `autoResetMs` | number | no | Milliseconds before button resets to idle (default: 3000) |
-| `timeout` | number | no | Milliseconds before killing the script (default: 60000) |
+| Field            | Type   | Required    | Description                                                                 |
+| ---------------- | ------ | ----------- | --------------------------------------------------------------------------- |
+| `id`             | string | yes         | Unique identifier for this action                                           |
+| `label`          | string | yes         | Button text displayed in idle state                                         |
+| `icon`           | string | no          | Icon name (decorative, not rendered from icon set yet)                      |
+| `variant`        | string | no          | `"default"` \| `"primary"` \| `"destructive"` \| `"success"` \| `"warning"` |
+| `scriptPath`     | string | conditional | Path to script file relative to object directory                            |
+| `script`         | string | conditional | Inline JavaScript code (for simple actions)                                 |
+| `runtime`        | string | no          | `"auto"` \| `"inline"` \| `"node"` \| `"python"` \| `"bash"` \| `"ruby"`    |
+| `confirmMessage` | string | no          | If set, shows confirmation dialog before running                            |
+| `loadingLabel`   | string | no          | Text shown while script is running                                          |
+| `successLabel`   | string | no          | Text shown on success                                                       |
+| `errorLabel`     | string | no          | Text shown on failure                                                       |
+| `autoResetMs`    | number | no          | Milliseconds before button resets to idle (default: 3000)                   |
+| `timeout`        | number | no          | Milliseconds before killing the script (default: 60000)                     |
 
 Either `scriptPath` or `script` must be provided. If both are present, `scriptPath` takes precedence unless `runtime` is `"inline"`.
 
@@ -137,6 +137,7 @@ workspace/
 ```
 
 Runtime auto-detection by file extension:
+
 - `.js`, `.mjs`, `.cjs` → `node`
 - `.ts` → `npx tsx`
 - `.py` → `python3`
@@ -172,11 +173,11 @@ Scripts communicate results via **NDJSON on stdout**. Each line is a JSON object
 
 ### Message types
 
-| Type | Fields | Description |
-|------|--------|-------------|
-| `progress` | `percent`, `message?` | Updates progress bar in UI |
-| `log` | `level`, `message` | Streamed to action output (`info`, `warn`, `error`) |
-| `result` | `status`, `data?` | Final result. `status` is `"success"` or `"error"`. Terminates. |
+| Type       | Fields                | Description                                                     |
+| ---------- | --------------------- | --------------------------------------------------------------- |
+| `progress` | `percent`, `message?` | Updates progress bar in UI                                      |
+| `log`      | `level`, `message`    | Streamed to action output (`info`, `warn`, `error`)             |
+| `result`   | `status`, `data?`     | Final result. `status` is `"success"` or `"error"`. Terminates. |
 
 Non-JSON stdout lines are treated as `log` messages with `level: "info"`.
 
@@ -188,17 +189,17 @@ Exit code: 0 = success, non-zero = error (standard Unix convention). If no `resu
 
 Every script receives these environment variables:
 
-| Variable | Description |
-|----------|-------------|
-| `DENCH_ENTRY_ID` | The entry ID this action is running on |
-| `DENCH_ENTRY_DATA` | Full entry data as JSON string |
-| `DENCH_OBJECT_NAME` | Object name (e.g. `"leads"`) |
-| `DENCH_OBJECT_ID` | Object ID |
-| `DENCH_ACTION_ID` | Action ID from config |
-| `DENCH_FIELD_ID` | Field ID the action belongs to |
-| `DENCH_WORKSPACE_PATH` | Absolute path to workspace root |
-| `DENCH_DB_PATH` | Absolute path to `workspace.duckdb` |
-| `DENCH_API_URL` | Base URL for workspace REST APIs |
+| Variable               | Description                            |
+| ---------------------- | -------------------------------------- |
+| `DENCH_ENTRY_ID`       | The entry ID this action is running on |
+| `DENCH_ENTRY_DATA`     | Full entry data as JSON string         |
+| `DENCH_OBJECT_NAME`    | Object name (e.g. `"leads"`)           |
+| `DENCH_OBJECT_ID`      | Object ID                              |
+| `DENCH_ACTION_ID`      | Action ID from config                  |
+| `DENCH_FIELD_ID`       | Field ID the action belongs to         |
+| `DENCH_WORKSPACE_PATH` | Absolute path to workspace root        |
+| `DENCH_DB_PATH`        | Absolute path to `workspace.duckdb`    |
+| `DENCH_API_URL`        | Base URL for workspace REST APIs       |
 
 This means **any language** can participate — just read env vars and print JSON to stdout.
 
@@ -207,17 +208,20 @@ This means **any language** can participate — just read env vars and print JSO
 File-based scripts do NOT have the `dench` SDK. Use env vars + CLI/HTTP instead:
 
 **Read entry data (any language):**
+
 ```bash
 # Entry data is already in env as JSON
 echo "$DENCH_ENTRY_DATA" | jq '.["Full Name"]'
 ```
 
 **Query DuckDB from a file-based script:**
+
 ```bash
 duckdb "$DENCH_DB_PATH" -json "SELECT * FROM v_lead WHERE entry_id = '$DENCH_ENTRY_ID'"
 ```
 
 **Update DuckDB from a file-based script:**
+
 ```bash
 FIELD_ID=$(duckdb "$DENCH_DB_PATH" -noheader -list \
   "SELECT id FROM fields WHERE object_id = '$DENCH_OBJECT_ID' AND name = 'Status'")
@@ -228,6 +232,7 @@ duckdb "$DENCH_DB_PATH" \
 ```
 
 **Call the workspace REST API from a file-based script:**
+
 ```bash
 curl -s -X PATCH "$DENCH_API_URL/workspace/objects/$DENCH_OBJECT_NAME/entries/$DENCH_ENTRY_ID" \
   -H "Content-Type: application/json" \
@@ -245,7 +250,7 @@ email = entry.get('Email Address', '')
 
 print(json.dumps({"type": "progress", "percent": 50, "message": "Sending..."}))
 
-requests.post(f"{api}/workspace/objects/people/entries/{os.environ['DENCH_ENTRY_ID']}", 
+requests.post(f"{api}/workspace/objects/people/entries/{os.environ['DENCH_ENTRY_ID']}",
     json={"fields": {"Status": "Contacted"}},
     headers={"Content-Type": "application/json"})
 
@@ -272,27 +277,28 @@ echo '{"type":"result","status":"success","data":{"sent":true}}'
 
 For inline JS actions, the `dench` global provides:
 
-| Method | Description |
-|--------|-------------|
-| `dench.objects.get(name, id)` | Get entry by object name and ID |
-| `dench.objects.list(name)` | List entries for an object |
-| `dench.objects.create(name, fields)` | Create a new entry |
-| `dench.objects.update(name, id, fields)` | Update entry fields |
-| `dench.objects.delete(name, id)` | Delete an entry |
-| `dench.objects.bulkDelete(name, ids)` | Bulk delete entries |
-| `dench.db.query(sql)` | Run read-only SQL on workspace DB |
-| `dench.db.execute(sql)` | Execute SQL (write operations) |
-| `dench.files.read(path)` | Read a workspace file |
-| `dench.files.write(path, content)` | Write a workspace file |
-| `dench.http.fetch(url, opts)` | Standard fetch (no proxy) |
-| `dench.exec(cmd)` | Run a shell command synchronously |
-| `dench.progress(percent, message)` | Report progress to UI |
-| `dench.log(message, level)` | Log a message |
-| `dench.complete(data)` | Signal successful completion |
-| `dench.fail(message)` | Signal failure and exit |
-| `dench.env.*` | Access all DENCH_* env vars as properties |
+| Method                                   | Description                                 |
+| ---------------------------------------- | ------------------------------------------- |
+| `dench.objects.get(name, id)`            | Get entry by object name and ID             |
+| `dench.objects.list(name)`               | List entries for an object                  |
+| `dench.objects.create(name, fields)`     | Create a new entry                          |
+| `dench.objects.update(name, id, fields)` | Update entry fields                         |
+| `dench.objects.delete(name, id)`         | Delete an entry                             |
+| `dench.objects.bulkDelete(name, ids)`    | Bulk delete entries                         |
+| `dench.db.query(sql)`                    | Run read-only SQL on workspace DB           |
+| `dench.db.execute(sql)`                  | Execute SQL (write operations)              |
+| `dench.files.read(path)`                 | Read a workspace file                       |
+| `dench.files.write(path, content)`       | Write a workspace file                      |
+| `dench.http.fetch(url, opts)`            | Standard fetch (no proxy)                   |
+| `dench.exec(cmd)`                        | Run a shell command synchronously           |
+| `dench.progress(percent, message)`       | Report progress to UI                       |
+| `dench.log(message, level)`              | Log a message                               |
+| `dench.complete(data)`                   | Signal successful completion                |
+| `dench.fail(message)`                    | Signal failure and exit                     |
+| `dench.env.*`                            | Access all DENCH\_\* env vars as properties |
 
 The `context` object is also available:
+
 - `context.entryId`, `context.entryData`, `context.objectName`, `context.objectId`
 - `context.actionId`, `context.fieldId`, `context.workspacePath`, `context.dbPath`, `context.apiUrl`
 
@@ -320,6 +326,7 @@ CREATE TABLE IF NOT EXISTS action_runs (
 ```
 
 Query recent runs:
+
 ```
 GET /api/workspace/objects/{name}/actions/runs?fieldId=...&entryId=...&limit=20
 ```
@@ -506,20 +513,28 @@ duckdb {{WORKSPACE_PATH}}/workspace.duckdb "SELECT COUNT(*) FROM v_lead"
 // .actions/send-notification.js
 // File-based scripts use env vars — the `dench` SDK is NOT available here.
 const entry = JSON.parse(process.env.DENCH_ENTRY_DATA);
-const name = entry['Full Name'] || 'Unknown';
+const name = entry["Full Name"] || "Unknown";
 
-console.log(JSON.stringify({type: "progress", percent: 30, message: "Preparing notification..."}));
+console.log(
+  JSON.stringify({ type: "progress", percent: 30, message: "Preparing notification..." }),
+);
 
-const result = await fetch('https://hooks.slack.com/services/YOUR/WEBHOOK/URL', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+const result = await fetch("https://hooks.slack.com/services/YOUR/WEBHOOK/URL", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text: `New lead: ${name}` }),
 });
 
 if (result.ok) {
-  console.log(JSON.stringify({type: "result", status: "success", data: {notified: true}}));
+  console.log(JSON.stringify({ type: "result", status: "success", data: { notified: true } }));
 } else {
-  console.log(JSON.stringify({type: "result", status: "error", data: {message: "Slack notification failed"}}));
+  console.log(
+    JSON.stringify({
+      type: "result",
+      status: "error",
+      data: { message: "Slack notification failed" },
+    }),
+  );
   process.exit(1);
 }
 ```
@@ -529,27 +544,27 @@ if (result.ok) {
 ```javascript
 // .actions/enrich-lead.js
 // Use child_process to query DuckDB directly from file-based scripts
-const { execSync } = require('child_process');
+const { execSync } = require("child_process");
 const entry = JSON.parse(process.env.DENCH_ENTRY_DATA);
 const dbPath = process.env.DENCH_DB_PATH;
 const entryId = process.env.DENCH_ENTRY_ID;
 const objectId = process.env.DENCH_OBJECT_ID;
 
-console.log(JSON.stringify({type: "progress", percent: 20, message: "Enriching..."}));
+console.log(JSON.stringify({ type: "progress", percent: 20, message: "Enriching..." }));
 
 const fieldId = execSync(
   `duckdb '${dbPath}' -noheader -list "SELECT id FROM fields WHERE object_id = '${objectId}' AND name = 'Score'"`,
-  { encoding: 'utf-8' }
+  { encoding: "utf-8" },
 ).trim();
 
 if (fieldId) {
   execSync(
     `duckdb '${dbPath}' "INSERT INTO entry_fields (entry_id, field_id, value) VALUES ('${entryId}', '${fieldId}', '85') ON CONFLICT (entry_id, field_id) DO UPDATE SET value = excluded.value, updated_at = now()"`,
-    { encoding: 'utf-8' }
+    { encoding: "utf-8" },
   );
 }
 
-console.log(JSON.stringify({type: "result", status: "success", data: {score: 85}}));
+console.log(JSON.stringify({ type: "result", status: "success", data: { score: 85 } }));
 ```
 
 ### Destructive action with confirmation

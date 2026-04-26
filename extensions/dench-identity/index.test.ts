@@ -1,17 +1,18 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildIdentityPrompt, resolveWorkspaceDir } from "./index.ts";
 import register from "./index.ts";
-import path from "node:path";
 
 function getRegisteredTool(api: { registerTool: ReturnType<typeof vi.fn> }, name: string) {
-  return api.registerTool.mock.calls
-    .map((call) => call[0])
-    .find((tool) => tool?.name === name);
+  return api.registerTool.mock.calls.map((call) => call[0]).find((tool) => tool?.name === name);
 }
 
-async function executeTool(tool: { execute: (toolCallId: string, input: Record<string, unknown>) => Promise<any> }, input: Record<string, unknown>) {
+async function executeTool(
+  tool: { execute: (toolCallId: string, input: Record<string, unknown>) => Promise<any> },
+  input: Record<string, unknown>,
+) {
   return await tool.execute("tool-call-1", input);
 }
 
@@ -22,15 +23,12 @@ function mockGatewaySearch(responsePayload: Record<string, unknown>) {
     const url = typeof input === "string" ? input : input.url;
     expect(url).toBe("https://gateway.example.com/v1/composio/tools/search");
     expect(init?.method).toBe("POST");
-    return new Response(
-      JSON.stringify(responsePayload),
-      {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
+    return new Response(JSON.stringify(responsePayload), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
       },
-    );
+    });
   }) as typeof fetch;
 }
 
@@ -40,9 +38,7 @@ describe("buildIdentityPrompt", () => {
   it("includes chat history path so agent can reference past conversations", () => {
     const prompt = buildIdentityPrompt(workspaceDir);
     expect(prompt).toContain(".openclaw/web-chat/");
-    expect(prompt).toContain(
-      path.join(workspaceDir, ".openclaw/web-chat/"),
-    );
+    expect(prompt).toContain(path.join(workspaceDir, ".openclaw/web-chat/"));
   });
 
   it("includes all workspace context paths (prevents agent losing orientation)", () => {
@@ -55,16 +51,12 @@ describe("buildIdentityPrompt", () => {
 
   it("includes CRM skill path for delegation (prevents agent using wrong skill path)", () => {
     const prompt = buildIdentityPrompt(workspaceDir);
-    expect(prompt).toContain(
-      path.join(workspaceDir, "skills", "crm", "SKILL.md"),
-    );
+    expect(prompt).toContain(path.join(workspaceDir, "skills", "crm", "SKILL.md"));
   });
 
   it("includes Dench Integrations skill path and guidance", () => {
     const prompt = buildIdentityPrompt(workspaceDir);
-    expect(prompt).toContain(
-      path.join(workspaceDir, "skills", "dench-integrations", "SKILL.md"),
-    );
+    expect(prompt).toContain(path.join(workspaceDir, "skills", "dench-integrations", "SKILL.md"));
     expect(prompt).toContain("Dench Integrations");
     expect(prompt).not.toContain("Composio MCP");
     expect(prompt).toContain("Never");
@@ -88,7 +80,9 @@ describe("buildIdentityPrompt", () => {
     expect(prompt).toContain('`action: "people"`');
     expect(prompt).toContain('`action: "company"`');
     expect(prompt).toContain('`action: "people_search"`');
-    expect(prompt).toContain("Use Apollo for structured CRM enrichment and Exa for broader web research");
+    expect(prompt).toContain(
+      "Use Apollo for structured CRM enrichment and Exa for broader web research",
+    );
   });
 
   it("prefers Dench Integrations over gog without workspace cache files", () => {
@@ -100,9 +94,7 @@ describe("buildIdentityPrompt", () => {
 
   it("does not advertise the removed browser skill contract", () => {
     const prompt = buildIdentityPrompt(workspaceDir);
-    expect(prompt).not.toContain(
-      path.join(workspaceDir, "skills", "browser", "SKILL.md"),
-    );
+    expect(prompt).not.toContain(path.join(workspaceDir, "skills", "browser", "SKILL.md"));
     expect(prompt).not.toContain("Browser Agent");
   });
 
@@ -215,9 +207,15 @@ describe("resolveWorkspaceDir", () => {
   });
 
   it("returns undefined when workspace is not a string (prevents type coercion)", () => {
-    expect(resolveWorkspaceDir({ config: { agents: { defaults: { workspace: 42 } } } })).toBeUndefined();
-    expect(resolveWorkspaceDir({ config: { agents: { defaults: { workspace: true } } } })).toBeUndefined();
-    expect(resolveWorkspaceDir({ config: { agents: { defaults: { workspace: null } } } })).toBeUndefined();
+    expect(
+      resolveWorkspaceDir({ config: { agents: { defaults: { workspace: 42 } } } }),
+    ).toBeUndefined();
+    expect(
+      resolveWorkspaceDir({ config: { agents: { defaults: { workspace: true } } } }),
+    ).toBeUndefined();
+    expect(
+      resolveWorkspaceDir({ config: { agents: { defaults: { workspace: null } } } }),
+    ).toBeUndefined();
   });
 
   it("trims leading/trailing whitespace from valid paths", () => {
@@ -251,11 +249,9 @@ describe("register", () => {
       on: vi.fn(),
     };
     register(api);
-    expect(api.on).toHaveBeenCalledWith(
-      "before_prompt_build",
-      expect.any(Function),
-      { priority: 100 },
-    );
+    expect(api.on).toHaveBeenCalledWith("before_prompt_build", expect.any(Function), {
+      priority: 100,
+    });
   });
 
   it("does not register handler when plugin is explicitly disabled (respects config)", () => {
@@ -760,7 +756,9 @@ describe("register", () => {
     expect(payload.availability).toBe("connect_required");
     expect(payload.action_required).toBe("connect");
     expect(payload.toolkit_slug).toBe("slack");
-    expect(payload.action_link_markdown).toBe("[Connect Slack](dench://composio/connect?toolkit=slack&name=Slack)");
+    expect(payload.action_link_markdown).toBe(
+      "[Connect Slack](dench://composio/connect?toolkit=slack&name=Slack)",
+    );
 
     rmSync(tmp, { recursive: true, force: true });
   });

@@ -163,13 +163,17 @@ Keep the entry document readable for humans and useful as an audit trail. A good
 # Jane Smith
 
 ## Summary
+
 Current state of the entry in plain English.
 
 ## Notes
+
 User-facing notes, drafts, follow-ups, or other long-form details.
 
 ## Activity Log
+
 ### 2026-03-30T12:34:56Z - Entry updated
+
 - Changed `Status`: `New` -> `Qualified`
 - Added note: Follow up on Thursday about pricing
 ```

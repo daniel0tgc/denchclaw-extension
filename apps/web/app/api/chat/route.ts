@@ -3,7 +3,6 @@ import {
 	resolveActiveAgentId,
 	resolveAgentWorkspacePrefix,
 	resolveOpenClawStateDir,
-	resolveWorkspaceRoot,
 } from "@/lib/workspace";
 import {
 	startRun,
@@ -16,10 +15,9 @@ import {
 	reactivateSubscribeRun,
 	type SseEvent,
 } from "@/lib/active-runs";
-import type { ImageAttachment } from "@/lib/agent-runner";
 import { trackServer } from "@/lib/telemetry";
 import { existsSync, readFileSync } from "node:fs";
-import { join, basename, extname } from "node:path";
+import { join } from "node:path";
 import {
 	getSessionMeta,
 	hasRotatedGatewayThread,

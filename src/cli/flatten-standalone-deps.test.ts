@@ -1,4 +1,14 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,7 +37,14 @@ function addPnpmPackage(
   packageName: string,
   files: Record<string, string> = { "index.js": `module.exports = "${packageName}";` },
 ): string {
-  const pkgDir = tmp("standalone", "node_modules", ".pnpm", storeEntryName, "node_modules", packageName);
+  const pkgDir = tmp(
+    "standalone",
+    "node_modules",
+    ".pnpm",
+    storeEntryName,
+    "node_modules",
+    packageName,
+  );
   mkdirSync(pkgDir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
     const filePath = path.join(pkgDir, name);
@@ -58,7 +75,14 @@ function addScopedPnpmSymlink(
   name: string,
   toStoreEntry: string,
 ): void {
-  const scopeDir = tmp("standalone", "node_modules", ".pnpm", fromStoreEntry, "node_modules", scope);
+  const scopeDir = tmp(
+    "standalone",
+    "node_modules",
+    ".pnpm",
+    fromStoreEntry,
+    "node_modules",
+    scope,
+  );
   mkdirSync(scopeDir, { recursive: true });
   const linkPath = path.join(scopeDir, name);
   const target = path.join("..", "..", "..", toStoreEntry, "node_modules", scope, name);
@@ -84,7 +108,10 @@ function targetNodeModules(): string {
 }
 
 beforeEach(() => {
-  tmpRoot = path.join(os.tmpdir(), `flatten-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  tmpRoot = path.join(
+    os.tmpdir(),
+    `flatten-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(tmpRoot, { recursive: true });
   mkdirSync(tmp("standalone", "apps", "web"), { recursive: true });
 });
@@ -166,10 +193,7 @@ describe("flattenPnpmStandaloneDeps", () => {
 
     flattenPnpmStandaloneDeps(standaloneDir());
 
-    const content = readFileSync(
-      path.join(targetNodeModules(), "shared-dep", "index.js"),
-      "utf-8",
-    );
+    const content = readFileSync(path.join(targetNodeModules(), "shared-dep", "index.js"), "utf-8");
     expect(["FIRST", "SECOND"]).toContain(content);
 
     const entries = readdirSync(targetNodeModules()).filter((e) => e === "shared-dep");
@@ -347,7 +371,9 @@ describe("installManagedWebRuntime after flatten", () => {
     const copiedNext = path.join(result.runtimeAppDir, "node_modules", "next");
     expect(lstatSync(copiedNext).isSymbolicLink()).toBe(false);
     expect(lstatSync(copiedNext).isDirectory()).toBe(true);
-    expect(readFileSync(path.join(copiedNext, "index.js"), "utf-8")).toBe("module.exports = 'next';");
+    expect(readFileSync(path.join(copiedNext, "index.js"), "utf-8")).toBe(
+      "module.exports = 'next';",
+    );
   });
 });
 
@@ -406,8 +432,12 @@ describe("installManagedWebRuntime auto-flattens pnpm deps", () => {
     expect(readFileSync(nextInRuntime, "utf-8")).toBe("next-entry");
     expect(readFileSync(reactInRuntime, "utf-8")).toBe("react-entry");
 
-    expect(lstatSync(path.join(result.runtimeAppDir, "node_modules", "next")).isDirectory()).toBe(true);
-    expect(lstatSync(path.join(result.runtimeAppDir, "node_modules", "next")).isSymbolicLink()).toBe(false);
+    expect(lstatSync(path.join(result.runtimeAppDir, "node_modules", "next")).isDirectory()).toBe(
+      true,
+    );
+    expect(
+      lstatSync(path.join(result.runtimeAppDir, "node_modules", "next")).isSymbolicLink(),
+    ).toBe(false);
   });
 
   it("flattens scoped pnpm deps during install (prevents broken @scope imports)", () => {
@@ -429,8 +459,18 @@ describe("installManagedWebRuntime auto-flattens pnpm deps", () => {
 
     expect(result.installed).toBe(true);
 
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "@next", "env", "index.js"), "utf-8")).toBe("env-mod");
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "@swc", "helpers", "index.js"), "utf-8")).toBe("swc-mod");
+    expect(
+      readFileSync(
+        path.join(result.runtimeAppDir, "node_modules", "@next", "env", "index.js"),
+        "utf-8",
+      ),
+    ).toBe("env-mod");
+    expect(
+      readFileSync(
+        path.join(result.runtimeAppDir, "node_modules", "@swc", "helpers", "index.js"),
+        "utf-8",
+      ),
+    ).toBe("swc-mod");
   });
 
   it("is idempotent — second install after flatten still produces correct output (prepack-then-dev scenario)", () => {
@@ -451,7 +491,9 @@ describe("installManagedWebRuntime auto-flattens pnpm deps", () => {
     });
 
     expect(result.installed).toBe(true);
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "next", "index.js"), "utf-8")).toBe("v1");
+    expect(
+      readFileSync(path.join(result.runtimeAppDir, "node_modules", "next", "index.js"), "utf-8"),
+    ).toBe("v1");
   });
 
   it("works when standalone has no pnpm store (npm/yarn setups)", () => {
@@ -474,7 +516,9 @@ describe("installManagedWebRuntime auto-flattens pnpm deps", () => {
     });
 
     expect(result.installed).toBe(true);
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "next", "index.js"), "utf-8")).toBe("npm-next");
+    expect(
+      readFileSync(path.join(result.runtimeAppDir, "node_modules", "next", "index.js"), "utf-8"),
+    ).toBe("npm-next");
   });
 
   it("removes root-level standalone node_modules after flatten (prevents leftover pnpm store from being shipped)", () => {
@@ -524,7 +568,9 @@ describe("installManagedWebRuntime auto-flattens pnpm deps", () => {
     expect(result.installed).toBe(true);
     const nextDir = path.join(result.runtimeAppDir, "node_modules", "next");
     expect(readFileSync(path.join(nextDir, "package.json"), "utf-8")).toBe('{"name":"next"}');
-    expect(readFileSync(path.join(nextDir, "dist/server/lib/start-server.js"), "utf-8")).toBe("startServer()");
+    expect(readFileSync(path.join(nextDir, "dist/server/lib/start-server.js"), "utf-8")).toBe(
+      "startServer()",
+    );
   });
 });
 
@@ -609,7 +655,12 @@ describe("dereferenceRuntimeNodeModules (dangling symlink resolution)", () => {
     buildStandaloneWithDanglingSymlinks(
       packageRoot,
       [{ name: "@next/env", files: { "index.js": "env-real" } }],
-      [{ name: "@next/env", target: "../../../node_modules/.pnpm/@next+env@15/node_modules/@next/env" }],
+      [
+        {
+          name: "@next/env",
+          target: "../../../node_modules/.pnpm/@next+env@15/node_modules/@next/env",
+        },
+      ],
     );
 
     const stateDir = tmp("dangle-scoped-state");
@@ -665,10 +716,16 @@ describe("dereferenceRuntimeNodeModules (dangling symlink resolution)", () => {
     writeFileSync(path.join(realInApp, "index.js"), "REAL", "utf-8");
 
     mkdirSync(path.join(standaloneDir, "node_modules", "linked-pkg"), { recursive: true });
-    writeFileSync(path.join(standaloneDir, "node_modules", "linked-pkg", "index.js"), "LINKED", "utf-8");
+    writeFileSync(
+      path.join(standaloneDir, "node_modules", "linked-pkg", "index.js"),
+      "LINKED",
+      "utf-8",
+    );
 
-    symlinkSync("../../../node_modules/.pnpm/x@1/node_modules/linked-pkg",
-      path.join(standaloneAppDir, "node_modules", "linked-pkg"));
+    symlinkSync(
+      "../../../node_modules/.pnpm/x@1/node_modules/linked-pkg",
+      path.join(standaloneAppDir, "node_modules", "linked-pkg"),
+    );
 
     const stateDir = tmp("dangle-mixed-state");
     mkdirSync(stateDir, { recursive: true });
@@ -680,8 +737,20 @@ describe("dereferenceRuntimeNodeModules (dangling symlink resolution)", () => {
     });
 
     expect(result.installed).toBe(true);
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "already-real", "index.js"), "utf-8")).toBe("REAL");
-    expect(readFileSync(path.join(result.runtimeAppDir, "node_modules", "linked-pkg", "index.js"), "utf-8")).toBe("LINKED");
-    expect(lstatSync(path.join(result.runtimeAppDir, "node_modules", "linked-pkg")).isSymbolicLink()).toBe(false);
+    expect(
+      readFileSync(
+        path.join(result.runtimeAppDir, "node_modules", "already-real", "index.js"),
+        "utf-8",
+      ),
+    ).toBe("REAL");
+    expect(
+      readFileSync(
+        path.join(result.runtimeAppDir, "node_modules", "linked-pkg", "index.js"),
+        "utf-8",
+      ),
+    ).toBe("LINKED");
+    expect(
+      lstatSync(path.join(result.runtimeAppDir, "node_modules", "linked-pkg")).isSymbolicLink(),
+    ).toBe(false);
   });
 });

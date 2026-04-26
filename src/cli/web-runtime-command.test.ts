@@ -259,10 +259,7 @@ describe("updateWebRuntimeCommand", () => {
   it("syncs managed skills during update and includes result in summary", async () => {
     const runtime = runtimeStub();
 
-    const summary = await updateWebRuntimeCommand(
-      { nonInteractive: true },
-      runtime,
-    );
+    const summary = await updateWebRuntimeCommand({ nonInteractive: true }, runtime);
 
     expect(workspaceSeedMocks.discoverWorkspaceDirs).toHaveBeenCalledWith("/tmp/.openclaw-dench");
     expect(workspaceSeedMocks.syncManagedSkills).toHaveBeenCalledWith({
@@ -468,9 +465,7 @@ describe("startWebRuntimeCommand", () => {
       process.platform === "darwin"
         ? launchdMocks.installWebRuntimeLaunchAgent
         : webRuntimeMocks.startManagedWebRuntime;
-    expect(startMock).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayPort: 19001 }),
-    );
+    expect(startMock).toHaveBeenCalledWith(expect.objectContaining({ gatewayPort: 19001 }));
   });
 
   it("falls back to DenchClaw port 19001 when manifest is null (fresh install, prevents 18789 hijack)", async () => {
@@ -482,9 +477,7 @@ describe("startWebRuntimeCommand", () => {
       process.platform === "darwin"
         ? launchdMocks.installWebRuntimeLaunchAgent
         : webRuntimeMocks.startManagedWebRuntime;
-    expect(startMock).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayPort: 19001 }),
-    );
+    expect(startMock).toHaveBeenCalledWith(expect.objectContaining({ gatewayPort: 19001 }));
   });
 });
 
@@ -558,6 +551,10 @@ describe("restartWebRuntimeCommand", () => {
       ([msg]: [string]) => msg,
     );
     expect(logCalls.some((msg) => typeof msg === "string" && msg.includes("restart"))).toBe(true);
-    expect(logCalls.some((msg) => typeof msg === "string" && /\bstart\b/.test(msg) && !msg.includes("restart"))).toBe(false);
+    expect(
+      logCalls.some(
+        (msg) => typeof msg === "string" && /\bstart\b/.test(msg) && !msg.includes("restart"),
+      ),
+    ).toBe(false);
   });
 });

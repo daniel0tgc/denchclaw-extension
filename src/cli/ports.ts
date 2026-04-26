@@ -174,7 +174,9 @@ export async function forceFreePortAndWait(
       return { killed, waitedMs, escalatedToSigkill: false };
     }
     throw new Error(
-      `port ${port} still has listeners after --force: ${listPortListeners(port).map((p) => p.pid).join(", ")}`,
+      `port ${port} still has listeners after --force: ${listPortListeners(port)
+        .map((p) => p.pid)
+        .join(", ")}`,
     );
   }
 

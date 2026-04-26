@@ -41,6 +41,7 @@ import {
   isVirtualPath,
   toLocalClipboardPath,
 } from "@/lib/workspace-paths";
+import { displayObjectName } from "@/lib/object-display-name";
 
 // --- Types ---
 
@@ -539,7 +540,9 @@ function DraggableNode({
             onCancel={onCancelRename}
           />
         ) : (
-          <span className="truncate flex-1">{node.name}</span>
+          <span className="truncate flex-1">
+            {node.type === "object" ? displayObjectName(node.name) : node.name}
+          </span>
         )}
 
       </div>
@@ -623,7 +626,7 @@ function DragOverlayContent({ node }: { node: TreeNode }) {
       <span style={{ color: typeColor(node) }}>
         <NodeIcon node={node} />
       </span>
-      <span>{node.name}</span>
+      <span>{node.type === "object" ? displayObjectName(node.name) : node.name}</span>
     </div>
   );
 }

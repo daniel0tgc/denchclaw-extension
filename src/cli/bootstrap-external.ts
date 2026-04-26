@@ -1,20 +1,24 @@
 import { spawn, type StdioOptions } from "node:child_process";
 import {
+  closeSync,
   cpSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { confirm, isCancel, select, spinner, text } from "@clack/prompts";
-import json5 from "json5";
 import gradient from "gradient-string";
+import json5 from "json5";
 import { isDaemonlessMode } from "../config/paths.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
@@ -38,6 +42,7 @@ import {
   type DenchCloudCatalogModel,
 } from "./dench-cloud.js";
 import { applyCliProfileEnv } from "./profile.js";
+import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
 import {
   DEFAULT_WEB_APP_PORT,
   ensureManagedWebRuntime,
@@ -435,7 +440,9 @@ function normalizeVersionOutput(raw: string | undefined): string | undefined {
   return first && first.length > 0 ? first : undefined;
 }
 
-function parseOpenClawCalendarVersion(raw: string | undefined): [number, number, number] | undefined {
+function parseOpenClawCalendarVersion(
+  raw: string | undefined,
+): [number, number, number] | undefined {
   const match = raw?.match(/\b(\d{4})\.(\d+)\.(\d+)\b/u);
   if (!match) {
     return undefined;
@@ -544,24 +551,28 @@ function readBundledPluginVersion(pluginDir: string): string | undefined {
 }
 
 function readConfiguredPluginAllowlist(stateDir: string): string[] {
-  const raw = readBootstrapConfig(stateDir) as {
-    plugins?: {
-      allow?: unknown;
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(stateDir) as
+    | {
+        plugins?: {
+          allow?: unknown;
+        };
+      }
+    | undefined;
   return Array.isArray(raw?.plugins?.allow)
     ? raw.plugins.allow.filter((value): value is string => typeof value === "string")
     : [];
 }
 
 function readConfiguredPluginLoadPaths(stateDir: string): string[] {
-  const raw = readBootstrapConfig(stateDir) as {
-    plugins?: {
-      load?: {
-        paths?: unknown;
-      };
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(stateDir) as
+    | {
+        plugins?: {
+          load?: {
+            paths?: unknown;
+          };
+        };
+      }
+    | undefined;
   return Array.isArray(raw?.plugins?.load?.paths)
     ? raw.plugins.load.paths.filter((value): value is string => typeof value === "string")
     : [];
@@ -580,14 +591,7 @@ async function setOpenClawConfigJson(params: {
 }): Promise<void> {
   await runOpenClawOrThrow({
     openclawCommand: params.openclawCommand,
-    args: [
-      "--profile",
-      params.profile,
-      "config",
-      "set",
-      params.key,
-      JSON.stringify(params.value),
-    ],
+    args: ["--profile", params.profile, "config", "set", params.key, JSON.stringify(params.value)],
     timeoutMs: 30_000,
     errorMessage: params.errorMessage,
   });
@@ -608,7 +612,9 @@ function readDenchIntegrationsMetadata(stateDir: string): Record<string, unknown
 
 type ElevenLabsTtsConfigShape = "providers" | "flat";
 
-function readTtsElevenLabsConfig(tts: Record<string, unknown>): Record<string, unknown> | undefined {
+function readTtsElevenLabsConfig(
+  tts: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   return asRecord(tts.elevenlabs) ?? asRecord(asRecord(tts.providers)?.elevenlabs);
 }
 
@@ -683,10 +689,7 @@ function disableDenchElevenLabsOverride(
     ) {
       delete elevenlabs.baseUrl;
     }
-    if (
-      typeof elevenlabs.apiKey === "string" &&
-      (!apiKey || elevenlabs.apiKey === apiKey)
-    ) {
+    if (typeof elevenlabs.apiKey === "string" && (!apiKey || elevenlabs.apiKey === apiKey)) {
       delete elevenlabs.apiKey;
     }
     if (Object.keys(elevenlabs).length === 0) {
@@ -723,7 +726,7 @@ function applyDenchManagedIntegrationDefaults(params: {
 
   const tools = { ...(asRecord(nextConfig.tools) ?? {}) };
   const deny = Array.isArray(tools.deny)
-    ? (tools.deny.filter((value): value is string => typeof value === "string"))
+    ? tools.deny.filter((value): value is string => typeof value === "string")
     : [];
   const web = { ...(asRecord(tools.web) ?? {}) };
   const search = { ...(asRecord(web.search) ?? {}) };
@@ -799,12 +802,8 @@ async function syncBundledPlugins(params: {
     };
     const currentAllow = readConfiguredPluginAllowlist(params.stateDir);
     const currentLoadPaths = readConfiguredPluginLoadPaths(params.stateDir);
-    const nextAllow = currentAllow.filter(
-      (value) => value !== "dench-cloud-provider",
-    );
-    const nextLoadPaths = currentLoadPaths.filter(
-      (value) => !isLegacyDenchCloudPluginPath(value),
-    );
+    const nextAllow = currentAllow.filter((value) => value !== "dench-cloud-provider");
+    const nextLoadPaths = currentLoadPaths.filter((value) => !isLegacyDenchCloudPluginPath(value));
     const legacyPluginDir = path.join(params.stateDir, "extensions", "dench-cloud-provider");
     const hadLegacyEntry = entries["dench-cloud-provider"] !== undefined;
     const hadLegacyInstall = installs["dench-cloud-provider"] !== undefined;
@@ -996,10 +995,7 @@ function stagePreOnboardConfig(
   defaults.elevatedDefault = "on";
 
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(
-    path.join(stateDir, "openclaw.json"),
-    `${JSON.stringify(raw, null, 2)}\n`,
-  );
+  writeFileSync(path.join(stateDir, "openclaw.json"), `${JSON.stringify(raw, null, 2)}\n`);
 }
 
 async function ensureAgentDefaults(openclawCommand: string, profile: string): Promise<void> {
@@ -1024,6 +1020,10 @@ async function ensureAgentDefaults(openclawCommand: string, profile: string): Pr
     ["agents.defaults.elevatedDefault", "on"],
     ["commands.bash", "true"],
     ["commands.config", "true"],
+    // Heartbeat: once a day instead of OpenClaw's stock 30m. Heartbeats wake
+    // the agent for autonomous follow-ups; 30m is too chatty for Dench's
+    // always-on workspace UX. See agents.defaults.heartbeat in openclaw.json.
+    ["agents.defaults.heartbeat.every", "24h"],
   ];
   for (const [key, value] of settings) {
     await runOpenClawOrThrow({
@@ -1080,19 +1080,37 @@ async function runOpenClawOrThrow(params: {
 /**
  * Runs an OpenClaw command attached to the current terminal.
  * Use this for interactive flows like `openclaw onboard`.
+ *
+ * Special handling for `openclaw onboard --install-daemon`: that subprocess
+ * frequently hangs after the user finishes the wizard (printing
+ * "Onboarding complete.") because its post-wizard daemon-install path
+ * calls slow external HTTPS endpoints (model catalog discovery, etc.) with
+ * no upstream flag to skip them. We can't tee stdout (the wizard is
+ * @clack/prompts and needs a real TTY for arrow-key navigation), so we
+ * use a SIDE-CHANNEL signal instead: watch the gateway log for the
+ * `[gateway] ready (` line that appears after the wizard restarts the
+ * daemon. Once seen, give onboard a grace period to exit naturally; if it
+ * doesn't, send SIGTERM, then SIGKILL. Treats post-marker termination as
+ * success since the wizard's user-visible work is done.
  */
 async function runOpenClawInteractiveOrThrow(params: {
   openclawCommand: string;
   args: string[];
   timeoutMs: number;
   errorMessage: string;
+  /**
+   * Optional: when set, watch this gateway.log file for the
+   * `[gateway] ready (` line and use it as the "wizard finished"
+   * signal. Bootstrap passes the profile state dir's logs/gateway.log
+   * here for the onboard call.
+   */
+  gatewayLogPath?: string;
+  /** Grace before SIGTERM after marker detection. Default 60s. */
+  markerGraceMs?: number;
+  /** Grace between SIGTERM and SIGKILL. Default 5s. */
+  sigtermGraceMs?: number;
 }): Promise<SpawnResult> {
-  const result = await runOpenClaw(
-    params.openclawCommand,
-    params.args,
-    params.timeoutMs,
-    "inherit",
-  );
+  const result = await runOpenClawInteractiveWithMarkerCutoff(params);
   if (result.code === 0) {
     return result;
   }
@@ -1101,6 +1119,179 @@ async function runOpenClawInteractiveOrThrow(params: {
   if (detail) parts.push(detail);
   else if (result.code != null) parts.push(`(exit code ${result.code})`);
   throw new Error(parts.join("\n"));
+}
+
+// 0 = SIGTERM the moment the marker fires. In practice onboard often exits
+// within tens of ms of SIGTERM after the marker, so any non-zero grace is
+// mostly dead time bootstrap-side. Callers can opt back into a grace period
+// if they hit a reproducible case where onboard needs more time to flush
+// state after the marker.
+const ONBOARD_DEFAULT_MARKER_GRACE_MS = 0;
+const ONBOARD_DEFAULT_SIGTERM_GRACE_MS = 5_000;
+// Poll the gateway log roughly twice per second so the marker is detected
+// within ~500ms of being written. Keeps bootstrap snappy without melting CPU.
+const ONBOARD_GATEWAY_LOG_POLL_MS = 500;
+const ONBOARD_GATEWAY_READY_MARKER = "[gateway] ready (";
+
+/**
+ * Spawn `openclaw` with stdio inherited (so the @clack/prompts wizard
+ * keeps full TTY rendering + arrow-key input), but separately watch the
+ * gateway's log file for the post-wizard `[gateway] ready (` line. That
+ * line fires when openclaw onboard restarts the daemon as part of its
+ * post-prompt work — by then the user-visible wizard is done. Once we
+ * see it, we give onboard `markerGraceMs` to exit on its own; if it's
+ * still alive (the upstream hang we're working around), we send SIGTERM
+ * then SIGKILL and treat the result as success.
+ *
+ * If `gatewayLogPath` isn't supplied, this degrades to a plain spawn
+ * with no early-exit (same as before — used for daemonless / non-onboard
+ * interactive flows).
+ */
+async function runOpenClawInteractiveWithMarkerCutoff(params: {
+  openclawCommand: string;
+  args: string[];
+  timeoutMs: number;
+  gatewayLogPath?: string;
+  markerGraceMs?: number;
+  sigtermGraceMs?: number;
+}): Promise<SpawnResult> {
+  const markerGraceMs = params.markerGraceMs ?? ONBOARD_DEFAULT_MARKER_GRACE_MS;
+  const sigtermGraceMs = params.sigtermGraceMs ?? ONBOARD_DEFAULT_SIGTERM_GRACE_MS;
+  const gatewayLogPath = params.gatewayLogPath;
+
+  return await new Promise<SpawnResult>((resolve, reject) => {
+    const child = spawn(params.openclawCommand, params.args, {
+      stdio: "inherit",
+      ...platformSpawnOptions(),
+    });
+
+    let settled = false;
+    let markerSeen = false;
+    let killedAfterMarker = false;
+    let logWatcher: NodeJS.Timeout | null = null;
+    let postMarkerSigtermTimer: NodeJS.Timeout | null = null;
+    let postMarkerSigkillTimer: NodeJS.Timeout | null = null;
+
+    const outerTimer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore — process may already be gone
+      }
+    }, params.timeoutMs);
+
+    function clearTimers(): void {
+      clearTimeout(outerTimer);
+      if (logWatcher) {
+        clearInterval(logWatcher);
+      }
+      if (postMarkerSigtermTimer) {
+        clearTimeout(postMarkerSigtermTimer);
+      }
+      if (postMarkerSigkillTimer) {
+        clearTimeout(postMarkerSigkillTimer);
+      }
+    }
+
+    // Side-channel marker watcher: tail the gateway log starting from its
+    // current size (so we only see lines emitted AFTER this onboard run).
+    if (gatewayLogPath) {
+      let initialSize = 0;
+      try {
+        if (existsSync(gatewayLogPath)) {
+          initialSize = statSync(gatewayLogPath).size;
+        }
+      } catch {
+        initialSize = 0;
+      }
+      let cursor = initialSize;
+      logWatcher = setInterval(() => {
+        if (markerSeen || settled) {
+          return;
+        }
+        try {
+          if (!existsSync(gatewayLogPath)) {
+            return;
+          }
+          const size = statSync(gatewayLogPath).size;
+          if (size <= cursor) {
+            return;
+          }
+          // Read only the new bytes.
+          const len = size - cursor;
+          const buf = Buffer.alloc(len);
+          const fd = openSync(gatewayLogPath, "r");
+          try {
+            readSync(fd, buf, 0, len, cursor);
+          } finally {
+            closeSync(fd);
+          }
+          cursor = size;
+          if (buf.toString("utf-8").includes(ONBOARD_GATEWAY_READY_MARKER)) {
+            markerSeen = true;
+            const sendSigterm = (): void => {
+              if (settled || child.exitCode !== null) {
+                return;
+              }
+              killedAfterMarker = true;
+              try {
+                child.kill("SIGTERM");
+              } catch {
+                // ignore
+              }
+              postMarkerSigkillTimer = setTimeout(() => {
+                if (settled || child.exitCode !== null) {
+                  return;
+                }
+                try {
+                  child.kill("SIGKILL");
+                } catch {
+                  // ignore
+                }
+              }, sigtermGraceMs);
+            };
+            if (markerGraceMs > 0) {
+              postMarkerSigtermTimer = setTimeout(sendSigterm, markerGraceMs);
+            } else {
+              sendSigterm();
+            }
+          }
+        } catch {
+          // Log file may be rotated/missing temporarily; just try again.
+        }
+      }, ONBOARD_GATEWAY_LOG_POLL_MS);
+    }
+
+    child.once("error", (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
+      reject(error);
+    });
+
+    child.once("close", (code: number | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimers();
+      // If we killed it AFTER the marker fired, treat as success — the
+      // wizard's user-visible work was already done. Bootstrap will run
+      // its own gateway probe + autofix immediately after, so any
+      // openclaw-side post-wizard verification we cut short is redundant.
+      const synthesizedCode = killedAfterMarker ? 0 : typeof code === "number" ? code : 1;
+      resolve({
+        code: synthesizedCode,
+        stdout: "",
+        stderr: "",
+      });
+    });
+  });
 }
 
 /**
@@ -1292,12 +1483,12 @@ function selectBootstrapDevicePairingRequest(pending: DeviceListEntry[]): {
     .filter((entry) => {
       const roles = resolveDeviceListEntryRoles(entry);
       const platformMatches = !entry.platform || entry.platform === process.platform;
-      return platformMatches && roles.includes("operator") && hasBootstrapDevicePairingScopes(entry);
+      return (
+        platformMatches && roles.includes("operator") && hasBootstrapDevicePairingScopes(entry)
+      );
     })
     .map((entry) => ({ entry, score: scoreBootstrapDevicePairingRequest(entry) }))
-    .sort(
-      (a, b) => b.score - a.score || (b.entry.createdAtMs ?? 0) - (a.entry.createdAtMs ?? 0),
-    );
+    .sort((a, b) => b.score - a.score || (b.entry.createdAtMs ?? 0) - (a.entry.createdAtMs ?? 0));
   if (candidates.length === 0) {
     return { status: "none", detail: "no pending local operator pairing request found" };
   }
@@ -1756,8 +1947,12 @@ async function ensureOpenClawCliAvailable(params: {
         const errorLines = [
           "npm install -g openclaw@latest failed.",
           hint,
-          combinedStderr ? `npm output: ${firstNonEmptyLine(combinedStderr) ?? combinedStderr.slice(0, 200).trim()}` : undefined,
-        ].filter(Boolean).join("\n");
+          combinedStderr
+            ? `npm output: ${firstNonEmptyLine(combinedStderr) ?? combinedStderr.slice(0, 200).trim()}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n");
         progress.fail("OpenClaw install failed (global and user-prefix).");
         return {
           available: false,
@@ -1809,7 +2004,9 @@ async function ensureOpenClawCliAvailable(params: {
   );
 
   const version = normalizeVersionOutput(check?.stdout || check?.stderr || globalAfter.version);
-  const available = Boolean((globalAfter.installed || fallbackCommand) && check && check.code === 0);
+  const available = Boolean(
+    (globalAfter.installed || fallbackCommand) && check && check.code === 0,
+  );
   const effectiveBinDir = globalBinDir ?? fallbackBinDir;
   progress.startStage("Caching OpenClaw check result");
   if (available) {
@@ -1960,13 +2157,7 @@ async function attemptGatewayAutoFix(params: {
     },
     {
       name: "openclaw gateway install --force",
-      args: [
-        "--profile",
-        params.profile,
-        "gateway",
-        "install",
-        "--force",
-      ],
+      args: ["--profile", params.profile, "gateway", "install", "--force"],
       timeoutMs: 2 * 60_000,
     },
     {
@@ -2164,9 +2355,11 @@ function writeAuthProfileKey(stateDir: string, apiKey: string): void {
     if (existsSync(authPath)) {
       raw = json5.parse(readFileSync(authPath, "utf-8"));
     }
-  } catch { /* fresh file */ }
+  } catch {
+    /* fresh file */
+  }
 
-  const profiles = ((raw.profiles ?? {}) as Record<string, unknown>);
+  const profiles = (raw.profiles ?? {}) as Record<string, unknown>;
   profiles["dench-cloud:default"] = {
     type: "api_key",
     provider: "dench-cloud",
@@ -2188,11 +2381,13 @@ export function checkAgentAuth(
   if (!provider) {
     return { ok: false, detail: "No model provider configured." };
   }
-  const rawConfig = readBootstrapConfig(stateDir) as {
-    models?: {
-      providers?: Record<string, unknown>;
-    };
-  } | undefined;
+  const rawConfig = readBootstrapConfig(stateDir) as
+    | {
+        models?: {
+          providers?: Record<string, unknown>;
+        };
+      }
+    | undefined;
   const customProvider = rawConfig?.models?.providers?.[provider];
   if (customProvider && typeof customProvider === "object") {
     const apiKey = (customProvider as Record<string, unknown>).apiKey;
@@ -2455,9 +2650,9 @@ function logBootstrapChecklist(diagnostics: BootstrapDiagnostics, runtime: Runti
 function isExplicitDenchCloudRequest(opts: BootstrapOptions): boolean {
   return Boolean(
     opts.denchCloud ||
-      opts.denchCloudApiKey?.trim() ||
-      opts.denchCloudModel?.trim() ||
-      opts.denchGatewayUrl?.trim(),
+    opts.denchCloudApiKey?.trim() ||
+    opts.denchCloudModel?.trim() ||
+    opts.denchGatewayUrl?.trim(),
   );
 }
 
@@ -2569,9 +2764,7 @@ function renderDenchCloudRecommendationBanner(): string {
   ].join(dot);
 
   const check = rich ? theme.success("✓") : "✓";
-  const cta = rich
-    ? theme.success("Recommended for most users")
-    : "Recommended for most users";
+  const cta = rich ? theme.success("Recommended for most users") : "Recommended for most users";
 
   return [
     "",
@@ -2617,14 +2810,20 @@ function preStageDenchCloudConfig(params: {
     nextConfig.models = models;
 
     const tools = { ...asRecord(nextConfig.tools) };
-    tools.alsoAllow = mergeAllowedTools(nextConfig.tools, (configPatch as Record<string, unknown>).tools);
+    tools.alsoAllow = mergeAllowedTools(
+      nextConfig.tools,
+      (configPatch as Record<string, unknown>).tools,
+    );
     delete tools.allow;
     nextConfig.tools = tools;
 
     if (params.selectedModel) {
       const agents = { ...asRecord(nextConfig.agents) };
       const defaults = { ...asRecord(agents.defaults) };
-      defaults.model = { ...asRecord(defaults.model), primary: `dench-cloud/${params.selectedModel}` };
+      defaults.model = {
+        ...asRecord(defaults.model),
+        primary: `dench-cloud/${params.selectedModel}`,
+      };
       agents.defaults = defaults;
       nextConfig.agents = agents;
     }
@@ -2680,7 +2879,10 @@ function rewriteDenchCloudTtsConfigFile(params: {
   elevenlabs.apiKey = params.apiKey;
   messages.tts = tts;
   nextConfig.messages = messages;
-  writeFileSync(path.join(params.stateDir, "openclaw.json"), `${JSON.stringify(nextConfig, null, 2)}\n`);
+  writeFileSync(
+    path.join(params.stateDir, "openclaw.json"),
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+  );
 }
 
 function isExpectedTtsShapeValidationError(
@@ -2725,9 +2927,10 @@ async function applyDenchCloudTtsConfig(params: {
       openclawCommand: params.openclawCommand,
       profile: params.profile,
       key: shape === "providers" ? "messages.tts.providers.elevenlabs" : "messages.tts.elevenlabs",
-      value: shape === "providers"
-        ? asRecord(asRecord(ttsConfig.providers)?.elevenlabs)
-        : asRecord(ttsConfig.elevenlabs),
+      value:
+        shape === "providers"
+          ? asRecord(asRecord(ttsConfig.providers)?.elevenlabs)
+          : asRecord(ttsConfig.elevenlabs),
       errorMessage: "Failed to configure ElevenLabs TTS via Dench Cloud gateway.",
     });
   };
@@ -2755,13 +2958,15 @@ async function applyDenchCloudBootstrapConfig(params: {
   selectedModel: string;
   openClawVersion?: string;
 }): Promise<ElevenLabsTtsConfigShape> {
-  const raw = readBootstrapConfig(params.stateDir) as {
-    agents?: {
-      defaults?: {
-        models?: unknown;
-      };
-    };
-  } | undefined;
+  const raw = readBootstrapConfig(params.stateDir) as
+    | {
+        agents?: {
+          defaults?: {
+            models?: unknown;
+          };
+        };
+      }
+    | undefined;
   const existingAgentModels =
     raw?.agents?.defaults?.models && typeof raw.agents.defaults.models === "object"
       ? (raw.agents.defaults.models as Record<string, unknown>)
@@ -2902,9 +3107,11 @@ async function resolveDenchCloudBootstrapSelection(params: {
   const wantsDenchCloud = explicitRequest
     ? true
     : await confirm({
-      message: stylePromptMessage("Continue with Dench Cloud? Recommended. API key: dench.com/api"),
-      initialValue: existingDenchConfigured || !currentProvider,
-    });
+        message: stylePromptMessage(
+          "Continue with Dench Cloud? Recommended. API key: dench.com/api",
+        ),
+        initialValue: existingDenchConfigured || !currentProvider,
+      });
   if (isCancel(wantsDenchCloud) || !wantsDenchCloud) {
     return { enabled: false };
   }
@@ -2955,10 +3162,16 @@ async function resolveDenchCloudBootstrapSelection(params: {
       catalogSpinner?.stop("Models loaded.");
     }
 
-    const explicitModel = params.opts.denchCloudModel?.trim() || process.env.DENCH_CLOUD_MODEL?.trim();
-    const preselected = resolveDenchCloudModel(catalog.models, explicitModel || existing.selectedModel);
+    const explicitModel =
+      params.opts.denchCloudModel?.trim() || process.env.DENCH_CLOUD_MODEL?.trim();
+    const preselected = resolveDenchCloudModel(
+      catalog.models,
+      explicitModel || existing.selectedModel,
+    );
     if (!preselected && explicitModel) {
-      params.runtime.log(theme.warn(`Configured Dench Cloud model "${explicitModel}" is unavailable.`));
+      params.runtime.log(
+        theme.warn(`Configured Dench Cloud model "${explicitModel}" is unavailable.`),
+      );
     }
     const selection = await promptForDenchCloudModel({
       models: catalog.models,
@@ -2979,9 +3192,7 @@ async function resolveDenchCloudBootstrapSelection(params: {
       verifySpinner?.stop("Dench Cloud ready.");
     } catch (error) {
       verifySpinner?.stop("Verification failed.");
-      params.runtime.log(
-        theme.warn(error instanceof Error ? error.message : String(error)),
-      );
+      params.runtime.log(theme.warn(error instanceof Error ? error.message : String(error)));
       const retry = await confirm({
         message: stylePromptMessage("Re-enter your Dench Cloud API key?"),
         initialValue: true,
@@ -3192,11 +3403,11 @@ export async function bootstrapCommand(
       sourceDirName: "posthog-analytics",
       ...(process.env.POSTHOG_KEY
         ? {
-          enabled: true,
-          config: {
-            apiKey: process.env.POSTHOG_KEY,
-          },
-        }
+            enabled: true,
+            config: {
+              apiKey: process.env.POSTHOG_KEY,
+            },
+          }
         : {}),
     },
     {
@@ -3220,17 +3431,13 @@ export async function bootstrapCommand(
       pluginId: "apollo-enrichment",
       sourceDirName: "apollo-enrichment",
       enabled: denchCloudSelection.enabled,
-      ...(denchCloudSelection.enabled
-        ? { config: { enabled: true } }
-        : {}),
+      ...(denchCloudSelection.enabled ? { config: { enabled: true } } : {}),
     },
     {
       pluginId: "exa-search",
       sourceDirName: "exa-search",
       enabled: denchCloudSelection.enabled,
-      ...(denchCloudSelection.enabled
-        ? { config: { enabled: true } }
-        : {}),
+      ...(denchCloudSelection.enabled ? { config: { enabled: true } } : {}),
     },
   ];
 
@@ -3263,6 +3470,20 @@ export async function bootstrapCommand(
   // to the raw JSON file.  Post-onboard re-application via the CLI happens after
   // `openclaw onboard` creates the profile.
 
+  // ── Seed the workspace BEFORE openclaw onboard ──
+  // Previously this ran AFTER onboard, but a slow / killed onboard (e.g. when
+  // an outer wrapper SIGTERM's bootstrap, or when onboard exceeds its 12min
+  // budget) left the workspace without a `workspace.duckdb`, leading to the
+  // "No workspace database found" error in the web UI on warm-pool slots.
+  // The seed only depends on `workspaceDir` (mkdir'd at line 3382 above) and
+  // `packageRoot` (the npm package install dir) — it has no dependency on the
+  // openclaw profile being initialized, so it's safe to run early.
+  preOnboardSpinner?.message("Seeding workspace…");
+  const workspaceSeed = seedWorkspaceFromAssets({
+    workspaceDir,
+    packageRoot,
+  });
+
   preOnboardSpinner?.stop("Ready to onboard.");
 
   const onboardArgv = [
@@ -3283,14 +3504,28 @@ export async function bootstrapCommand(
   }
   if (denchCloudSelection.enabled) {
     onboardArgv.push("--auth-choice", "skip");
+  }
+  // `--skip-search` and `--skip-skills` skip two interactive wizard prompts
+  // that would otherwise hang non-interactive bootstrap (the prompts have no
+  // safe default that matches Dench's intent). They're also a known onboard-
+  // time sink in the dench-cloud path. Always pass them in non-interactive
+  // mode regardless of `denchCloudSelection.enabled` so warm-pool / sandbox
+  // bootstraps don't stall waiting for impossible prompt input.
+  if (nonInteractive) {
     onboardArgv.push("--skip-search");
     onboardArgv.push("--skip-skills");
   }
 
   onboardArgv.push("--accept-risk", "--skip-ui", "--skip-channels");
-  if (daemonless) {
-    onboardArgv.push("--skip-health");
-  }
+  // `openclaw onboard --install-daemon` runs an internal post-install health
+  // check that polls a bunch of external model-provider endpoints (Vercel AI
+  // Gateway, etc.). On slow networks (or when a provider endpoint times out)
+  // that probe can stall onboard for many minutes — long enough to exceed our
+  // 12-minute outer timeout and fail bootstrap entirely. We don't need it:
+  // the dench bootstrap does its own retry-aware gateway probe right after
+  // onboard returns (`probeGateway` at the top of the post-onboard block,
+  // followed by `attemptGatewayAutoFix` if needed). Skip it always.
+  onboardArgv.push("--skip-health");
 
   if (nonInteractive) {
     await runOpenClawOrThrow({
@@ -3305,13 +3540,15 @@ export async function bootstrapCommand(
       args: onboardArgv,
       timeoutMs: 12 * 60_000,
       errorMessage: "OpenClaw onboarding failed.",
+      // Watch the gateway log for the post-wizard `[gateway] ready (`
+      // line. When openclaw onboard restarts the daemon as part of its
+      // post-prompt work, we know the user is done with the wizard. If
+      // onboard then hangs on its own slow post-wizard verification
+      // (the recurring 5-10min stall), we send SIGTERM after a grace
+      // period and let denchclaw's own gateway probe + autofix continue.
+      gatewayLogPath: daemonless ? undefined : path.join(stateDir, "logs", "gateway.log"),
     });
   }
-
-  const workspaceSeed = seedWorkspaceFromAssets({
-    workspaceDir,
-    packageRoot,
-  });
 
   const postOnboardSpinner = !opts.json ? spinner() : null;
   postOnboardSpinner?.start("Finalizing configuration…");
@@ -3390,7 +3627,7 @@ export async function bootstrapCommand(
         timeoutMs: 60_000,
         errorMessage: "Failed to restart gateway after config update.",
       });
-    } catch {
+    } catch (err) {
       // Gateway may not be running (e.g. onboard daemon install failed on this
       // platform).  The final readiness check below will catch this.
     }
@@ -3463,6 +3700,24 @@ export async function bootstrapCommand(
       ? "Post-onboard setup complete."
       : "Post-onboard setup complete (web runtime unhealthy).",
   );
+
+  // Web runtime is verified healthy at this point — fire one explicit
+  // Gmail/Calendar sync kickoff so the user doesn't have to wait for the
+  // gateway plugin's first 5-min interval. Best-effort: a failure here
+  // (no Dench Cloud key, transient network) just falls back to that
+  // gateway-driven interval. See `extensions/dench-ai-gateway/sync-trigger.ts`
+  // for why the plugin no longer fires its own immediate-on-arm tick.
+  if (webRuntimeStatus.ready && !opts.json) {
+    const kickoff = await kickoffSyncPoll({
+      stateDir,
+      port: preferredWebPort,
+    });
+    const kickoffSummary = summarizeKickoffSyncPoll(kickoff);
+    if (kickoffSummary) {
+      runtime.log(theme.muted(kickoffSummary));
+    }
+  }
+
   const webReachable = webRuntimeStatus.ready;
   const webUrl = `http://localhost:${preferredWebPort}`;
   const composioConfigured = denchCloudSelection.enabled
@@ -3542,10 +3797,9 @@ export async function bootstrapCommand(
       runtime.log(
         theme.warn("Global OpenClaw was installed, but `openclaw` is not on shell PATH."),
       );
-      const pathHint =
-        IS_WINDOWS
-          ? `To add to PATH, run in PowerShell: $env:Path = "${installResult.globalBinDir};$env:Path"`
-          : `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`;
+      const pathHint = IS_WINDOWS
+        ? `To add to PATH, run in PowerShell: $env:Path = "${installResult.globalBinDir};$env:Path"`
+        : `Add this to your shell profile, then open a new terminal: export PATH="${installResult.globalBinDir}:$PATH"`;
       runtime.log(theme.muted(pathHint));
     }
 

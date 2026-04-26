@@ -37,6 +37,7 @@ export type WorkspaceLink =
 
 export type CronDashboardView = "overview" | "calendar" | "timeline" | "insights";
 export type CronRunStatusFilter = "all" | "ok" | "error" | "running";
+export type CrmView = "people" | "companies" | "inbox" | "calendar";
 
 export type WorkspaceUrlState = {
   path: string | null;
@@ -69,6 +70,10 @@ export type WorkspaceUrlState = {
   cronRun: number | null;
   /** Whether the terminal drawer is open. */
   terminal: boolean;
+  /** Active CRM top-level view (renders in the main panel). */
+  crm: CrmView | null;
+  /** Selected email thread id when the Inbox CRM view is active. */
+  thread: string | null;
 };
 
 const VALID_VIEW_TYPES: ViewType[] = [
@@ -78,6 +83,7 @@ const VALID_VIEW_TYPES: ViewType[] = [
 const VALID_CRON_VIEWS: CronDashboardView[] = ["overview", "calendar", "timeline", "insights"];
 const VALID_CRON_CAL_MODES: CalendarMode[] = ["day", "week", "month", "year"];
 const VALID_CRON_RUN_FILTERS: CronRunStatusFilter[] = ["all", "ok", "error", "running"];
+const VALID_CRM_VIEWS: CrmView[] = ["people", "companies", "inbox", "calendar"];
 
 // ---------------------------------------------------------------------------
 // URL state codec
@@ -125,6 +131,7 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
   const cronCalModeRaw = params.get("cronCalMode") as CalendarMode | null;
   const cronRunFilterRaw = params.get("cronRunFilter") as CronRunStatusFilter | null;
   const cronRunRaw = params.get("cronRun");
+  const crmRaw = params.get("crm") as CrmView | null;
 
   return {
     path: params.get("path"),
@@ -153,6 +160,8 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
     cronRunFilter: cronRunFilterRaw && VALID_CRON_RUN_FILTERS.includes(cronRunFilterRaw) ? cronRunFilterRaw : null,
     cronRun: cronRunRaw ? parseInt(cronRunRaw, 10) || null : null,
     terminal: params.get("terminal") === "1",
+    crm: crmRaw && VALID_CRM_VIEWS.includes(crmRaw) ? crmRaw : null,
+    thread: params.get("thread"),
   };
 }
 
@@ -189,6 +198,8 @@ export function serializeUrlState(state: Partial<WorkspaceUrlState>): string {
   if (state.cronRunFilter && state.cronRunFilter !== "all") params.set("cronRunFilter", state.cronRunFilter);
   if (state.cronRun != null) params.set("cronRun", String(state.cronRun));
   if (state.terminal) params.set("terminal", "1");
+  if (state.crm) params.set("crm", state.crm);
+  if (state.thread) params.set("thread", state.thread);
 
   return params.toString();
 }
@@ -204,6 +215,13 @@ export interface WorkspaceSyncState {
   activeSessionId: string | null;
   activeSubagentKey: string | null;
   fileChatSessionId: string | null;
+  /**
+   * The entry currently shown in the side-panel modal (or `null` when no
+   * modal is open). Drives the `?entry=<object>:<id>` URL param so the
+   * modal closes whenever app state clears it (e.g. on navigation), rather
+   * than being passively preserved from the previous URL.
+   */
+  entryModal: { objectName: string; entryId: string } | null;
   browseDir: string | null;
   showHidden: boolean;
   previewPath: string | null;
@@ -219,8 +237,11 @@ export interface WorkspaceSyncState {
  * Build the URL params that the workspace URL sync effect should push.
  *
  * Pure function: takes app state + the current URL params (for preserving
- * object-view and entry params managed by other effects) and returns the
- * complete URLSearchParams to write.
+ * object-view params managed by ObjectView's own effect) and returns the
+ * complete URLSearchParams to write. The `entry` param is driven by
+ * `state.entryModal`, not by the previous URL — that way navigating away
+ * from an open entry modal removes the param and the modal stays closed
+ * on refresh.
  */
 export function buildWorkspaceSyncParams(
   state: WorkspaceSyncState,
@@ -230,8 +251,12 @@ export function buildWorkspaceSyncParams(
 
   if (state.activePath) {
     params.set("path", state.activePath);
-    const entry = currentParams.get("entry");
-    if (entry) params.set("entry", entry);
+    if (state.entryModal) {
+      params.set(
+        "entry",
+        `${state.entryModal.objectName}:${state.entryModal.entryId}`,
+      );
+    }
     if (state.fileChatSessionId) params.set("fileChat", state.fileChatSessionId);
 
     if (state.activePath === "~cron") {
@@ -243,9 +268,16 @@ export function buildWorkspaceSyncParams(
       if (state.cronRun != null) params.set("cronRun", String(state.cronRun));
     }
 
-    for (const k of OBJECT_VIEW_PARAMS) {
-      const v = currentParams.get(k);
-      if (v) params.set(k, v);
+    // Only preserve object-view params when staying on the same path.
+    // Switching to a different object (or to a different path entirely)
+    // must drop the previous table's view/filters/cols/etc. so they don't
+    // bleed across tables — see workspace-sync-params test
+    // "drops object-view params when activePath changes".
+    if (currentParams.get("path") === state.activePath) {
+      for (const k of OBJECT_VIEW_PARAMS) {
+        const v = currentParams.get(k);
+        if (v) params.set(k, v);
+      }
     }
   } else if (state.activeSessionId) {
     params.set("chat", state.activeSessionId);
@@ -331,6 +363,11 @@ export function buildBrowseLink(dir: string, showHidden?: boolean): string {
   p.set("browse", dir);
   if (showHidden) p.set("hidden", "1");
   return `/?${p.toString()}`;
+}
+
+/** Build a URL for a CRM top-level view. */
+export function buildCrmLink(view: CrmView): string {
+  return `/?crm=${view}`;
 }
 
 // ---------------------------------------------------------------------------

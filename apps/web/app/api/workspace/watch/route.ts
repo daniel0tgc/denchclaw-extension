@@ -43,6 +43,14 @@ async function ensureWatcher(root: string) {
         /(^|[\\/])dist([\\/]|$)/,
         /\.duckdb\.wal$/,
         /\.duckdb\.tmp$/,
+        // Internal state that doesn't affect the visible tree. These fire
+        // constantly during chat streaming + tool calls and were causing
+        // the tree (and its icons) to re-render on every SSE tick, which
+        // manifested as the Tasks kanban icon briefly flipping colour.
+        /(^|[\\/])\.openclaw[\\/]web-chat([\\/]|$)/,
+        /(^|[\\/])\.openclaw[\\/]logs([\\/]|$)/,
+        /(^|[\\/])\.openclaw[\\/]cron-runs([\\/]|$)/,
+        /(^|[\\/])\.openclaw[\\/]gateway([\\/]|$)/,
       ],
       depth: 5,
     });

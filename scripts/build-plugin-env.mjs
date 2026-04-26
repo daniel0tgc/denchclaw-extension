@@ -11,7 +11,9 @@ try {
   const req = createRequire(import.meta.url);
   const oclPkg = req("openclaw/package.json");
   openclawVersion = oclPkg.version || "";
-} catch { /* openclaw not resolvable at build time */ }
+} catch {
+  /* openclaw not resolvable at build time */
+}
 
 writeFileSync(
   "extensions/posthog-analytics/lib/build-env.js",

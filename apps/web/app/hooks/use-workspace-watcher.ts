@@ -44,6 +44,36 @@ export function useWorkspaceWatcher() {
   // Bumping this key forces the SSE connection to tear down and reconnect.
   const [sseReconnectKey, setSseReconnectKey] = useState(0);
 
+  // Track the last-known-good object metadata (type + defaultView) per path.
+  // Refetches that race a concurrent DuckDB write can briefly return an
+  // object row without `default_view`, which would flip the tree icon
+  // (kanban → table → kanban). Carrying the previous value forward makes
+  // the UI stable unless the server actually reports a new state.
+  const lastObjectMetaRef = useRef<Map<string, { type: TreeNode["type"]; defaultView?: TreeNode["defaultView"] }>>(new Map());
+
+  const stabilizeTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    const prev = lastObjectMetaRef.current;
+    const next = new Map<string, { type: TreeNode["type"]; defaultView?: TreeNode["defaultView"] }>();
+    const walk = (list: TreeNode[]): TreeNode[] =>
+      list.map((node) => {
+        const last = prev.get(node.path);
+        let patched = node;
+        if (node.type === "object" && !node.defaultView && last?.defaultView) {
+          patched = { ...node, defaultView: last.defaultView };
+        }
+        if (patched.type === "object") {
+          next.set(patched.path, { type: patched.type, defaultView: patched.defaultView });
+        }
+        if (patched.children && patched.children.length > 0) {
+          patched = { ...patched, children: walk(patched.children) };
+        }
+        return patched;
+      });
+    const stable = walk(nodes);
+    lastObjectMetaRef.current = next;
+    return stable;
+  }, []);
+
   // Fetch the workspace tree from the tree API
   const fetchWorkspaceTree = useCallback(async () => {
     const version = ++fetchVersionRef.current;
@@ -52,7 +82,7 @@ export function useWorkspaceWatcher() {
       const res = await fetch(`/api/workspace/tree${qs}`);
       const data = await res.json();
       if (mountedRef.current && fetchVersionRef.current === version) {
-        setTree(data.tree ?? []);
+        setTree(stabilizeTree(data.tree ?? []));
         setExists(data.exists ?? false);
         setWorkspaceRoot(data.workspaceRoot ?? null);
         setOpenclawDir(data.openclawDir ?? null);
@@ -62,7 +92,7 @@ export function useWorkspaceWatcher() {
     } catch {
       if (mountedRef.current && fetchVersionRef.current === version) {setLoading(false);}
     }
-  }, [showHidden]);
+  }, [showHidden, stabilizeTree]);
 
   // Fetch a directory listing from the browse API
   const fetchBrowseTree = useCallback(async (dir: string) => {

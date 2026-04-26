@@ -10,6 +10,16 @@ This skill covers creating and modifying workspace objects end-to-end. For DuckD
 
 ---
 
+## Where icons live (READ THIS FIRST)
+
+Object icons live ONLY in `<objectDir>/.object.yaml` under the `icon:` key.
+**Never** include an `icon` column in any DuckDB SQL — the column has been retired.
+To change an existing object's icon, edit its `.object.yaml` directly OR call
+`PATCH /api/workspace/objects/<name>/icon` with `{ "icon": "lucide-name" }`.
+The web UI also exposes an icon picker in the object header.
+
+---
+
 ## Full Workflow: Create CRM Structure in One Shot
 
 EVERY object creation MUST complete ALL THREE steps below. Never stop after the SQL.
@@ -19,9 +29,9 @@ EVERY object creation MUST complete ALL THREE steps below. Never stop after the 
 ```sql
 BEGIN TRANSACTION;
 
--- 1a. Create object
-INSERT INTO objects (name, description, icon, default_view)
-VALUES ('lead', 'Sales leads tracking', 'user-plus', 'table')
+-- 1a. Create object (icon is NOT a DB column — it lives in .object.yaml only)
+INSERT INTO objects (name, description, default_view)
+VALUES ('lead', 'Sales leads tracking', 'table')
 ON CONFLICT (name) DO NOTHING;
 
 -- 1b. Create all fields
@@ -130,8 +140,8 @@ When creating task/board objects, use `default_view = 'kanban'` and auto-create 
 
 ```sql
 BEGIN TRANSACTION;
-INSERT INTO objects (name, description, icon, default_view)
-VALUES ('task', 'Task tracking board', 'check-square', 'kanban')
+INSERT INTO objects (name, description, default_view)
+VALUES ('task', 'Task tracking board', 'kanban')
 ON CONFLICT (name) DO NOTHING;
 
 -- Auto-create Status field with kanban-appropriate values
@@ -320,7 +330,7 @@ You MUST complete ALL steps below after ANY schema mutation (create/update/delet
 
 - [ ] `CREATE OR REPLACE VIEW v_{object_name}` — regenerate the PIVOT view
 - [ ] `mkdir -p {{WORKSPACE_PATH}}/{object_name}/` — create the object directory
-- [ ] Write `{{WORKSPACE_PATH}}/{object_name}/.object.yaml` — metadata projection with id, name, description, icon, default_view, entry_count, and full field list
+- [ ] Write `{{WORKSPACE_PATH}}/{object_name}/.object.yaml` — metadata projection with id, name, description, **icon** (yaml is the only place icons live), default_view, entry_count, and full field list
 - [ ] If object has a `parent_document_id`, place directory inside the parent document's directory
 - [ ] Update `WORKSPACE.md` if it exists
 
@@ -357,6 +367,7 @@ These steps ensure the filesystem always mirrors DuckDB. The sidebar depends on 
 ## Common Mistakes and Recovery
 
 ### Object exists in DuckDB but doesn't appear in the sidebar
+
 The `.object.yaml` file is missing. Regenerate it:
 
 ```bash
@@ -366,6 +377,7 @@ mkdir -p {{WORKSPACE_PATH}}/lead
 ```
 
 ### PIVOT view returns wrong columns or errors
+
 The `IN (...)` field list is out of date. Regenerate the view by querying current fields:
 
 ```bash
@@ -374,6 +386,7 @@ duckdb {{WORKSPACE_PATH}}/workspace.duckdb -json "SELECT name FROM fields WHERE 
 ```
 
 ### `.object.yaml` is out of sync with DuckDB
+
 Query the current state and rewrite the file:
 
 ```bash
@@ -384,4 +397,5 @@ duckdb {{WORKSPACE_PATH}}/workspace.duckdb -json "SELECT name, type, required, e
 ```
 
 ### DuckDB name doesn't match directory name
+
 All three must be identical: the DuckDB `objects.name`, the filesystem directory name, and `.object.yaml` `name`. If they diverge, rename them to match. See the "Renaming / Moving Objects" section in the parent CRM skill.

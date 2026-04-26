@@ -41,14 +41,15 @@ function computeNextWakeAtMs(jobs: Array<Record<string, unknown>>): number | nul
   return min;
 }
 
-/** Read heartbeat config from openclaw.json + estimate next due from agent sessions. */
-function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null; every: string } {
-  const setting = readHeartbeatSetting();
-  const result = { intervalMs: setting.intervalMs, nextDueEstimateMs: null as number | null, every: setting.raw };
-
+/**
+ * Estimate when the next heartbeat will fire based on the most recent agent
+ * session activity plus the configured interval. Returns null when no session
+ * activity is available.
+ */
+function estimateNextHeartbeatMs(intervalMs: number): number | null {
   try {
     const agentsDir = join(resolveOpenClawStateDir(), "agents");
-    if (!existsSync(agentsDir)) {return result;}
+    if (!existsSync(agentsDir)) {return null;}
 
     const agentDirs = readdirSync(agentsDir, { withFileTypes: true });
     let latestHeartbeat: number | null = null;
@@ -72,14 +73,24 @@ function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | 
       }
     }
 
-    if (latestHeartbeat) {
-      result.nextDueEstimateMs = latestHeartbeat + result.intervalMs;
-    }
+    if (latestHeartbeat) {return latestHeartbeat + intervalMs;}
   } catch {
     // ignore
   }
+  return null;
+}
 
-  return result;
+/**
+ * Read heartbeat config from openclaw.json + estimate next due from agent sessions.
+ * Returns interval, raw config string, and estimated next-fire timestamp.
+ */
+function readHeartbeatInfo(): { intervalMs: number; nextDueEstimateMs: number | null; every: string } {
+  const setting = readHeartbeatSetting();
+  return {
+    intervalMs: setting.intervalMs,
+    nextDueEstimateMs: estimateNextHeartbeatMs(setting.intervalMs),
+    every: setting.raw,
+  };
 }
 
 /** GET /api/cron/jobs -- list all cron jobs with heartbeat & status info */

@@ -1,3 +1,6 @@
+import { readDenchAuthProfileKey } from "../shared/dench-auth.js";
+import { registerDenchIntegrationsBridge } from "./composio-bridge.js";
+import { buildDenchCloudConfigPatch, buildDenchCloudProviderConfig } from "./config-patch.js";
 import {
   buildDenchGatewayApiBaseUrl,
   buildDenchGatewayCatalogUrl,
@@ -9,11 +12,8 @@ import {
   resolveDenchCloudModel,
   type DenchCloudCatalogModel,
 } from "./models.js";
-import {
-  buildDenchCloudConfigPatch,
-  buildDenchCloudProviderConfig,
-} from "./config-patch.js";
-import { registerDenchIntegrationsBridge } from "./composio-bridge.js";
+import { registerSyncRefreshTools } from "./sync-refresh-tools.js";
+import { armSyncTrigger } from "./sync-trigger.js";
 export { buildDenchCloudConfigPatch } from "./config-patch.js";
 
 export const id = "dench-ai-gateway";
@@ -43,7 +43,8 @@ function resolvePluginConfig(api: any): UnknownRecord | undefined {
 
 function resolveGatewayUrl(api: any): string {
   const pluginConfig = resolvePluginConfig(api);
-  const configured = typeof pluginConfig?.gatewayUrl === "string" ? pluginConfig.gatewayUrl : undefined;
+  const configured =
+    typeof pluginConfig?.gatewayUrl === "string" ? pluginConfig.gatewayUrl : undefined;
   return normalizeDenchGatewayUrl(
     configured || process.env.DENCH_GATEWAY_URL || DEFAULT_DENCH_CLOUD_GATEWAY_URL,
   );
@@ -100,10 +101,7 @@ export async function fetchDenchCloudCatalog(gatewayUrl: string): Promise<Catalo
   }
 }
 
-export async function validateDenchCloudApiKey(
-  gatewayUrl: string,
-  apiKey: string,
-): Promise<void> {
+export async function validateDenchCloudApiKey(gatewayUrl: string, apiKey: string): Promise<void> {
   const response = await fetch(`${buildDenchGatewayApiBaseUrl(gatewayUrl)}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -145,10 +143,7 @@ async function promptForModelSelection(params: {
   return selected;
 }
 
-function buildAuthNotes(params: {
-  gatewayUrl: string;
-  catalog: CatalogLoadResult;
-}): string[] {
+function buildAuthNotes(params: { gatewayUrl: string; catalog: CatalogLoadResult }): string[] {
   const notes = [
     `Dench Cloud uses ${buildDenchGatewayApiBaseUrl(params.gatewayUrl)} for model traffic.`,
   ];
@@ -215,10 +210,7 @@ async function runInteractiveAuth(ctx: any, gatewayUrl: string) {
 
 async function runNonInteractiveAuth(ctx: any, gatewayUrl: string) {
   const apiKey = String(
-    ctx?.opts?.denchCloudApiKey ||
-      ctx?.opts?.denchCloudKey ||
-      resolveEnvApiKey() ||
-      "",
+    ctx?.opts?.denchCloudApiKey || ctx?.opts?.denchCloudKey || resolveEnvApiKey() || "",
   ).trim();
   if (!apiKey) {
     throw new Error(
@@ -312,6 +304,24 @@ export default function register(api: any) {
   } as any);
 
   registerDenchIntegrationsBridge(api, gatewayUrl);
+
+  // Arm the gateway-driven Gmail/Calendar sync poll trigger. Lives here
+  // (not in the Next.js process) so the timer survives `denchclaw update`
+  // and web-runtime restarts. No-op when no Dench Cloud key is present
+  // or when `syncTrigger.enabled` is explicitly disabled in plugin config.
+  armSyncTrigger(api);
+
+  // Register on-demand sync tools the agent can call when the user
+  // asks for a manual refresh. Gated on the same key check as
+  // `armSyncTrigger`: without a Dench Cloud key, the underlying
+  // sync runner can't talk to Composio, so exposing the tools would
+  // just produce confusing failures.
+  if (typeof api?.registerTool === "function" && readDenchAuthProfileKey()) {
+    const registered = registerSyncRefreshTools(api);
+    api.logger?.info?.(
+      `[dench-ai-gateway] registered sync refresh tools: ${registered.join(", ")}`,
+    );
+  }
 
   api.registerService({
     id: "dench-ai-gateway",

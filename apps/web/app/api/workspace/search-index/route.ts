@@ -8,6 +8,7 @@ import {
   duckdbQueryOnFileAsync,
   isDatabaseFile,
   pivotViewIdentifier,
+  readObjectYamlIcon,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,6 @@ type ObjectRow = {
   id: string;
   name: string;
   description?: string;
-  icon?: string;
   default_view?: string;
   display_field?: string;
 };
@@ -137,7 +137,7 @@ function flattenTree(
           label: entry.name,
           sublabel: relPath,
           kind: "object",
-          icon: icon ?? dbObj?.icon,
+          icon,
           path: relPath,
           nodeType: undefined,
           defaultView: (dbObj?.default_view === "kanban" ? "kanban" : "table") as "table" | "kanban",
@@ -203,6 +203,8 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
     const previewFields = fields
       .filter((f) => !["relation", "richtext"].includes(f.type))
       .slice(0, 4);
+    // Icon comes from .object.yaml — DuckDB no longer stores it.
+    const objIcon = readObjectYamlIcon(obj.name);
 
     // Try PIVOT view first, then raw EAV (on the same DB).
     // Use pivotViewIdentifier so object names with hyphens (e.g. "ai-agent")
@@ -254,7 +256,7 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
         label: displayValue || `(${obj.name} entry)`,
         sublabel: obj.name,
         kind: "entry",
-        icon: obj.icon,
+        icon: objIcon,
         objectName: obj.name,
         entryId,
         fields: Object.keys(fieldPreview).length > 0 ? fieldPreview : undefined,
@@ -267,13 +269,30 @@ async function buildEntryItems(): Promise<SearchIndexItem[]> {
 
 // --- Route handler ---
 
+/**
+ * Synthetic CRM nav shortcuts so cmd-K can jump straight to the CRM
+ * top-level views (People / Companies / Inbox / Calendar). They render
+ * with `kind: "file"` and a `path` value of `~crm/<view>`, which the
+ * existing `parseWorkspaceLink` → `handleNavigate` flow recognizes.
+ */
+const CRM_NAV_ITEMS: SearchIndexItem[] = [
+  { id: "~crm/people", label: "People", sublabel: "CRM", kind: "file", path: "~crm/people", nodeType: "folder", icon: "users" },
+  { id: "~crm/companies", label: "Companies", sublabel: "CRM", kind: "file", path: "~crm/companies", nodeType: "folder", icon: "building" },
+  { id: "~crm/inbox", label: "Inbox", sublabel: "CRM", kind: "file", path: "~crm/inbox", nodeType: "folder", icon: "inbox" },
+  { id: "~crm/calendar", label: "Calendar", sublabel: "CRM", kind: "file", path: "~crm/calendar", nodeType: "folder", icon: "calendar" },
+];
+
 export async function GET() {
   const items: SearchIndexItem[] = [];
 
   // 1. Files + objects from tree
   const root = resolveWorkspaceRoot();
   if (root) {
-    // Aggregate objects from ALL discovered DuckDB files (shallower wins)
+    // Aggregate objects from ALL discovered DuckDB files (shallower wins).
+    // Important: we do NOT filter on `hidden_in_sidebar` here — entries
+    // from CRM-only objects (email_thread / email_message / calendar_event /
+    // interaction) still need to be reachable via global search even
+    // though their parent objects are absent from the file tree.
     const dbObjects = new Map<string, ObjectRow>();
     const objs = await duckdbQueryAllAsync<ObjectRow & { name: string }>(
       "SELECT * FROM objects",
@@ -285,11 +304,17 @@ export async function GET() {
     flattenTree(root, "", dbObjects, items);
   }
 
-  // 2. Entries from all objects across all discovered DBs
+  // 2. Entries from all objects across all discovered DBs.
+  // `buildEntryItems` deliberately doesn't filter on `hidden_in_sidebar`
+  // either — see the same rationale above.
   const dbPaths = discoverDuckDBPaths();
   if (dbPaths.length > 0) {
     items.push(...await buildEntryItems());
   }
+
+  // 3. CRM nav shortcuts (People / Companies / Inbox / Calendar). Always
+  // present so they're reachable even when the workspace is empty.
+  items.push(...CRM_NAV_ITEMS);
 
   return Response.json({ items });
 }

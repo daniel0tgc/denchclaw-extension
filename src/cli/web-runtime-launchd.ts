@@ -13,12 +13,7 @@ import {
 const LAUNCH_AGENT_LABEL = "ai.denchclaw.web-runtime";
 
 export function resolveLaunchAgentPlistPath(): string {
-  return path.join(
-    os.homedir(),
-    "Library",
-    "LaunchAgents",
-    `${LAUNCH_AGENT_LABEL}.plist`,
-  );
+  return path.join(os.homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
 }
 
 function escapeXml(value: string): string {

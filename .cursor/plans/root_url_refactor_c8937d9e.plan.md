@@ -45,8 +45,6 @@ flowchart LR
   UrlWriters --> UrlState
 ```
 
-
-
 ## Refactor Seams
 
 - Extract a typed `WorkspaceUrlState` parser/serializer from the current `/workspace` helpers in `[apps/web/lib/workspace-links.ts](apps/web/lib/workspace-links.ts)`. It should cover at least:
@@ -88,4 +86,3 @@ flowchart LR
 - Some state is still trapped inside child components, especially column visibility and subagent selection, so those contracts will need lifting before URL sync can be reliable.
 - Mitigation for child-owned state risk: do the extraction first, add narrow contract tests around the lifted interfaces, then wire those parent-owned values into the URL layer instead of changing ownership and routing in one step.
 - There is already a dirty worktree outside this refactor (`extensions/posthog-analytics/index.ts`, `src/cli/bootstrap-external.ts`), so the implementation should avoid touching unrelated changes while we migrate the web app.
-

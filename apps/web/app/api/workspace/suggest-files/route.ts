@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync, type Dirent } from "node:fs";
+import { readdirSync, type Dirent } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -6,8 +6,8 @@ import {
 	duckdbQueryAllAsync,
 	discoverDuckDBPaths,
 	duckdbQueryOnFileAsync,
-	parseSimpleYaml,
 	pivotViewIdentifier,
+	readObjectYamlIcon,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -206,7 +206,6 @@ type ObjectRow = {
 	id: string;
 	name: string;
 	description?: string;
-	icon?: string;
 	display_field?: string;
 	default_view?: string;
 };
@@ -233,35 +232,9 @@ function resolveDisplayField(obj: ObjectRow, fields: FieldRow[]): string {
 	return fields[0]?.name ?? "id";
 }
 
-/** Read icon from .object.yaml if present. */
-function readObjectIcon(workspaceRoot: string, objName: string): string | undefined {
-	// Walk workspace to find a folder matching objName that has .object.yaml
-	function walk(dir: string, depth: number): string | undefined {
-		if (depth > 4) {return undefined;}
-		try {
-			const entries = readdirSync(dir, { withFileTypes: true });
-			for (const entry of entries) {
-				if (!entry.isDirectory() || entry.name.startsWith(".")) {continue;}
-				if (entry.name === objName) {
-					const yamlPath = join(dir, entry.name, ".object.yaml");
-					if (existsSync(yamlPath)) {
-						const parsed = parseSimpleYaml(readFileSync(yamlPath, "utf-8"));
-						if (parsed.icon) {return dbStr(parsed.icon);}
-					}
-				}
-				const found = walk(join(dir, entry.name), depth + 1);
-				if (found) {return found;}
-			}
-		} catch { /* skip */ }
-		return undefined;
-	}
-	return walk(workspaceRoot, 0);
-}
-
 /** Search objects by name (case-insensitive substring). */
 async function searchObjects(
 	query: string,
-	workspaceRoot: string,
 	max: number,
 ): Promise<SuggestItem[]> {
 	const sql = query
@@ -271,23 +244,15 @@ async function searchObjects(
 
 	const items: SuggestItem[] = [];
 	for (const obj of objects) {
-		const yamlIcon = readObjectIcon(workspaceRoot, obj.name);
 		items.push({
 			name: obj.name,
 			path: `workspace:object:${obj.name}`,
 			type: "object",
-			icon: yamlIcon ?? obj.icon,
+			icon: readObjectYamlIcon(obj.name),
 			defaultView: (obj.default_view === "kanban" ? "kanban" : "table") as "table" | "kanban",
 		});
 	}
 	return items;
-}
-
-/** Safely convert an unknown DB value to a display string. */
-function dbStr(val: unknown): string {
-	if (val == null) {return "";}
-	if (typeof val === "object") {return JSON.stringify(val);}
-	return String(val as string | number | boolean);
 }
 
 /**
@@ -377,12 +342,11 @@ async function searchEntries(
 		for (const hit of hits) {
 			if (items.length >= max) {return items;}
 			if (!hit.entry_id || !hit._display) {continue;}
-			const objInfo = objectMap.get(hit._obj_name);
 			items.push({
 				name: String(hit._display),
 				path: `workspace:entry:${hit._obj_name}:${hit.entry_id}`,
 				type: "entry",
-				icon: objInfo?.obj.icon,
+				icon: readObjectYamlIcon(hit._obj_name),
 				objectName: hit._obj_name,
 				entryId: hit.entry_id,
 			});
@@ -405,7 +369,7 @@ export async function GET(req: Request) {
 		searchFiles(workspaceRoot, searchQuery, fileResults, 15);
 
 		// DuckDB search: objects and entries (sequential to avoid lock contention)
-		const objectResults = await searchObjects(searchQuery, workspaceRoot, 10);
+		const objectResults = await searchObjects(searchQuery, 10);
 		const entryResults = await searchEntries(searchQuery, 15);
 
 		// Deduplicate: if an object matches, remove the duplicate folder
@@ -433,7 +397,7 @@ export async function GET(req: Request) {
 
 	// Default: list workspace root + all objects
 	const fileItems = listDir(workspaceRoot);
-	const objectItems = await searchObjects("", workspaceRoot, 20);
+	const objectItems = await searchObjects("", 20);
 	// Deduplicate: if an object also appears as a folder, keep the object version
 	const objectNames = new Set(objectItems.map((o) => o.name));
 	const dedupedFiles = fileItems.filter(

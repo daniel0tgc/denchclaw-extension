@@ -40,7 +40,7 @@ const result = await dench.chat.send(sessionId, "Analyze the people table and su
         showToolResult(event.result);
         break;
     }
-  }
+  },
 });
 // result contains the full accumulated response: { text, toolCalls, reasoning }
 ```
@@ -103,7 +103,7 @@ dench.tool.register("analyze-chart", async (input) => {
   return {
     analysis: analysis,
     chartImageUrl: chart.toDataURL(),
-    summary: `Generated ${chartType} chart with ${data.length} data points`
+    summary: `Generated ${chartType} chart with ${data.length} data points`,
   };
 });
 ```
@@ -146,19 +146,21 @@ const ws = new WebSocket("ws://127.0.0.1:18789");
 
 ```javascript
 ws.onopen = () => {
-  ws.send(JSON.stringify({
-    type: "req",
-    id: crypto.randomUUID(),
-    method: "connect",
-    params: {
-      minProtocol: 3,
-      maxProtocol: 3,
-      client: { id: "my-app", version: "1.0", platform: "web", mode: "backend" },
-      role: "user",
-      scopes: ["agent", "chat"],
-      caps: ["tool-events"]
-    }
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "req",
+      id: crypto.randomUUID(),
+      method: "connect",
+      params: {
+        minProtocol: 3,
+        maxProtocol: 3,
+        client: { id: "my-app", version: "1.0", platform: "web", mode: "backend" },
+        role: "user",
+        scopes: ["agent", "chat"],
+        caps: ["tool-events"],
+      },
+    }),
+  );
 };
 ```
 
@@ -166,25 +168,29 @@ ws.onopen = () => {
 
 ```javascript
 // Start an agent run
-ws.send(JSON.stringify({
-  type: "req",
-  id: crypto.randomUUID(),
-  method: "agent",
-  params: {
-    message: "Hello, analyze this data",
-    sessionKey: "agent:main:web:my-session-id",
-    channel: "webchat",
-    lane: "web"
-  }
-}));
+ws.send(
+  JSON.stringify({
+    type: "req",
+    id: crypto.randomUUID(),
+    method: "agent",
+    params: {
+      message: "Hello, analyze this data",
+      sessionKey: "agent:main:web:my-session-id",
+      channel: "webchat",
+      lane: "web",
+    },
+  }),
+);
 
 // Abort a run
-ws.send(JSON.stringify({
-  type: "req",
-  id: crypto.randomUUID(),
-  method: "chat.abort",
-  params: { sessionKey: "agent:main:web:my-session-id" }
-}));
+ws.send(
+  JSON.stringify({
+    type: "req",
+    id: crypto.randomUUID(),
+    method: "chat.abort",
+    params: { sessionKey: "agent:main:web:my-session-id" },
+  }),
+);
 ```
 
 ### Agent Events
@@ -241,7 +247,7 @@ async function sendMessage(text) {
       if (event.type === "text-delta") {
         responseEl.textContent += event.data;
       }
-    }
+    },
   });
 }
 
@@ -262,14 +268,15 @@ async function analyzeData(objectName) {
   const schema = await dench.objects.getSchema(objectName);
   const { sessionId } = await dench.chat.createSession("Data Analysis");
 
-  const result = await dench.chat.send(sessionId,
-    `Analyze the ${objectName} object. It has these fields: ${schema.fields.map(f => f.name).join(", ")}. ` +
-    `Query the data and provide insights.`,
+  const result = await dench.chat.send(
+    sessionId,
+    `Analyze the ${objectName} object. It has these fields: ${schema.fields.map((f) => f.name).join(", ")}. ` +
+      `Query the data and provide insights.`,
     {
       onEvent(event) {
         if (event.type === "text-delta") updateAnalysisPanel(event.data);
-      }
-    }
+      },
+    },
   );
 
   showFinalAnalysis(result.text);

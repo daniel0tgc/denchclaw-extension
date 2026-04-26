@@ -261,9 +261,10 @@ filters:
 Generate by querying DuckDB then writing the file:
 
 ```bash
-# 1. Query object + fields from DuckDB
+# 1. Query object + fields from DuckDB (icon is NOT a DB column — read it
+#    from the existing .object.yaml if you need to preserve it across edits).
 duckdb {{WORKSPACE_PATH}}/workspace.duckdb -json "
-  SELECT o.id, o.name, o.description, o.icon, o.default_view,
+  SELECT o.id, o.name, o.description, o.default_view,
          (SELECT COUNT(*) FROM entries WHERE object_id = o.id) as entry_count
   FROM objects o WHERE o.name = 'lead'
 "

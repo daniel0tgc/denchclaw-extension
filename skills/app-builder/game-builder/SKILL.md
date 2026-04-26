@@ -35,6 +35,7 @@ apps/my-game.dench.app/
 ```
 
 **`.dench.yaml`:**
+
 ```yaml
 name: "My Game"
 description: "A fun 2D game built with p5.js"
@@ -47,28 +48,45 @@ runtime: "static"
 No permissions needed unless the game reads/writes workspace data.
 
 **`index.html`:**
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Game</title>
-  <script src="https://unpkg.com/p5@1/lib/p5.min.js"></script>
-  <style>
-    * { margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; overflow: hidden; }
-    body { display: flex; align-items: center; justify-content: center; background: #0f0f1a; }
-    canvas { display: block; }
-  </style>
-</head>
-<body>
-  <script src="sketch.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Game</title>
+    <script src="https://unpkg.com/p5@1/lib/p5.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f0f1a;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="sketch.js"></script>
+  </body>
 </html>
 ```
 
 **`sketch.js` (game loop skeleton):**
+
 ```javascript
 let isDark = true;
 
@@ -77,9 +95,12 @@ function setup() {
 
   // Detect theme from DenchClaw
   if (window.dench) {
-    window.dench.app.getTheme().then(theme => {
-      isDark = theme === 'dark';
-    }).catch(() => {});
+    window.dench.app
+      .getTheme()
+      .then((theme) => {
+        isDark = theme === "dark";
+      })
+      .catch(() => {});
   }
 }
 
@@ -108,7 +129,12 @@ const sketch = (p) => {
     player = { x: p.width / 2, y: p.height / 2, size: 30, speed: 4 };
 
     if (window.dench) {
-      window.dench.app.getTheme().then(theme => { isDark = theme === 'dark'; }).catch(() => {});
+      window.dench.app
+        .getTheme()
+        .then((theme) => {
+          isDark = theme === "dark";
+        })
+        .catch(() => {});
     }
   };
 
@@ -116,17 +142,17 @@ const sketch = (p) => {
     p.background(isDark ? 15 : 245);
 
     // Input handling
-    if (p.keyIsDown(p.LEFT_ARROW) || p.keyIsDown(65))  player.x -= player.speed;
+    if (p.keyIsDown(p.LEFT_ARROW) || p.keyIsDown(65)) player.x -= player.speed;
     if (p.keyIsDown(p.RIGHT_ARROW) || p.keyIsDown(68)) player.x += player.speed;
-    if (p.keyIsDown(p.UP_ARROW) || p.keyIsDown(87))    player.y -= player.speed;
-    if (p.keyIsDown(p.DOWN_ARROW) || p.keyIsDown(83))   player.y += player.speed;
+    if (p.keyIsDown(p.UP_ARROW) || p.keyIsDown(87)) player.y -= player.speed;
+    if (p.keyIsDown(p.DOWN_ARROW) || p.keyIsDown(83)) player.y += player.speed;
 
     // Keep in bounds
     player.x = p.constrain(player.x, 0, p.width);
     player.y = p.constrain(player.y, 0, p.height);
 
     // Draw player
-    p.fill(isDark ? '#6366f1' : '#4f46e5');
+    p.fill(isDark ? "#6366f1" : "#4f46e5");
     p.noStroke();
     p.ellipse(player.x, player.y, player.size);
   };
@@ -144,29 +170,37 @@ new p5(sketch);
 #### Game State Machine
 
 ```javascript
-const GameState = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', GAME_OVER: 'gameover' };
+const GameState = { MENU: "menu", PLAYING: "playing", PAUSED: "paused", GAME_OVER: "gameover" };
 let state = GameState.MENU;
 let score = 0;
 let highScore = 0;
 
 function draw() {
   switch (state) {
-    case GameState.MENU:     drawMenu(); break;
-    case GameState.PLAYING:  drawGame(); break;
-    case GameState.PAUSED:   drawPause(); break;
-    case GameState.GAME_OVER: drawGameOver(); break;
+    case GameState.MENU:
+      drawMenu();
+      break;
+    case GameState.PLAYING:
+      drawGame();
+      break;
+    case GameState.PAUSED:
+      drawPause();
+      break;
+    case GameState.GAME_OVER:
+      drawGameOver();
+      break;
   }
 }
 
 function keyPressed() {
-  if (state === GameState.MENU && (key === ' ' || key === 'Enter')) {
+  if (state === GameState.MENU && (key === " " || key === "Enter")) {
     state = GameState.PLAYING;
     resetGame();
-  } else if (state === GameState.PLAYING && key === 'Escape') {
+  } else if (state === GameState.PLAYING && key === "Escape") {
     state = GameState.PAUSED;
-  } else if (state === GameState.PAUSED && key === 'Escape') {
+  } else if (state === GameState.PAUSED && key === "Escape") {
     state = GameState.PLAYING;
-  } else if (state === GameState.GAME_OVER && (key === ' ' || key === 'Enter')) {
+  } else if (state === GameState.GAME_OVER && (key === " " || key === "Enter")) {
     state = GameState.PLAYING;
     resetGame();
   }
@@ -177,28 +211,28 @@ function drawMenu() {
   fill(255);
   textAlign(CENTER, CENTER);
   textSize(48);
-  text('MY GAME', width / 2, height / 2 - 60);
+  text("MY GAME", width / 2, height / 2 - 60);
   textSize(18);
   fill(150);
-  text('Press SPACE or ENTER to start', width / 2, height / 2 + 20);
+  text("Press SPACE or ENTER to start", width / 2, height / 2 + 20);
   if (highScore > 0) {
     textSize(14);
-    text('High Score: ' + highScore, width / 2, height / 2 + 60);
+    text("High Score: " + highScore, width / 2, height / 2 + 60);
   }
 }
 
 function drawGameOver() {
   background(15);
-  fill('#ef4444');
+  fill("#ef4444");
   textAlign(CENTER, CENTER);
   textSize(48);
-  text('GAME OVER', width / 2, height / 2 - 60);
+  text("GAME OVER", width / 2, height / 2 - 60);
   fill(255);
   textSize(24);
-  text('Score: ' + score, width / 2, height / 2);
+  text("Score: " + score, width / 2, height / 2);
   textSize(16);
   fill(150);
-  text('Press SPACE to play again', width / 2, height / 2 + 50);
+  text("Press SPACE to play again", width / 2, height / 2 + 50);
 }
 ```
 
@@ -234,8 +268,10 @@ class Sprite {
 
   isOffscreen() {
     return (
-      this.pos.x < -this.w || this.pos.x > width + this.w ||
-      this.pos.y < -this.h || this.pos.y > height + this.h
+      this.pos.x < -this.w ||
+      this.pos.x > width + this.w ||
+      this.pos.y < -this.h ||
+      this.pos.y > height + this.h
     );
   }
 }
@@ -331,10 +367,10 @@ const tilemap = [
 ];
 
 const TILE_COLORS = {
-  0: null,       // empty
-  1: '#4a4a6a',  // wall
-  2: '#22c55e',  // item
-  3: '#ef4444',  // enemy
+  0: null, // empty
+  1: "#4a4a6a", // wall
+  2: "#22c55e", // item
+  3: "#ef4444", // enemy
 };
 
 function drawTilemap() {
@@ -361,10 +397,10 @@ For sound, prefer Howler.js since p5.sound adds significant bundle size:
 
 ```javascript
 const sounds = {
-  jump: new Howl({ src: ['assets/jump.wav'], volume: 0.5 }),
-  hit: new Howl({ src: ['assets/hit.wav'], volume: 0.7 }),
-  coin: new Howl({ src: ['assets/coin.wav'], volume: 0.4 }),
-  music: new Howl({ src: ['assets/music.mp3'], loop: true, volume: 0.3 }),
+  jump: new Howl({ src: ["assets/jump.wav"], volume: 0.5 }),
+  hit: new Howl({ src: ["assets/hit.wav"], volume: 0.7 }),
+  coin: new Howl({ src: ["assets/coin.wav"], volume: 0.4 }),
+  music: new Howl({ src: ["assets/music.mp3"], loop: true, volume: 0.3 }),
 };
 ```
 
@@ -416,17 +452,17 @@ function draw() {
   background(15);
 
   // Draw ground
-  fill('#4a4a6a');
+  fill("#4a4a6a");
   rectMode(CENTER);
   rect(ground.position.x, ground.position.y, width, 40);
 
   // Draw player
-  fill('#6366f1');
+  fill("#6366f1");
   ellipse(player.position.x, player.position.y, 40);
 }
 
 function keyPressed() {
-  if (key === ' ') {
+  if (key === " ") {
     Body.applyForce(player, player.position, { x: 0, y: -0.05 });
   }
 }
@@ -486,7 +522,8 @@ function windowResized() {
 
 ```javascript
 let touchActive = false;
-let touchX = 0, touchY = 0;
+let touchX = 0,
+  touchY = 0;
 
 function touchStarted() {
   touchActive = true;
@@ -507,9 +544,15 @@ function touchEnded() {
 }
 
 // Unified input: works for both mouse and touch
-function getInputX() { return mouseX; }
-function getInputY() { return mouseY; }
-function isInputActive() { return mouseIsPressed || touchActive; }
+function getInputX() {
+  return mouseX;
+}
+function getInputY() {
+  return mouseY;
+}
+function isInputActive() {
+  return mouseIsPressed || touchActive;
+}
 ```
 
 ### p5.js High Score Persistence with DuckDB
@@ -525,16 +568,18 @@ async function loadHighScore() {
       )
     `);
     const result = await window.dench.db.query(
-      `SELECT MAX(score) as high_score FROM game_scores WHERE game = 'my-game'`
+      `SELECT MAX(score) as high_score FROM game_scores WHERE game = 'my-game'`,
     );
     return result.rows?.[0]?.high_score || 0;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 async function saveScore(score) {
   try {
     await window.dench.db.execute(
-      `INSERT INTO game_scores (game, score) VALUES ('my-game', ${score})`
+      `INSERT INTO game_scores (game, score) VALUES ('my-game', ${score})`,
     );
   } catch {}
 }
@@ -569,6 +614,7 @@ apps/my-3d-app.dench.app/
 ```
 
 **`.dench.yaml`:**
+
 ```yaml
 name: "3D World"
 description: "An interactive 3D experience"
@@ -579,47 +625,67 @@ runtime: "static"
 ```
 
 **`index.html`:**
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D World</title>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.170/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
-    }
-  }
-  </script>
-  <style>
-    * { margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; overflow: hidden; }
-    canvas { display: block; }
-    #loading {
-      position: fixed; inset: 0; display: flex;
-      align-items: center; justify-content: center;
-      background: #0f0f1a; color: #e8e8f0;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 18px; z-index: 10;
-      transition: opacity 0.5s;
-    }
-    #loading.hidden { opacity: 0; pointer-events: none; }
-  </style>
-</head>
-<body>
-  <div id="loading">Loading...</div>
-  <script type="module" src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D World</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.170/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f0f1a;
+        color: #e8e8f0;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 18px;
+        z-index: 10;
+        transition: opacity 0.5s;
+      }
+      #loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">Loading...</div>
+    <script type="module" src="app.js"></script>
+  </body>
 </html>
 ```
 
 **`app.js` (Three.js module skeleton):**
+
 ```javascript
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
@@ -682,17 +748,20 @@ scene.add(cube);
 
 // --- Theme ---
 if (window.dench) {
-  window.dench.app.getTheme().then(theme => {
-    if (theme === 'light') {
-      scene.background = new THREE.Color(0xf0f0f5);
-      scene.fog = new THREE.Fog(0xf0f0f5, 50, 200);
-      groundMat.color.set(0xe8e8f0);
-    }
-  }).catch(() => {});
+  window.dench.app
+    .getTheme()
+    .then((theme) => {
+      if (theme === "light") {
+        scene.background = new THREE.Color(0xf0f0f5);
+        scene.fog = new THREE.Fog(0xf0f0f5, 50, 200);
+        groundMat.color.set(0xe8e8f0);
+      }
+    })
+    .catch(() => {});
 }
 
 // --- Hide loading screen ---
-document.getElementById('loading')?.classList.add('hidden');
+document.getElementById("loading")?.classList.add("hidden");
 
 // --- Animation loop ---
 const clock = new THREE.Clock();
@@ -712,7 +781,7 @@ function animate() {
 animate();
 
 // --- Resize ---
-window.addEventListener('resize', () => {
+window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -725,39 +794,39 @@ Load additional Three.js modules as needed via the import map:
 
 ```javascript
 // First-person controls
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 
 // GLTF model loading
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 // Post-processing
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 
 // Environment maps
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 
 // Text
-import { FontLoader } from 'three/addons/loaders/FontLoader.js';
-import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from "three/addons/loaders/FontLoader.js";
+import { TextGeometry } from "three/addons/geometries/TextGeometry.js";
 
 // Sky
-import { Sky } from 'three/addons/objects/Sky.js';
+import { Sky } from "three/addons/objects/Sky.js";
 
 // Water
-import { Water } from 'three/addons/objects/Water.js';
+import { Water } from "three/addons/objects/Water.js";
 
 // Physics integration (use cannon-es via CDN)
 // Add to importmap: "cannon-es": "https://unpkg.com/cannon-es@0.20/dist/cannon-es.js"
-import * as CANNON from 'cannon-es';
+import * as CANNON from "cannon-es";
 ```
 
 ### Three.js First-Person Game Pattern
 
 ```javascript
-import * as THREE from 'three';
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import * as THREE from "three";
+import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -769,7 +838,7 @@ document.body.appendChild(renderer.domElement);
 const controls = new PointerLockControls(camera, document.body);
 
 // Click to enter pointer lock
-document.addEventListener('click', () => {
+document.addEventListener("click", () => {
   if (!controls.isLocked) controls.lock();
 });
 
@@ -778,23 +847,51 @@ const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 const keys = { forward: false, backward: false, left: false, right: false, jump: false };
 
-document.addEventListener('keydown', (e) => {
+document.addEventListener("keydown", (e) => {
   switch (e.code) {
-    case 'KeyW': case 'ArrowUp':    keys.forward = true; break;
-    case 'KeyS': case 'ArrowDown':  keys.backward = true; break;
-    case 'KeyA': case 'ArrowLeft':  keys.left = true; break;
-    case 'KeyD': case 'ArrowRight': keys.right = true; break;
-    case 'Space':                   keys.jump = true; break;
+    case "KeyW":
+    case "ArrowUp":
+      keys.forward = true;
+      break;
+    case "KeyS":
+    case "ArrowDown":
+      keys.backward = true;
+      break;
+    case "KeyA":
+    case "ArrowLeft":
+      keys.left = true;
+      break;
+    case "KeyD":
+    case "ArrowRight":
+      keys.right = true;
+      break;
+    case "Space":
+      keys.jump = true;
+      break;
   }
 });
 
-document.addEventListener('keyup', (e) => {
+document.addEventListener("keyup", (e) => {
   switch (e.code) {
-    case 'KeyW': case 'ArrowUp':    keys.forward = false; break;
-    case 'KeyS': case 'ArrowDown':  keys.backward = false; break;
-    case 'KeyA': case 'ArrowLeft':  keys.left = false; break;
-    case 'KeyD': case 'ArrowRight': keys.right = false; break;
-    case 'Space':                   keys.jump = false; break;
+    case "KeyW":
+    case "ArrowUp":
+      keys.forward = false;
+      break;
+    case "KeyS":
+    case "ArrowDown":
+      keys.backward = false;
+      break;
+    case "KeyA":
+    case "ArrowLeft":
+      keys.left = false;
+      break;
+    case "KeyD":
+    case "ArrowRight":
+      keys.right = false;
+      break;
+    case "Space":
+      keys.jump = false;
+      break;
   }
 });
 
@@ -821,7 +918,10 @@ function animate() {
 
     if (keys.forward || keys.backward) velocity.z -= direction.z * MOVE_SPEED * dt;
     if (keys.left || keys.right) velocity.x -= direction.x * MOVE_SPEED * dt;
-    if (keys.jump && onGround) { velocity.y = JUMP_FORCE; onGround = false; }
+    if (keys.jump && onGround) {
+      velocity.y = JUMP_FORCE;
+      onGround = false;
+    }
 
     controls.moveRight(-velocity.x * dt);
     controls.moveForward(-velocity.z * dt);
@@ -843,53 +943,58 @@ animate();
 ### Three.js GLTF Model Loading
 
 ```javascript
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('https://unpkg.com/three@0.170/examples/jsm/libs/draco/');
+dracoLoader.setDecoderPath("https://unpkg.com/three@0.170/examples/jsm/libs/draco/");
 loader.setDRACOLoader(dracoLoader);
 
 // Load a model from the app's assets folder
-loader.load('assets/model.glb', (gltf) => {
-  const model = gltf.scene;
-  model.traverse((child) => {
-    if (child.isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
-  });
-  model.scale.setScalar(1);
-  scene.add(model);
+loader.load(
+  "assets/model.glb",
+  (gltf) => {
+    const model = gltf.scene;
+    model.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    model.scale.setScalar(1);
+    scene.add(model);
 
-  // If the model has animations
-  if (gltf.animations.length > 0) {
-    const mixer = new THREE.AnimationMixer(model);
-    const action = mixer.clipAction(gltf.animations[0]);
-    action.play();
-    // In animate loop: mixer.update(dt);
-  }
-}, undefined, (error) => {
-  console.error('Model load error:', error);
-});
+    // If the model has animations
+    if (gltf.animations.length > 0) {
+      const mixer = new THREE.AnimationMixer(model);
+      const action = mixer.clipAction(gltf.animations[0]);
+      action.play();
+      // In animate loop: mixer.update(dt);
+    }
+  },
+  undefined,
+  (error) => {
+    console.error("Model load error:", error);
+  },
+);
 ```
 
 ### Three.js Post-Processing (Bloom, etc.)
 
 ```javascript
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.5,  // strength
-  0.4,  // radius
-  0.85  // threshold
+  0.5, // strength
+  0.4, // radius
+  0.85, // threshold
 );
 composer.addPass(bloomPass);
 
@@ -939,31 +1044,40 @@ function noise(x, y) {
 Since Three.js renders to a canvas, use HTML overlays for UI:
 
 ```html
-<div id="hud" style="
+<div
+  id="hud"
+  style="
   position: fixed; top: 0; left: 0; right: 0;
   padding: 16px; pointer-events: none;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   color: white; z-index: 5;
-">
+"
+>
   <div id="score" style="font-size: 24px; font-weight: 700;"></div>
-  <div id="health-bar" style="
+  <div
+    id="health-bar"
+    style="
     width: 200px; height: 8px; border-radius: 4px;
     background: rgba(255,255,255,0.2); margin-top: 8px;
-  ">
-    <div id="health-fill" style="
+  "
+  >
+    <div
+      id="health-fill"
+      style="
       width: 100%; height: 100%; border-radius: 4px;
       background: #22c55e; transition: width 0.3s;
-    "></div>
+    "
+    ></div>
   </div>
 </div>
 ```
 
 ```javascript
 function updateHUD(score, health) {
-  document.getElementById('score').textContent = `Score: ${score}`;
-  document.getElementById('health-fill').style.width = `${health}%`;
-  document.getElementById('health-fill').style.background =
-    health > 50 ? '#22c55e' : health > 25 ? '#f59e0b' : '#ef4444';
+  document.getElementById("score").textContent = `Score: ${score}`;
+  document.getElementById("health-fill").style.width = `${health}%`;
+  document.getElementById("health-fill").style.background =
+    health > 50 ? "#22c55e" : health > 25 ? "#f59e0b" : "#ef4444";
 }
 ```
 
@@ -976,6 +1090,7 @@ function updateHUD(score, health) {
 A complete asteroid-dodge game with scoring, particles, and game states.
 
 **`.dench.yaml`:**
+
 ```yaml
 name: "Asteroid Dodge"
 description: "Dodge the falling asteroids! Arrow keys or WASD to move."
@@ -986,39 +1101,58 @@ runtime: "static"
 ```
 
 **`index.html`:**
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Asteroid Dodge</title>
-  <script src="https://unpkg.com/p5@1/lib/p5.min.js"></script>
-  <style>
-    * { margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; }
-    canvas { display: block; }
-  </style>
-</head>
-<body>
-  <script src="game.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Asteroid Dodge</title>
+    <script src="https://unpkg.com/p5@1/lib/p5.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0a1a;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="game.js"></script>
+  </body>
 </html>
 ```
 
 **`game.js`:**
+
 ```javascript
 const State = { MENU: 0, PLAY: 1, OVER: 2 };
 let state = State.MENU;
 let player, asteroids, particles, stars;
-let score, highScore = 0, spawnTimer, difficulty;
+let score,
+  highScore = 0,
+  spawnTimer,
+  difficulty;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  textFont('system-ui');
+  textFont("system-ui");
 
   stars = Array.from({ length: 100 }, () => ({
-    x: random(width), y: random(height), s: random(1, 3), b: random(100, 255)
+    x: random(width),
+    y: random(height),
+    s: random(1, 3),
+    b: random(100, 255),
   }));
 
   if (window.dench) {
@@ -1040,9 +1174,19 @@ function draw() {
   drawStars();
 
   switch (state) {
-    case State.MENU: drawMenu(); break;
-    case State.PLAY: updateGame(); drawGame(); drawHUD(); break;
-    case State.OVER: drawGame(); drawHUD(); drawGameOver(); break;
+    case State.MENU:
+      drawMenu();
+      break;
+    case State.PLAY:
+      updateGame();
+      drawGame();
+      drawHUD();
+      break;
+    case State.OVER:
+      drawGame();
+      drawHUD();
+      drawGameOver();
+      break;
   }
 }
 
@@ -1052,7 +1196,10 @@ function drawStars() {
     fill(255, s.b);
     ellipse(s.x, s.y, s.s);
     s.y += s.s * 0.3;
-    if (s.y > height) { s.y = 0; s.x = random(width); }
+    if (s.y > height) {
+      s.y = 0;
+      s.x = random(width);
+    }
   }
 }
 
@@ -1061,17 +1208,17 @@ function drawMenu() {
   textAlign(CENTER, CENTER);
   textSize(min(width * 0.08, 56));
   textStyle(BOLD);
-  text('ASTEROID DODGE', width / 2, height / 2 - 60);
+  text("ASTEROID DODGE", width / 2, height / 2 - 60);
   textSize(min(width * 0.03, 18));
   textStyle(NORMAL);
   fill(180);
-  text('Arrow keys or WASD to move', width / 2, height / 2 + 10);
+  text("Arrow keys or WASD to move", width / 2, height / 2 + 10);
   fill(99, 102, 241);
-  text('Press SPACE or ENTER to start', width / 2, height / 2 + 50);
+  text("Press SPACE or ENTER to start", width / 2, height / 2 + 50);
   if (highScore > 0) {
     fill(120);
     textSize(14);
-    text('High Score: ' + highScore, width / 2, height / 2 + 90);
+    text("High Score: " + highScore, width / 2, height / 2 + 90);
   }
 }
 
@@ -1090,7 +1237,8 @@ function updateGame() {
   spawnTimer++;
   if (spawnTimer > max(15, 45 - difficulty * 3)) {
     asteroids.push({
-      x: random(width), y: -30,
+      x: random(width),
+      y: -30,
       size: random(15, 35),
       vy: random(2, 4) * difficulty,
       vx: random(-1, 1),
@@ -1129,7 +1277,10 @@ function updateGame() {
   // Update particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
-    p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= 0.02;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.05;
+    p.life -= 0.02;
     if (p.life <= 0) particles.splice(i, 1);
   }
 
@@ -1148,7 +1299,7 @@ function drawGame() {
     beginShape();
     for (let i = 0; i < 7; i++) {
       const angle = map(i, 0, 7, 0, TWO_PI);
-      const r = a.size / 2 * (0.7 + 0.3 * sin(i * 2.5));
+      const r = (a.size / 2) * (0.7 + 0.3 * sin(i * 2.5));
       vertex(cos(angle) * r, sin(angle) * r);
     }
     endShape(CLOSE);
@@ -1169,9 +1320,23 @@ function drawGame() {
       translate(player.x, player.y);
       fill(99, 102, 241);
       noStroke();
-      triangle(0, -player.size, -player.size * 0.6, player.size * 0.6, player.size * 0.6, player.size * 0.6);
+      triangle(
+        0,
+        -player.size,
+        -player.size * 0.6,
+        player.size * 0.6,
+        player.size * 0.6,
+        player.size * 0.6,
+      );
       fill(129, 140, 248);
-      triangle(0, -player.size * 0.5, -player.size * 0.3, player.size * 0.3, player.size * 0.3, player.size * 0.3);
+      triangle(
+        0,
+        -player.size * 0.5,
+        -player.size * 0.3,
+        player.size * 0.3,
+        player.size * 0.3,
+        player.size * 0.3,
+      );
       pop();
     }
   }
@@ -1183,7 +1348,7 @@ function drawHUD() {
   textAlign(LEFT, TOP);
   textSize(20);
   textStyle(BOLD);
-  text('Score: ' + score, 20, 20);
+  text("Score: " + score, 20, 20);
   textStyle(NORMAL);
   textSize(14);
   fill(200);
@@ -1200,14 +1365,14 @@ function drawGameOver() {
   textAlign(CENTER, CENTER);
   textSize(min(width * 0.07, 48));
   textStyle(BOLD);
-  text('GAME OVER', width / 2, height / 2 - 40);
+  text("GAME OVER", width / 2, height / 2 - 40);
   fill(255);
   textSize(22);
   textStyle(NORMAL);
-  text('Score: ' + score, width / 2, height / 2 + 10);
+  text("Score: " + score, width / 2, height / 2 + 10);
   fill(180);
   textSize(16);
-  text('Press SPACE to play again', width / 2, height / 2 + 50);
+  text("Press SPACE to play again", width / 2, height / 2 + 50);
 }
 
 function spawnParticles(x, y, col, count) {
@@ -1215,17 +1380,22 @@ function spawnParticles(x, y, col, count) {
     const angle = random(TWO_PI);
     const speed = random(1, 5);
     particles.push({
-      x, y, vx: cos(angle) * speed, vy: sin(angle) * speed,
-      size: random(4, 10), col, life: 1.0,
+      x,
+      y,
+      vx: cos(angle) * speed,
+      vy: sin(angle) * speed,
+      size: random(4, 10),
+      col,
+      life: 1.0,
     });
   }
 }
 
 function keyPressed() {
-  if (state === State.MENU && (key === ' ' || key === 'Enter')) {
+  if (state === State.MENU && (key === " " || key === "Enter")) {
     state = State.PLAY;
     resetGame();
-  } else if (state === State.OVER && (key === ' ' || key === 'Enter')) {
+  } else if (state === State.OVER && (key === " " || key === "Enter")) {
     state = State.PLAY;
     resetGame();
   }
@@ -1239,6 +1409,7 @@ function windowResized() {
 ### Example 2: 3D Scene Viewer (Three.js)
 
 **`.dench.yaml`:**
+
 ```yaml
 name: "3D Playground"
 description: "Interactive 3D scene with orbit controls"
@@ -1249,47 +1420,62 @@ runtime: "static"
 ```
 
 **`index.html`:**
+
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D Playground</title>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.170/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
-    }
-  }
-  </script>
-  <style>
-    * { margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; overflow: hidden; }
-    canvas { display: block; }
-  </style>
-</head>
-<body>
-  <script type="module" src="scene.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Playground</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.170/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.170/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="scene.js"></script>
+  </body>
 </html>
 ```
 
 **`scene.js`:**
+
 ```javascript
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const scene = new THREE.Scene();
 let bgColor = 0x0f0f1a;
 
 if (window.dench) {
-  window.dench.app.getTheme().then(t => {
-    bgColor = t === 'light' ? 0xf0f0f5 : 0x0f0f1a;
-    scene.background = new THREE.Color(bgColor);
-    scene.fog = new THREE.Fog(bgColor, 30, 100);
-  }).catch(() => {});
+  window.dench.app
+    .getTheme()
+    .then((t) => {
+      bgColor = t === "light" ? 0xf0f0f5 : 0x0f0f1a;
+      scene.background = new THREE.Color(bgColor);
+      scene.fog = new THREE.Fog(bgColor, 30, 100);
+    })
+    .catch(() => {});
 }
 
 scene.background = new THREE.Color(bgColor);
@@ -1317,7 +1503,7 @@ scene.add(sun);
 
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(60, 60),
-  new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.8 })
+  new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.8 }),
 );
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
@@ -1337,13 +1523,14 @@ for (let i = 0; i < 12; i++) {
   const geo = geos[Math.floor(Math.random() * geos.length)];
   const mat = new THREE.MeshStandardMaterial({
     color: colors[Math.floor(Math.random() * colors.length)],
-    roughness: 0.3, metalness: 0.5,
+    roughness: 0.3,
+    metalness: 0.5,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(
     (Math.random() - 0.5) * 16,
     0.5 + Math.random() * 3,
-    (Math.random() - 0.5) * 16
+    (Math.random() - 0.5) * 16,
   );
   mesh.castShadow = true;
   mesh.userData = {
@@ -1371,7 +1558,7 @@ function animate() {
 }
 animate();
 
-addEventListener('resize', () => {
+addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);

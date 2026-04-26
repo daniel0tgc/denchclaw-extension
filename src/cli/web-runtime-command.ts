@@ -3,12 +3,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { confirm, isCancel, spinner } from "@clack/prompts";
+import { DENCHCLAW_DEFAULT_GATEWAY_PORT, isDaemonlessMode } from "../config/paths.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { stylePromptMessage } from "../terminal/prompt-style.js";
 import { theme } from "../terminal/theme.js";
-import { DENCHCLAW_DEFAULT_GATEWAY_PORT, isDaemonlessMode } from "../config/paths.js";
 import { VERSION } from "../version.js";
 import { applyCliProfileEnv } from "./profile.js";
+import { kickoffSyncPoll, summarizeKickoffSyncPoll } from "./sync-poll.js";
+import {
+  installWebRuntimeLaunchAgent,
+  uninstallWebRuntimeLaunchAgent,
+} from "./web-runtime-launchd.js";
 import {
   DEFAULT_WEB_APP_PORT,
   cleanupManagedWebRuntimeBackup,
@@ -27,10 +32,10 @@ import {
   waitForWebRuntime,
 } from "./web-runtime.js";
 import {
-  installWebRuntimeLaunchAgent,
-  uninstallWebRuntimeLaunchAgent,
-} from "./web-runtime-launchd.js";
-import { discoverWorkspaceDirs, syncManagedSkills, type SkillSyncResult } from "./workspace-seed.js";
+  discoverWorkspaceDirs,
+  syncManagedSkills,
+  type SkillSyncResult,
+} from "./workspace-seed.js";
 
 type SpawnResult = {
   code: number;
@@ -468,7 +473,9 @@ export async function updateWebRuntimeCommand(
         ),
       );
     }
-    runtime.log(`Skills synced: ${summary.skillSync.syncedSkills.join(", ")} (${summary.skillSync.workspaceDirs.length} workspace${summary.skillSync.workspaceDirs.length === 1 ? "" : "s"})`);
+    runtime.log(
+      `Skills synced: ${summary.skillSync.syncedSkills.join(", ")} (${summary.skillSync.workspaceDirs.length} workspace${summary.skillSync.workspaceDirs.length === 1 ? "" : "s"})`,
+    );
     runtime.log(`Web runtime: ${summary.ready ? "ready" : "not ready"}`);
     if (!summary.ready) {
       runtime.log(theme.warn(summary.reason));
@@ -480,6 +487,22 @@ export async function updateWebRuntimeCommand(
   }
 
   cleanupManagedWebRuntimeBackup(stateDir);
+
+  // Web runtime is verified healthy AND we just replaced the standalone
+  // bundle, so any in-flight gateway sync-trigger 404s should now resolve.
+  // Fire one explicit kickoff to start the first Gmail/Calendar incremental
+  // immediately rather than waiting for the gateway plugin's next 5-min tick.
+  // Best-effort: a failure here just delays sync to the next gateway tick.
+  const kickoff = await kickoffSyncPoll({
+    stateDir,
+    port: selectedPort,
+  });
+  if (!opts.json) {
+    const summaryLine = summarizeKickoffSyncPoll(kickoff);
+    if (summaryLine) {
+      runtime.log(theme.muted(summaryLine));
+    }
+  }
 
   await promptAndOpenWebUi({
     webPort: selectedPort,
@@ -662,6 +685,20 @@ export async function startWebRuntimeCommand(
   }
 
   cleanupManagedWebRuntimeBackup(stateDir);
+
+  // Same rationale as `updateWebRuntimeCommand`: kick off the first
+  // Gmail/Calendar sync as soon as the web runtime is verified healthy
+  // instead of waiting for the gateway plugin's 5-min interval to tick.
+  const kickoff = await kickoffSyncPoll({
+    stateDir,
+    port: selectedPort,
+  });
+  if (!opts.json) {
+    const summaryLine = summarizeKickoffSyncPoll(kickoff);
+    if (summaryLine) {
+      runtime.log(theme.muted(summaryLine));
+    }
+  }
 
   await promptAndOpenWebUi({
     webPort: selectedPort,

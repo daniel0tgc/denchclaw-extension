@@ -8,6 +8,7 @@ import {
   normalizeComposioConnections,
 } from "@/lib/composio-client";
 import { refreshIntegrationsRuntime } from "@/lib/integrations";
+import { resolveAppPublicOrigin } from "@/lib/public-origin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -64,7 +65,12 @@ export async function GET(request: Request) {
   const { searchParams } = url;
   const status = searchParams.get("status") ?? "unknown";
   const connectedAccountId = searchParams.get("connected_account_id") ?? "";
-  const targetOrigin = url.origin;
+  // Use the public origin (not `url.origin`) so the postMessage target
+  // matches `window.location.origin` in the parent tab when DenchClaw
+  // is hosted behind a reverse proxy. The parent's strict
+  // `event.origin === window.location.origin` check would otherwise
+  // discard the message and the modal would hang on "Authorizing…".
+  const targetOrigin = resolveAppPublicOrigin(request);
 
   const success = status === "success";
   let resolvedConnection:

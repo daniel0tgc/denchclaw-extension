@@ -89,18 +89,16 @@ export function DocumentView({
   // If we have a filePath and editing is enabled, render the Tiptap editor
   if (editMode && filePath) {
     return (
-      <div className="max-w-3xl mx-auto">
-        <MarkdownEditor
-          content={body}
-          rawContent={content}
-          filePath={filePath}
-          tree={tree ?? []}
-          onSave={onSave}
-          onDirty={onDirty}
-          onNavigate={onNavigate}
-          searchFn={searchFn}
-        />
-      </div>
+      <MarkdownEditor
+        content={body}
+        rawContent={content}
+        filePath={filePath}
+        tree={tree ?? []}
+        onSave={onSave}
+        onDirty={onDirty}
+        onNavigate={onNavigate}
+        searchFn={searchFn}
+      />
     );
   }
 
@@ -149,7 +147,7 @@ export function DocumentView({
 
   return (
     // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-    <div className="max-w-3xl mx-auto px-6 py-8" onClick={handleLinkClick}>
+    <div className="px-6 py-8" onClick={handleLinkClick}>
       {/* Header row with title + edit button */}
       <div className="flex items-start justify-between gap-4">
         {displayTitle && (

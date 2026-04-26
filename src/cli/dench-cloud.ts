@@ -1,12 +1,10 @@
 export const DEFAULT_DENCH_CLOUD_GATEWAY_URL = "https://gateway.merseoriginals.com";
-export const DEFAULT_DENCH_CLOUD_MARGIN_PERCENT = 0.35;
 
 export type DenchCloudCatalogCost = {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  marginPercent?: number;
 };
 
 export type DenchCloudCatalogModel = {
@@ -36,14 +34,6 @@ export type DenchCloudCatalogLoadResult = {
 };
 
 type UnknownRecord = Record<string, unknown>;
-
-function roundUsd(value: number): number {
-  return Number(value.toFixed(8));
-}
-
-function markupCost(value: number): number {
-  return roundUsd(value * (1 + DEFAULT_DENCH_CLOUD_MARGIN_PERCENT));
-}
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" ? (value as UnknownRecord) : undefined;
@@ -110,12 +100,23 @@ function normalizeInputKinds(input: unknown, supportsImages: boolean): Array<"te
   return [...kinds];
 }
 
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* / */) {
+    end -= 1;
+  }
+  return end === url.length ? url : url.slice(0, end);
+}
+
 export function normalizeDenchGatewayUrl(value: string | undefined): string {
   const raw = (value || DEFAULT_DENCH_CLOUD_GATEWAY_URL).trim();
-  const withProtocol = raw.startsWith("http://") || raw.startsWith("https://")
-    ? raw
-    : `https://${raw}`;
-  return withProtocol.replace(/\/+$/, "").replace(/\/v1$/u, "");
+  const withProtocol =
+    raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+  let base = stripTrailingSlashes(withProtocol);
+  if (base.endsWith("/v1")) {
+    base = stripTrailingSlashes(base.slice(0, -3));
+  }
+  return base;
 }
 
 export function buildDenchGatewayApiBaseUrl(gatewayUrl: string | undefined): string {
@@ -126,13 +127,37 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
-export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-opus-4.6";
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "kimi-k2.5";
 export const DENCH_COMPOSIO_WRAPPER_TOOLS = [
   "dench_search_integrations",
   "dench_execute_integrations",
 ] as const;
 
+// Fallback list used only when the live gateway catalog is unreachable.
+// Live pricing always comes from the gateway's /v1/public/models response.
 export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
+  {
+    id: "kimi-k2.5",
+    stableId: "moonshotai.kimi-k2.5",
+    displayName: "Kimi K2.5",
+    provider: "moonshot",
+    transportProvider: "bedrock",
+    api: "openai-responses",
+    input: ["text", "image"],
+    reasoning: true,
+    contextWindow: 262000,
+    maxTokens: 64000,
+    supportsStreaming: true,
+    supportsImages: true,
+    supportsResponses: true,
+    supportsReasoning: true,
+    cost: {
+      input: 0.81,
+      output: 4.05,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+  },
   {
     id: "claude-opus-4.6",
     stableId: "anthropic.claude-opus-4-6-v1",
@@ -141,19 +166,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "bedrock",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 200000,
-    maxTokens: 64000,
+    reasoning: true,
+    contextWindow: 971000,
+    maxTokens: 128000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(5),
-      output: markupCost(25),
-      cacheRead: 0,
-      cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+      input: 6.75,
+      output: 33.75,
+      cacheRead: 0.675,
+      cacheWrite: 8.4375,
     },
   },
   {
@@ -164,19 +188,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "openai",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 128000,
+    reasoning: true,
+    contextWindow: 971000,
     maxTokens: 128000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(2.5),
-      output: markupCost(15),
-      cacheRead: 0,
+      input: 3.375,
+      output: 20.25,
+      cacheRead: 0.3375,
       cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
     },
   },
   {
@@ -187,19 +210,18 @@ export const FALLBACK_DENCH_CLOUD_MODELS: DenchCloudCatalogModel[] = [
     transportProvider: "bedrock",
     api: "openai-responses",
     input: ["text", "image"],
-    reasoning: false,
-    contextWindow: 200000,
+    reasoning: true,
+    contextWindow: 971000,
     maxTokens: 64000,
     supportsStreaming: true,
     supportsImages: true,
     supportsResponses: true,
-    supportsReasoning: false,
+    supportsReasoning: true,
     cost: {
-      input: markupCost(3),
-      output: markupCost(15),
-      cacheRead: 0,
-      cacheWrite: 0,
-      marginPercent: DEFAULT_DENCH_CLOUD_MARGIN_PERCENT,
+      input: 4.05,
+      output: 20.25,
+      cacheRead: 0.405,
+      cacheWrite: 5.0625,
     },
   },
 ];
@@ -223,25 +245,32 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
   const displayName = readString(record, "name", "displayName", "display_name");
   const provider = readString(record, "provider");
   const transportProvider = readString(record, "transportProvider", "transport_provider");
-  if (!publicId || !stableId || !displayName || !isNonEmptyString(provider) || !isNonEmptyString(transportProvider)) {
+  if (
+    !publicId ||
+    !stableId ||
+    !displayName ||
+    !isNonEmptyString(provider) ||
+    !isNonEmptyString(transportProvider)
+  ) {
     return null;
   }
 
   const supportsImages = readBoolean(record, "supportsImages", "supports_images") ?? false;
   const supportsStreaming = readBoolean(record, "supportsStreaming", "supports_streaming") ?? true;
   const supportsResponses = readBoolean(record, "supportsResponses", "supports_responses") ?? true;
-  const supportsReasoning = readBoolean(record, "supportsReasoning", "supports_reasoning")
-    ?? readBoolean(record, "reasoning")
-    ?? false;
+  const supportsReasoning =
+    readBoolean(record, "supportsReasoning", "supports_reasoning") ??
+    readBoolean(record, "reasoning") ??
+    false;
   const contextWindow = readNumber(record, "contextWindow", "context_window") ?? 200000;
-  const maxTokens = readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
+  const maxTokens =
+    readNumber(record, "maxTokens", "max_tokens", "maxOutputTokens", "max_output_tokens") ?? 64000;
 
   const costRecord = asRecord(record.cost) ?? {};
   const inputCost = readNumber(costRecord, "input") ?? 0;
   const outputCost = readNumber(costRecord, "output") ?? 0;
   const cacheRead = readNumber(costRecord, "cacheRead", "cache_read") ?? 0;
   const cacheWrite = readNumber(costRecord, "cacheWrite", "cache_write") ?? 0;
-  const marginPercent = readNumber(costRecord, "marginPercent", "margin_percent");
 
   return {
     id: publicId,
@@ -263,7 +292,6 @@ export function normalizeDenchCloudCatalogModel(input: unknown): DenchCloudCatal
       output: outputCost,
       cacheRead,
       cacheWrite,
-      ...(marginPercent !== undefined ? { marginPercent } : {}),
     },
   };
 }
@@ -317,10 +345,7 @@ export async function fetchDenchCloudCatalog(
   }
 }
 
-export async function validateDenchCloudApiKey(
-  gatewayUrl: string,
-  apiKey: string,
-): Promise<void> {
+export async function validateDenchCloudApiKey(gatewayUrl: string, apiKey: string): Promise<void> {
   const response = await fetch(`${buildDenchGatewayApiBaseUrl(gatewayUrl)}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -445,10 +470,7 @@ export function resolveDenchCloudModel(
 ): DenchCloudCatalogModel | undefined {
   const normalized = requestedId?.trim();
   if (!normalized) {
-    return (
-      models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) ||
-      models[0]
-    );
+    return models.find((model) => model.id === RECOMMENDED_DENCH_CLOUD_MODEL_ID) || models[0];
   }
 
   return models.find((model) => model.id === normalized || model.stableId === normalized);
@@ -461,17 +483,13 @@ export function formatDenchCloudModelHint(model: DenchCloudCatalogModel): string
   return parts.join(" · ");
 }
 
-export function readConfiguredDenchCloudSettings(
-  rawConfig: Record<string, unknown> | undefined,
-): {
+export function readConfiguredDenchCloudSettings(rawConfig: Record<string, unknown> | undefined): {
   gatewayUrl?: string;
   apiKey?: string;
   selectedModel?: string;
   ttsElevenLabsBaseUrl?: string;
 } {
-  const provider = asRecord(
-    asRecord(asRecord(rawConfig?.models)?.providers)?.["dench-cloud"],
-  );
+  const provider = asRecord(asRecord(asRecord(rawConfig?.models)?.providers)?.["dench-cloud"]);
   const defaults = asRecord(asRecord(rawConfig?.agents)?.defaults);
   const modelValue = defaults?.model;
   const modelSetting = asRecord(modelValue);

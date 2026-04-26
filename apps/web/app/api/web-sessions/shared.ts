@@ -57,32 +57,23 @@ export function readIndex(): WebSessionMeta[] {
     }
   }
 
-  // Scan for orphaned .jsonl files not in the index
+  // Scan for orphaned .jsonl files not in the index + backfill "New Chat"
+  // titles for existing sessions that already have messages. Both fixes
+  // only write the index when something actually changed so the common
+  // read path stays cheap.
   try {
     const indexed = new Set(index.map((s) => s.id));
     const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
     let dirty = false;
+
+    // 1) Pull in orphaned files.
     for (const file of files) {
       const id = file.replace(/\.jsonl$/, "");
       if (indexed.has(id)) {continue;}
 
       const fp = join(dir, file);
       const stat = statSync(fp);
-      let title = "New Chat";
-      let messageCount = 0;
-      try {
-        const content = readFileSync(fp, "utf-8");
-        const lines = content.split("\n").filter((l) => l.trim());
-        messageCount = lines.length;
-        for (const line of lines) {
-          const parsed = JSON.parse(line);
-          if (parsed.role === "user" && parsed.content) {
-            const text = String(parsed.content);
-            title = text.length > 60 ? text.slice(0, 60) + "..." : text;
-            break;
-          }
-        }
-      } catch { /* best-effort */ }
+      const { title, messageCount } = summarizeSessionFile(fp);
 
       index.push({
         id,
@@ -94,6 +85,20 @@ export function readIndex(): WebSessionMeta[] {
       dirty = true;
     }
 
+    // 2) Retitle any indexed session that still says "New Chat" but has
+    //    actual user content on disk. This catches chats that were
+    //    created before the server-side auto-title logic landed.
+    for (const session of index) {
+      if (session.title && session.title !== "New Chat") {continue;}
+      const fp = join(dir, `${session.id}.jsonl`);
+      if (!existsSync(fp)) {continue;}
+      const { title } = summarizeSessionFile(fp);
+      if (title && title !== "New Chat") {
+        session.title = title;
+        dirty = true;
+      }
+    }
+
     if (dirty) {
       index.sort((a, b) => b.updatedAt - a.updatedAt);
       writeFileSync(indexFile, JSON.stringify(index, null, 2));
@@ -101,6 +106,50 @@ export function readIndex(): WebSessionMeta[] {
   } catch { /* best-effort */ }
 
   return index;
+}
+
+/**
+ * Read a session's JSONL file and return a derived title (first user
+ * message, trimmed to ~60 chars) plus its message count. Used by both
+ * orphan-adoption and the "New Chat" backfill path.
+ */
+function summarizeSessionFile(fp: string): { title: string; messageCount: number } {
+  let title = "New Chat";
+  let messageCount = 0;
+  try {
+    const content = readFileSync(fp, "utf-8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    messageCount = lines.length;
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.role !== "user") {continue;}
+        let text = "";
+        if (typeof parsed.content === "string") {
+          text = parsed.content;
+        } else if (Array.isArray(parsed.parts)) {
+          type UITextPart = { type: string; text: string };
+          text = (parsed.parts as unknown[])
+            .filter((p): p is UITextPart =>
+              typeof p === "object" &&
+              p !== null &&
+              (p as { type?: string }).type === "text" &&
+              typeof (p as { text?: string }).text === "string",
+            )
+            .map((p: UITextPart) => p.text)
+            .join(" ");
+        }
+        const cleaned = text
+          .replace(/\[Attached files:[^\]]*\]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!cleaned) {continue;}
+        title = cleaned.length > 60 ? cleaned.slice(0, 60).trimEnd() + "…" : cleaned;
+        break;
+      } catch { /* malformed line */ }
+    }
+  } catch { /* best-effort */ }
+  return { title, messageCount };
 }
 
 export function writeIndex(sessions: WebSessionMeta[]) {

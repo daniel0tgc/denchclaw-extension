@@ -51,19 +51,46 @@ const ApolloEnrichParameters = {
     firstName: { type: "string", description: "Person first name." },
     lastName: { type: "string", description: "Person last name." },
     domain: { type: "string", description: "Company domain such as acme.com." },
-    organizationName: { type: "string", description: "Organization name hint for people enrichment." },
-    personTitles: { type: "array", items: { type: "string" }, description: "Job titles for people search." },
-    personLocations: { type: "array", items: { type: "string" }, description: "Locations for people search." },
-    organizationDomains: { type: "array", items: { type: "string" }, description: "Organization domains for people search." },
+    organizationName: {
+      type: "string",
+      description: "Organization name hint for people enrichment.",
+    },
+    personTitles: {
+      type: "array",
+      items: { type: "string" },
+      description: "Job titles for people search.",
+    },
+    personLocations: {
+      type: "array",
+      items: { type: "string" },
+      description: "Locations for people search.",
+    },
+    organizationDomains: {
+      type: "array",
+      items: { type: "string" },
+      description: "Organization domains for people search.",
+    },
     page: { type: "number", description: "People search page number." },
     perPage: { type: "number", description: "People search page size." },
     first_name: { type: "string", description: "Legacy alias for firstName." },
     last_name: { type: "string", description: "Legacy alias for lastName." },
     organization_name: { type: "string", description: "Legacy alias for organizationName." },
     linkedin_url: { type: "string", description: "Legacy alias for linkedinUrl." },
-    person_titles: { type: "array", items: { type: "string" }, description: "Legacy alias for personTitles." },
-    person_locations: { type: "array", items: { type: "string" }, description: "Legacy alias for personLocations." },
-    organization_domains: { type: "array", items: { type: "string" }, description: "Legacy alias for organizationDomains." },
+    person_titles: {
+      type: "array",
+      items: { type: "string" },
+      description: "Legacy alias for personTitles.",
+    },
+    person_locations: {
+      type: "array",
+      items: { type: "string" },
+      description: "Legacy alias for personLocations.",
+    },
+    organization_domains: {
+      type: "array",
+      items: { type: "string" },
+      description: "Legacy alias for organizationDomains.",
+    },
     per_page: { type: "number", description: "Legacy alias for perPage." },
   },
   required: ["action"],
@@ -72,7 +99,8 @@ const ApolloEnrichParameters = {
 function buildPeopleBody(params: Record<string, unknown>) {
   const body: Record<string, unknown> = {};
   const email = readTrimmedString(params.email);
-  const linkedinUrl = readTrimmedString(params.linkedinUrl) ?? readTrimmedString(params.linkedin_url);
+  const linkedinUrl =
+    readTrimmedString(params.linkedinUrl) ?? readTrimmedString(params.linkedin_url);
   const firstName = readTrimmedString(params.firstName) ?? readTrimmedString(params.first_name);
   const lastName = readTrimmedString(params.lastName) ?? readTrimmedString(params.last_name);
   const domain = readTrimmedString(params.domain);
@@ -167,8 +195,7 @@ async function executeApolloEnrich(
       }
       if (!body.email && !body.linkedinUrl && !body.firstName && !body.lastName) {
         return jsonResult({
-          error:
-            "People enrichment requires at least an email, LinkedIn URL, or person name.",
+          error: "People enrichment requires at least an email, LinkedIn URL, or person name.",
         });
       }
       response = await fetch(`${gatewayUrl}${ENRICHMENT_BASE_PATH}/people`, {

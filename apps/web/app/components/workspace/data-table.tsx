@@ -108,6 +108,15 @@ export type DataTableProps<TData, TValue> = {
 	onServerSearch?: (query: string) => void;
 	/** When true, column header click is disabled (no sort-on-click). */
 	disableHeaderClickSort?: boolean;
+	// When true, the built-in toolbar (search, columns, refresh, +Add) is not rendered.
+	// The parent is expected to provide equivalent controls externally.
+	hideToolbar?: boolean;
+	// Controlled global filter. When provided, overrides the internal state.
+	globalFilter?: string;
+	onGlobalFilterChange?: (value: string) => void;
+	// Controlled sticky-first-column. When provided, overrides the internal state.
+	stickyFirstColumnValue?: boolean;
+	onStickyFirstColumnChange?: (value: boolean) => void;
 };
 
 /* ─── Fuzzy filter ─── */
@@ -215,9 +224,26 @@ export function DataTable<TData, TValue>({
 	serverPagination,
 	onServerSearch,
 	disableHeaderClickSort = false,
+	hideToolbar = false,
+	globalFilter: globalFilterProp,
+	onGlobalFilterChange,
+	stickyFirstColumnValue,
+	onStickyFirstColumnChange,
 }: DataTableProps<TData, TValue>) {
 	const [sorting, setSorting] = useState<SortingState>([]);
-	const [globalFilter, setGlobalFilter] = useState("");
+	const [internalGlobalFilter, setInternalGlobalFilter] = useState("");
+	const globalFilter = globalFilterProp !== undefined ? globalFilterProp : internalGlobalFilter;
+	const setGlobalFilter = useCallback(
+		(v: string | ((prev: string) => string)) => {
+			const resolved = typeof v === "function" ? v(globalFilter) : v;
+			if (onGlobalFilterChange) {
+				onGlobalFilterChange(resolved);
+			} else {
+				setInternalGlobalFilter(resolved);
+			}
+		},
+		[globalFilter, onGlobalFilterChange],
+	);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(initialColumnVisibility ?? {});
 	const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(initialColumnSizing ?? {});
@@ -229,7 +255,20 @@ export function DataTable<TData, TValue>({
 		setColumnSizing(initialColumnSizing ?? {});
 	}, [initialColumnSizing]);
 	const [internalRowSelection, setInternalRowSelection] = useState<Record<string, boolean>>({});
-	const [stickyFirstColumn, setStickyFirstColumn] = useState(stickyFirstProp);
+	const [internalStickyFirstColumn, setInternalStickyFirstColumn] = useState(stickyFirstProp);
+	const stickyFirstColumn =
+		stickyFirstColumnValue !== undefined ? stickyFirstColumnValue : internalStickyFirstColumn;
+	const setStickyFirstColumn = useCallback(
+		(next: boolean | ((prev: boolean) => boolean)) => {
+			const resolved = typeof next === "function" ? next(stickyFirstColumn) : next;
+			if (onStickyFirstColumnChange) {
+				onStickyFirstColumnChange(resolved);
+			} else {
+				setInternalStickyFirstColumn(resolved);
+			}
+		},
+		[stickyFirstColumn, onStickyFirstColumnChange],
+	);
 	const [isScrolled, setIsScrolled] = useState(false);
 	const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: defaultPageSize });
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -243,12 +282,13 @@ export function DataTable<TData, TValue>({
 		return "";
 	}, []);
 
-	// Column order for DnD — include "select" at start and "actions" at end
+	// Column order for DnD — include "__rownum"/"select" at start and "actions" at end
 	// so TanStack doesn't push them to the end of the table
 	const buildColumnOrder = useCallback(
 		(dataCols: ColumnDef<TData, TValue>[]) => {
 			const dataOrder = dataCols.map(getColumnId);
 			const order: string[] = [];
+			order.push("__rownum");
 			if (enableRowSelection) {order.push("select");}
 			order.push(...dataOrder);
 			if (rowActions) {order.push("actions");}
@@ -261,7 +301,7 @@ export function DataTable<TData, TValue>({
 		buildColumnOrder(columns),
 	);
 
-	const FIXED_COL_IDS = new Set(["select", "actions", "__add_column"]);
+	const FIXED_COL_IDS = new Set(["__rownum", "select", "actions", "__add_column"]);
 
 	// Reconcile column order when columns change (preserves user DnD ordering)
 	useEffect(() => {
@@ -275,6 +315,7 @@ export function DataTable<TData, TValue>({
 				if (!existingDataSet.has(id)) prevDataOrder.push(id);
 			}
 			const result: string[] = [];
+			if (freshSet.has("__rownum")) result.push("__rownum");
 			if (freshSet.has("select")) result.push("select");
 			result.push(...prevDataOrder);
 			if (freshSet.has("actions")) result.push("actions");
@@ -305,13 +346,63 @@ export function DataTable<TData, TValue>({
 		[onColumnReorder],
 	);
 
-	// Scroll tracking for sticky column shadow
+	// Scroll tracking for sticky column shadow.
+	// Coalesces via rAF + ref comparison so a continuous scroll doesn't
+	// trigger a setState (and thus a tbody re-render) per pixel.
+	const isScrolledRef = useRef(false);
+	const scrollRafRef = useRef<number | null>(null);
 	const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-		setIsScrolled(e.currentTarget.scrollLeft > 0);
+		const next = e.currentTarget.scrollLeft > 0;
+		if (next === isScrolledRef.current) {return;}
+		isScrolledRef.current = next;
+		if (scrollRafRef.current != null) {return;}
+		scrollRafRef.current = requestAnimationFrame(() => {
+			scrollRafRef.current = null;
+			setIsScrolled(isScrolledRef.current);
+		});
+	}, []);
+	useEffect(() => () => {
+		if (scrollRafRef.current != null) {cancelAnimationFrame(scrollRafRef.current);}
 	}, []);
 
-	// Build selection column
-	const selectionColumn: ColumnDef<TData> | null = enableRowSelection
+	// Build row number column — always first, non-sortable, non-hideable.
+	// Memoized so the column definition has a stable identity across renders;
+	// otherwise `allColumns` (and therefore the entire TanStack table tree)
+	// would rebuild on every render — including a row-selection click.
+	const serverPaginationPage = serverPagination?.page;
+	const serverPaginationPageSize = serverPagination?.pageSize;
+	const rownumColumn = useMemo<ColumnDef<TData>>(() => ({
+		id: "__rownum",
+		header: () => (
+			<span
+				className="text-[10px] tabular-nums opacity-50"
+				style={{ color: "var(--color-text-muted)" }}
+			>
+				#
+			</span>
+		),
+		cell: ({ row }) => {
+			const baseIdx = serverPaginationPage != null && serverPaginationPageSize != null
+				? (serverPaginationPage - 1) * serverPaginationPageSize
+				: 0;
+			return (
+				<span
+					className="text-[11px] tabular-nums"
+					style={{ color: "var(--color-text-muted)", opacity: 0.55 }}
+				>
+					{baseIdx + row.index + 1}
+				</span>
+			);
+		},
+		size: 48,
+		minSize: 48,
+		enableSorting: false,
+		enableHiding: false,
+		enableResizing: false,
+	}), [serverPaginationPage, serverPaginationPageSize]);
+
+	// Build selection column. Memoized for stable identity across renders.
+	const selectionColumn = useMemo<ColumnDef<TData> | null>(() => enableRowSelection
 		? {
 				id: "select",
 				header: ({ table }) => (
@@ -336,7 +427,7 @@ export function DataTable<TData, TValue>({
 				enableSorting: false,
 				enableHiding: false,
 			}
-		: null;
+		: null, [enableRowSelection]);
 
 	// Build actions column — use refs so the column definition (and
 	// critically its `header` function reference) stays stable across
@@ -371,16 +462,22 @@ export function DataTable<TData, TValue>({
 
 	const allColumns = useMemo(() => {
 		const cols: ColumnDef<TData, TValue>[] = [];
+		cols.push(rownumColumn as ColumnDef<TData, TValue>);
 		if (selectionColumn) {cols.push(selectionColumn as ColumnDef<TData, TValue>);}
 		cols.push(...columns);
 		if (actionsColumn) {cols.push(actionsColumn as ColumnDef<TData, TValue>);}
 		return cols;
-	}, [columns, selectionColumn, actionsColumn]);
+	}, [columns, selectionColumn, actionsColumn, rownumColumn]);
 
-	// Server-side pagination state derived from props
-	const serverPaginationState = serverPagination
-		? { pageIndex: serverPagination.page - 1, pageSize: serverPagination.pageSize }
-		: undefined;
+	// Server-side pagination state derived from props. Memoized so the
+	// table state object identity is stable across renders that don't
+	// touch pagination.
+	const serverPaginationState = useMemo(
+		() => serverPagination
+			? { pageIndex: serverPagination.page - 1, pageSize: serverPagination.pageSize }
+			: undefined,
+		[serverPagination?.page, serverPagination?.pageSize], // eslint-disable-line react-hooks/exhaustive-deps
+	);
 
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -446,10 +543,20 @@ export function DataTable<TData, TValue>({
 	});
 
 	const selectedCount = Object.keys(rowSelectionState).filter((k) => rowSelectionState[k]).length;
-	const visibleColumns = table.getVisibleFlatColumns().filter((c) => c.id !== "select" && c.id !== "actions" && c.id !== "__add_column");
+	const visibleColumns = table.getVisibleFlatColumns().filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column");
+	// Stable items array for dnd-kit's SortableContext so the dnd
+	// context isn't reset on every render.
+	const sortableHeaderIds = useMemo(
+		() => columnOrder.filter((id) => !FIXED_COL_IDS.has(id)),
+		[columnOrder], // eslint-disable-line react-hooks/exhaustive-deps
+	);
 
 	// Column sizes as CSS variables for performant resize (TanStack recommended approach).
 	// Only th elements reference these vars; td widths are inherited via table-layout:fixed.
+	// Depend on `columnSizing` (the actual sizes) instead of `columnSizingInfo` (a fresh
+	// object on every state change) so this doesn't recompute on selection/sort/etc.
+	const columnSizingState = table.getState().columnSizing;
+	const isResizingColumn = !!table.getState().columnSizingInfo.isResizingColumn;
 	const columnSizeVars = useMemo(() => {
 		const headers = table.getFlatHeaders();
 		const vars: Record<string, number> = {};
@@ -458,13 +565,14 @@ export function DataTable<TData, TValue>({
 			vars[`--col-${header.column.id}-size`] = header.column.getSize();
 		}
 		return vars;
-	}, [table.getState().columnSizingInfo, table.getState().columnSizing]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [columnSizingState, isResizingColumn, columnVisibility, columnOrder]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// ─── Render ───
 
 	return (
 		<div className="w-full h-full flex flex-col overflow-hidden" style={{ overscrollBehavior: "contain" }}>
 			{/* Toolbar */}
+			{!hideToolbar && (
 			<div
 				className="flex items-center gap-3 px-3 py-2 shrink-0 flex-wrap backdrop-blur-md"
 				style={{ background: "var(--color-glass)", borderBottom: "1px solid var(--color-border)" }}
@@ -548,7 +656,7 @@ export function DataTable<TData, TValue>({
 							<div className="px-2 py-1.5 text-xs opacity-50">No toggleable columns</div>
 						) : (
 							table.getAllLeafColumns()
-								.filter((c) => c.id !== "select" && c.id !== "actions" && c.id !== "__add_column" && c.getCanHide())
+								.filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column" && c.getCanHide())
 								.map((column) => (
 									<DropdownMenuCheckboxItem
 										key={column.id}
@@ -591,6 +699,7 @@ export function DataTable<TData, TValue>({
 					</button>
 				)}
 			</div>
+			)}
 
 			{/* Table */}
 			<div
@@ -633,9 +742,12 @@ export function DataTable<TData, TValue>({
 										style={{ borderColor: "var(--color-border)" }}
 										className="border-b-2 backdrop-blur-sm"
 									>
-										<SortableContext items={columnOrder.filter((id) => !FIXED_COL_IDS.has(id))} strategy={horizontalListSortingStrategy}>
+										<SortableContext items={sortableHeaderIds} strategy={horizontalListSortingStrategy}>
 											{headerGroup.headers.map((header, colIdx) => {
-												const isFirstData = colIdx === (enableRowSelection ? 1 : 0);
+												// Layout: [__rownum, select?, ...data, actions?]
+												const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
+												const isRownumCol = header.id === "__rownum";
+												const isFirstData = colIdx === firstDataIdx;
 												const isSticky = stickyFirstColumn && isFirstData;
 												const isSelectCol = header.id === "select";
 												const isActionsCol = header.id === "actions";
@@ -664,18 +776,20 @@ export function DataTable<TData, TValue>({
 													: flexRender(header.column.columnDef.header, header.getContext());
 
 												const thClassName = cn(
-													"h-11 text-left align-middle font-medium text-xs uppercase tracking-wider whitespace-nowrap p-0 group select-none relative box-border",
+													"h-11 text-left align-middle font-medium text-[12px] whitespace-nowrap p-0 group select-none relative box-border",
+													isRownumCol && "text-right",
 													!isLastCol && "border-r",
 													isSticky && isScrolled && "border-r-2!",
 												);
 
 												const innerClassName = cn(
-													"flex items-center gap-1 h-full px-4 transition-colors",
+													"flex items-center gap-1.5 h-full transition-colors",
+													isRownumCol ? "px-3 justify-end" : "px-4",
 													canSort && "cursor-pointer hover:bg-[var(--color-surface-hover)]",
 													isSorted && "bg-[var(--color-surface-hover)]",
 												);
 
-											const resizeHandle = !isSelectCol && !isAddCol && header.column.getCanResize() ? (
+											const resizeHandle = !isSelectCol && !isAddCol && !isRownumCol && header.column.getCanResize() ? (
 												<div
 													data-resize-handle
 													onMouseDown={header.getResizeHandler()}
@@ -689,7 +803,7 @@ export function DataTable<TData, TValue>({
 												/>
 											) : null;
 
-											if (enableColumnReordering && !isSelectCol && !isActionsCol && !isAddCol) {
+											if (enableColumnReordering && !isSelectCol && !isActionsCol && !isAddCol && !isRownumCol) {
 												return (
 													<SortableHeader
 														key={header.id}
@@ -764,48 +878,46 @@ export function DataTable<TData, TValue>({
 			{/* Pagination footer */}
 			{!loading && data.length > 0 && (
 				<div
-					className="flex items-center justify-between px-3 py-2 text-xs shrink-0 backdrop-blur-xl"
+					className="flex items-center justify-between px-3 py-1 text-[11px] shrink-0 backdrop-blur-xl"
 					style={{
 						borderTop: "1px solid var(--color-border)",
 						color: "var(--color-text-muted)",
 						background: "var(--color-glass)",
 					}}
 				>
-					<span className="text-xs font-medium">
+					<span className="tabular-nums">
 						{serverPagination
-							? `Showing ${(serverPagination.page - 1) * serverPagination.pageSize + 1}–${Math.min(serverPagination.page * serverPagination.pageSize, serverPagination.totalCount)} of ${serverPagination.totalCount} results`
-							: `Showing ${table.getRowModel().rows.length} of ${data.length} results`}
-						{selectedCount > 0 && ` (${selectedCount} selected)`}
+							? `${(serverPagination.page - 1) * serverPagination.pageSize + 1}–${Math.min(serverPagination.page * serverPagination.pageSize, serverPagination.totalCount)} / ${serverPagination.totalCount}`
+							: `${table.getRowModel().rows.length} / ${data.length}`}
+						{selectedCount > 0 && ` · ${selectedCount} selected`}
 					</span>
-					<div className="flex items-center gap-3">
-						<div className="flex items-center gap-2">
-							<span className="text-xs font-medium">Rows per page</span>
-							<select
-								value={serverPagination ? serverPagination.pageSize : pagination.pageSize}
-								onChange={(e) => {
-									const newSize = Number(e.target.value);
-									if (serverPagination) {
-										serverPagination.onPageSizeChange(newSize);
-									} else {
-										setPagination((p) => ({ ...p, pageSize: newSize, pageIndex: 0 }));
-									}
-								}}
-								className="h-7 px-2 py-0 rounded-full text-xs outline-none shadow-[0_0_21px_0_rgba(0,0,0,0.05)] transition-colors"
-								style={{
-									background: "var(--color-surface)",
-									color: "var(--color-text)",
-									border: "1px solid var(--color-border)",
-								}}
-							>
-								{[20, 50, 100, 250, 500].map((size) => (
-									<option key={size} value={size}>{size}</option>
-								))}
-							</select>
-						</div>
-						<span className="text-xs font-medium min-w-[80px] text-center">
-							Page {serverPagination ? serverPagination.page : pagination.pageIndex + 1} of {table.getPageCount()}
+					<div className="flex items-center gap-2">
+						<select
+							value={serverPagination ? serverPagination.pageSize : pagination.pageSize}
+							onChange={(e) => {
+								const newSize = Number(e.target.value);
+								if (serverPagination) {
+									serverPagination.onPageSizeChange(newSize);
+								} else {
+									setPagination((p) => ({ ...p, pageSize: newSize, pageIndex: 0 }));
+								}
+							}}
+							className="h-6 px-1.5 py-0 rounded-md text-[11px] outline-none transition-colors cursor-pointer"
+							style={{
+								background: "var(--color-surface)",
+								color: "var(--color-text)",
+								border: "1px solid var(--color-border)",
+							}}
+							title="Rows per page"
+						>
+							{[20, 50, 100, 250, 500].map((size) => (
+								<option key={size} value={size}>{size}/page</option>
+							))}
+						</select>
+						<span className="tabular-nums min-w-[48px] text-center">
+							{serverPagination ? serverPagination.page : pagination.pageIndex + 1}/{table.getPageCount()}
 						</span>
-						<div className="flex gap-1">
+						<div className="flex gap-0.5">
 							{serverPagination ? (
 								<>
 									<PaginationButton onClick={() => serverPagination.onPageChange(1)} disabled={serverPagination.page <= 1} label="&laquo;" />
@@ -829,7 +941,177 @@ export function DataTable<TData, TValue>({
 	);
 }
 
-/* ─── Memoized Table Body (skips re-render during column resize) ─── */
+/* ─── Memoized Table Row & Body ───
+ *
+ * The big perf win lives here. Previously the entire <tbody> re-rendered on
+ * every parent state change (selection, scroll, hover, sort) because the only
+ * memo on `DataTableBody` skipped renders ONLY during column resize. We now
+ * memoize at the row level so a single checkbox click re-renders just the
+ * toggled row instead of all 100+ rows.
+ */
+
+// biome-ignore lint/suspicious/noExplicitAny: generic row component used with React.memo
+type TableRowProps = {
+	row: Row<any>;
+	rowIdx: number;
+	isSelected: boolean;
+	isActive: boolean;
+	enableRowSelection: boolean;
+	stickyFirstColumn: boolean;
+	isScrolled: boolean;
+	onRowClick?: (row: any, index: number) => void;
+	firstColumnFaviconUrl: string | null | undefined;
+	/** Stable string key encoding visible column IDs in order. When this
+	 * changes (column add/remove/reorder/visibility) the row re-renders. */
+	cellLayoutKey: string;
+};
+
+function TableRowInner({
+	row,
+	rowIdx,
+	isSelected,
+	isActive,
+	enableRowSelection,
+	stickyFirstColumn,
+	isScrolled,
+	onRowClick,
+	firstColumnFaviconUrl,
+}: TableRowProps) {
+	const visibleCells = row.getVisibleCells();
+	const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
+	const altBg = rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";
+	const baseBg = isActive || isSelected ? "var(--color-accent-light)" : altBg;
+	const stickyBg = baseBg;
+
+	const handleClick = useCallback(() => {
+		onRowClick?.(row.original, rowIdx);
+	}, [onRowClick, row.original, rowIdx]);
+
+	const handleMouseEnter = useCallback((e: React.MouseEvent<HTMLTableRowElement>) => {
+		if (!isSelected && !isActive) {
+			(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";
+		}
+	}, [isSelected, isActive]);
+
+	const handleMouseLeave = useCallback((e: React.MouseEvent<HTMLTableRowElement>) => {
+		if (!isSelected && !isActive) {
+			(e.currentTarget as HTMLElement).style.background = altBg;
+		}
+	}, [isSelected, isActive, altBg]);
+
+	return (
+		<tr
+			data-state={isSelected ? "selected" : isActive ? "active" : undefined}
+			className={cn(
+				"border-b transition-colors duration-100 group/row",
+				onRowClick && "cursor-pointer",
+				isSelected && "data-[state=selected]:bg-(--color-accent-light)",
+			)}
+			style={{
+				borderColor: isActive ? "var(--color-accent)" : "var(--color-border)",
+				background: baseBg,
+			}}
+			onClick={handleClick}
+			onMouseEnter={handleMouseEnter}
+			onMouseLeave={handleMouseLeave}
+		>
+			{visibleCells.map((cell, colIdx) => {
+				const isRownumCol = cell.column.id === "__rownum";
+				const isFirstData = colIdx === firstDataIdx;
+				const isSticky = stickyFirstColumn && isFirstData;
+				const isSelectCol = cell.column.id === "select";
+				const isActionsCol = cell.column.id === "actions";
+				const isAddCol = cell.column.id === "__add_column";
+				const isRightSticky = isActionsCol || isAddCol;
+				const isLastCol = colIdx === visibleCells.length - 1;
+				const cellFaviconUrl = isFirstData && !isSelectCol ? firstColumnFaviconUrl : undefined;
+
+				const cellStyle: React.CSSProperties = {
+					borderColor: "var(--color-border)",
+					...(isSticky
+						? {
+								position: "sticky" as const,
+								left: enableRowSelection ? 40 : 0,
+								zIndex: 2,
+								background: stickyBg,
+								boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)" : "none",
+							}
+						: {}),
+					...(isSelectCol
+						? {
+								position: "sticky" as const,
+								left: 0,
+								zIndex: 2,
+								background: stickyBg,
+								width: 40,
+							}
+						: {}),
+					...(isRightSticky
+						? {
+								position: "sticky" as const,
+								right: 0,
+								zIndex: 2,
+								background: stickyBg,
+							}
+						: {}),
+				};
+
+				return (
+					<td
+						key={cell.id}
+						className={cn(
+							"align-middle whitespace-nowrap text-[13px] border-b transition-colors box-border",
+							isRownumCol
+								? "px-3 py-3 text-right"
+								: isSelectCol
+									? "px-3 py-3"
+									: "px-4 py-3",
+							!isLastCol && "border-r",
+							isSticky && isScrolled && "border-r-2!",
+						)}
+						style={cellStyle}
+					>
+						<div className="overflow-hidden">
+							{cellFaviconUrl ? (
+								<div className="flex min-w-0 items-center gap-2">
+									<span className="pointer-events-none shrink-0">
+										<UrlFavicon src={cellFaviconUrl} />
+									</span>
+									<div className="min-w-0 flex-1 overflow-hidden">
+										{flexRender(cell.column.columnDef.cell, cell.getContext())}
+									</div>
+								</div>
+							) : (
+								flexRender(cell.column.columnDef.cell, cell.getContext())
+							)}
+						</div>
+						{isSticky && isScrolled && (
+							<div className="absolute top-0 right-0 bottom-0 w-4 translate-x-full pointer-events-none bg-linear-to-r from-black/4 to-transparent z-100" />
+						)}
+					</td>
+				);
+			})}
+		</tr>
+	);
+}
+
+/** Custom equality: skip re-render unless something the row actually
+ * displays changed. The `row` reference itself is fresh on every TanStack
+ * render so we explicitly ignore it and compare semantic primitives instead. */
+const TableRow = React.memo(TableRowInner, (prev, next) => {
+	return (
+		prev.row.original === next.row.original &&
+		prev.rowIdx === next.rowIdx &&
+		prev.isSelected === next.isSelected &&
+		prev.isActive === next.isActive &&
+		prev.enableRowSelection === next.enableRowSelection &&
+		prev.stickyFirstColumn === next.stickyFirstColumn &&
+		prev.isScrolled === next.isScrolled &&
+		prev.onRowClick === next.onRowClick &&
+		prev.firstColumnFaviconUrl === next.firstColumnFaviconUrl &&
+		prev.cellLayoutKey === next.cellLayoutKey
+	);
+});
 
 // biome-ignore lint/suspicious/noExplicitAny: generic body component used with React.memo
 type DataTableBodyProps = {
@@ -853,132 +1135,50 @@ function DataTableBodyInner({
 	onRowClick,
 	getFirstDataColumnFaviconUrl,
 }: DataTableBodyProps) {
+	// Encode visible column layout as a stable string. When columns are
+	// added/removed/reordered/hidden, this changes and rows re-render.
+	// Column SIZE changes don't need to invalidate rows — sizes are applied
+	// via CSS variables on <th> elements and <td> widths inherit via
+	// table-layout:fixed.
+	const cellLayoutKey = table.getVisibleLeafColumns().map((c) => c.id).join("|");
+
 	return (
 		<tbody className="[&_tr:last-child]:border-0">
 			{table.getRowModel().rows.map((row, rowIdx) => {
 				const isSelected = row.getIsSelected();
-				const visibleCells = row.getVisibleCells();
 				const isActive = activeRowId != null && getRowId != null && getRowId(row.original) === activeRowId;
-				const baseBg = isActive
-					? "var(--color-accent-light)"
-					: isSelected
-						? "var(--color-accent-light)"
-						: rowIdx % 2 === 0
-							? "var(--color-surface)"
-							: "var(--color-bg)";
+				const firstColumnFaviconUrl = getFirstDataColumnFaviconUrl?.(row, table) ?? undefined;
 				return (
-					<tr
+					<TableRow
 						key={row.id}
-						data-state={isSelected ? "selected" : isActive ? "active" : undefined}
-						className={cn(
-							"border-b transition-all duration-150 group/row",
-							onRowClick && "cursor-pointer",
-							isSelected && "data-[state=selected]:bg-(--color-accent-light)",
-						)}
-						style={{
-							borderColor: isActive ? "var(--color-accent)" : "var(--color-border)",
-							background: baseBg,
-						}}
-						onClick={() => onRowClick?.(row.original, rowIdx)}
-						onMouseEnter={(e) => {
-							if (!isSelected && !isActive)
-								{(e.currentTarget as HTMLElement).style.background = "var(--color-surface-hover)";}
-						}}
-						onMouseLeave={(e) => {
-							if (!isSelected && !isActive)
-								{(e.currentTarget as HTMLElement).style.background =
-									rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";}
-						}}
-					>
-						{visibleCells.map((cell, colIdx) => {
-							const isFirstData = colIdx === (enableRowSelection ? 1 : 0);
-							const isSticky = stickyFirstColumn && isFirstData;
-							const isSelectCol = cell.column.id === "select";
-							const isActionsCol = cell.column.id === "actions";
-							const isAddCol = cell.column.id === "__add_column";
-							const isRightSticky = isActionsCol || isAddCol;
-							const isLastCol = colIdx === visibleCells.length - 1;
-							const firstDataColumnFaviconUrl = isFirstData && !isSelectCol
-								? getFirstDataColumnFaviconUrl?.(row, table)
-								: undefined;
-
-							const rowBg = baseBg;
-							const altBg = rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";
-							const stickyBg = (isActive || isSelected)
-								? `linear-gradient(var(--color-accent-light), var(--color-accent-light)), linear-gradient(${altBg}, ${altBg})`
-								: rowBg;
-
-							const cellStyle: React.CSSProperties = {
-								borderColor: "var(--color-border)",
-								...(isSticky
-									? {
-											position: "sticky" as const,
-											left: enableRowSelection ? 40 : 0,
-											zIndex: 2,
-											background: stickyBg,
-											boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)" : "none",
-										}
-									: {}),
-								...(isSelectCol
-									? {
-											position: "sticky" as const,
-											left: 0,
-											zIndex: 2,
-											background: stickyBg,
-											width: 40,
-										}
-									: {}),
-								...(isRightSticky
-									? {
-											position: "sticky" as const,
-											right: 0,
-											zIndex: 2,
-											background: rowBg,
-										}
-									: {}),
-							};
-
-							return (
-								<td
-									key={cell.id}
-									className={cn(
-										"px-3 py-1.5 align-middle whitespace-nowrap text-xs border-b transition-colors box-border",
-										!isLastCol && "border-r",
-										isSticky && isScrolled && "border-r-2!",
-									)}
-									style={cellStyle}
-								>
-									<div className="overflow-hidden">
-										{firstDataColumnFaviconUrl ? (
-											<div className="flex min-w-0 items-center gap-1.5">
-												<span className="pointer-events-none shrink-0">
-													<UrlFavicon src={firstDataColumnFaviconUrl} />
-												</span>
-												<div className="min-w-0 flex-1 overflow-hidden">
-													{flexRender(cell.column.columnDef.cell, cell.getContext())}
-												</div>
-											</div>
-										) : (
-											flexRender(cell.column.columnDef.cell, cell.getContext())
-										)}
-									</div>
-									{isSticky && isScrolled && (
-										<div className="absolute top-0 right-0 bottom-0 w-4 translate-x-full pointer-events-none bg-linear-to-r from-black/4 to-transparent z-100" />
-									)}
-								</td>
-							);
-						})}
-					</tr>
+						row={row}
+						rowIdx={rowIdx}
+						isSelected={isSelected}
+						isActive={isActive}
+						enableRowSelection={enableRowSelection}
+						stickyFirstColumn={stickyFirstColumn}
+						isScrolled={isScrolled}
+						onRowClick={onRowClick}
+						firstColumnFaviconUrl={firstColumnFaviconUrl}
+						cellLayoutKey={cellLayoutKey}
+					/>
 				);
 			})}
 		</tbody>
 	);
 }
 
-const DataTableBody = React.memo(DataTableBodyInner, (prev, next) =>
-	!!next.table.getState().columnSizingInfo.isResizingColumn
-	&& prev.table.options.data === next.table.options.data,
-);
+/** Skip re-rendering the body shell during column resize (sizes flow via
+ * CSS variables on <th>; rows don't need to react). For all other changes
+ * the body re-renders, but per-row memoization above prevents the
+ * expensive cell work from running for unchanged rows. */
+const DataTableBody = React.memo(DataTableBodyInner, (prev, next) => {
+	const isResizing = !!next.table.getState().columnSizingInfo.isResizingColumn;
+	if (isResizing && prev.table.options.data === next.table.options.data) {
+		return true;
+	}
+	return false;
+});
 
 /* ─── Sub-components ─── */
 
@@ -988,7 +1188,7 @@ function PaginationButton({ onClick, disabled, label }: { onClick: () => void; d
 			type="button"
 			onClick={onClick}
 			disabled={disabled}
-			className="h-7 w-7 rounded-full flex items-center justify-center text-xs disabled:opacity-30 cursor-pointer transition-colors backdrop-blur-sm shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
+			className="h-6 w-6 rounded-md flex items-center justify-center text-[11px] disabled:opacity-30 cursor-pointer transition-colors"
 			style={{ color: "var(--color-text-muted)", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}
 			// biome-ignore lint: using html entity label
 			dangerouslySetInnerHTML={{ __html: label }}

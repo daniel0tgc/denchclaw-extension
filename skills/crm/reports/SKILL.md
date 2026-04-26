@@ -90,6 +90,7 @@ Store reports as `.report.json` files in `{{WORKSPACE_PATH}}/**` (wherever appro
 ### Handling empty data
 
 If a view exists but returns 0 rows, the chart will render but show nothing. This is fine — no special handling needed. However, if the user asks "why is the chart empty?", check:
+
 - Are there entries in the object? `SELECT COUNT(*) FROM entries WHERE object_id = (SELECT id FROM objects WHERE name = '{object}')`
 - Do entries have field values? `SELECT COUNT(*) FROM entry_fields WHERE entry_id IN (SELECT id FROM entries WHERE object_id = ...)`
 

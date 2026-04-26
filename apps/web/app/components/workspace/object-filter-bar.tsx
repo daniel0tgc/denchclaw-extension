@@ -10,9 +10,9 @@ import {
 	defaultOperatorForFieldType,
 	isFilterGroup,
 	filterId,
-	describeRule,
 	emptyFilterGroup,
 } from "@/lib/object-filters";
+import { displayObjectName } from "@/lib/object-display-name";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -484,7 +484,7 @@ function RelationValueEditor({
 				const ids = v.split(",").map((s) => s.trim()).filter(Boolean);
 				onChange(ids.length === 1 ? ids[0] : ids);
 			}}
-			placeholder={relatedObjectName ? `Search ${relatedObjectName}...` : "ID..."}
+			placeholder={relatedObjectName ? `Search ${displayObjectName(relatedObjectName)}...` : "ID..."}
 		/>
 	);
 }
@@ -738,275 +738,340 @@ export function ObjectFilterBar({
 		return groups;
 	}, [fields]);
 
+	const ruleCount = filters.rules.filter((r) => !isFilterGroup(r)).length;
+
 	return (
-		<div className="space-y-2">
-			{/* Toolbar row */}
-			<div
-				className="flex items-center gap-2 flex-wrap"
+		<div className="flex items-center gap-1.5 flex-shrink-0">
+			{/* Filter pill — opens a popover containing the rules editor */}
+			<FilterPopover
+				ruleCount={ruleCount}
+				hasFilters={hasFilters}
+				filters={filters}
+				fields={fields}
+				groupedFields={groupedFields}
+				members={members}
+				addRule={addRule}
+				updateRule={updateRule}
+				removeRule={removeRule}
+				clearAll={clearAll}
+				toggleConjunction={toggleConjunction}
+				fieldPickerOpen={fieldPickerOpen}
+				setFieldPickerOpen={setFieldPickerOpen}
+			/>
+
+			{/* Views pill — saved views dropdown (largely unchanged) */}
+			<Dropdown
+				trigger={
+					<button
+						type="button"
+						className="flex items-center gap-1 h-7 px-2 rounded-md text-xs transition-colors cursor-pointer flex-shrink-0"
+						style={{
+							color: activeViewName ? "var(--color-accent)" : "var(--color-text-muted)",
+							border: `1px solid ${activeViewName ? "var(--color-accent)" : "var(--color-border)"}`,
+							background: activeViewName ? "var(--color-accent-light, rgba(99,102,241,0.1))" : "transparent",
+						}}
+						title={activeViewName ? `Active view: ${activeViewName}` : "Saved views"}
+					>
+						<BookmarkIcon />
+						<span className="hidden md:inline">{activeViewName ?? "Views"}</span>
+						<ChevronDownIcon />
+					</button>
+				}
+				open={viewsOpen}
+				onOpenChange={setViewsOpen}
+				align="right"
 			>
-				{/* Filter icon + label */}
-				<span
-					className="flex items-center gap-1.5 text-xs font-medium"
-					style={{ color: "var(--color-text-muted)" }}
-				>
-					<FilterIcon />
-					Filters
-				</span>
-
-				{/* AND/OR toggle (only when 2+ rules) */}
-				{filters.rules.length >= 2 && (
-					<button
-						type="button"
-						onClick={toggleConjunction}
-						className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider transition-colors cursor-pointer"
-						style={{
-							background: "var(--color-accent-light, rgba(99,102,241,0.1))",
-							color: "var(--color-accent)",
-							border: "1px solid var(--color-accent)",
-						}}
-						title={`Matching ${filters.conjunction === "and" ? "ALL" : "ANY"} rules. Click to toggle.`}
-					>
-						{filters.conjunction}
-					</button>
+				{savedViews.length === 0 && (
+					<div className="px-3 py-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
+						No saved views
+					</div>
 				)}
-
-				{/* Active filter chips */}
-				{filters.rules.map((rule) => {
-					if (isFilterGroup(rule)) {return null;}
-					return (
-						<span
-							key={rule.id}
-							className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] max-w-[180px] sm:max-w-[250px] truncate"
-							style={{
-								background: "var(--color-accent-light, rgba(99,102,241,0.1))",
-								color: "var(--color-accent)",
-								border: "1px solid var(--color-accent)",
+				{savedViews.map((view) => (
+					<div key={view.name} className="flex items-center group">
+						<DropdownItem
+							onClick={() => {
+								onLoadView(view);
+								setViewsOpen(false);
 							}}
-							title={describeRule(rule)}
+							active={activeViewName === view.name}
 						>
-							<span className="truncate">{describeRule(rule)}</span>
-							<button
-								type="button"
-								onClick={() => removeRule(rule.id)}
-								className="flex-shrink-0 cursor-pointer p-0.5 rounded-full transition-colors"
-								style={{ color: "var(--color-accent)" }}
-							>
-								<XIcon size={10} />
-							</button>
-						</span>
-					);
-				})}
-
-				{/* Add filter button */}
-				<Dropdown
-					trigger={
-						<button
-							type="button"
-							className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors cursor-pointer"
-							style={{
-								color: "var(--color-text-muted)",
-								border: "1px dashed var(--color-border)",
-							}}
-						>
-							<PlusIcon /> Add filter
-						</button>
-					}
-					open={fieldPickerOpen}
-					onOpenChange={setFieldPickerOpen}
-				>
-					{Object.entries(groupedFields).map(([type, typeFields]) => (
-						<div key={type}>
-							<div
-								className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider"
-								style={{ color: "var(--color-text-muted)" }}
-							>
-								{FIELD_TYPE_ICONS[type] ?? "?"} {type}
-							</div>
-							{typeFields.map((f) => (
-								<DropdownItem key={f.name} onClick={() => addRule(f.name)}>
-									{f.name}
-								</DropdownItem>
-							))}
-						</div>
-					))}
-				</Dropdown>
-
-				{/* Clear all */}
-				{hasFilters && (
-					<button
-						type="button"
-						onClick={clearAll}
-						className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors cursor-pointer"
-						style={{
-							color: "var(--color-accent)",
-							background: "var(--color-accent-light, rgba(99,102,241,0.1))",
-						}}
-					>
-						<XIcon size={10} />
-						Clear all
-					</button>
-				)}
-
-				{/* Spacer */}
-				<div className="flex-1" />
-
-				{/* Saved views */}
-				<Dropdown
-					trigger={
-						<button
-							type="button"
-							className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors cursor-pointer"
-							style={{
-								color: activeViewName ? "var(--color-accent)" : "var(--color-text-muted)",
-								border: `1px solid ${activeViewName ? "var(--color-accent)" : "var(--color-border)"}`,
-								background: activeViewName ? "var(--color-accent-light, rgba(99,102,241,0.1))" : "transparent",
-							}}
-						>
-							<BookmarkIcon />
-							{activeViewName ?? "Views"}
-							<ChevronDownIcon />
-						</button>
-					}
-					open={viewsOpen}
-					onOpenChange={setViewsOpen}
-					align="right"
-				>
-					{savedViews.length === 0 && (
-						<div className="px-3 py-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-							No saved views
-						</div>
-					)}
-					{savedViews.map((view) => (
-						<div key={view.name} className="flex items-center group">
-							<DropdownItem
-								onClick={() => {
-									onLoadView(view);
-									setViewsOpen(false);
-								}}
-								active={activeViewName === view.name}
-							>
-								<span className="flex-1 truncate">{view.name}</span>
-								{view.view_type && view.view_type !== "table" && (
-									<span
-										className="text-[9px] px-1.5 py-0.5 rounded ml-1 capitalize"
-										style={{
-											background: "var(--color-surface-hover)",
-											color: "var(--color-text-muted)",
-										}}
-									>
-										{view.view_type}
-									</span>
-								)}
-								{view.filters && view.filters.rules.length > 0 && (
-									<span
-										className="text-[10px] ml-1"
-										style={{ color: "var(--color-text-muted)" }}
-									>
-										{view.filters.rules.length} filter{view.filters.rules.length !== 1 ? "s" : ""}
-									</span>
-								)}
-							</DropdownItem>
-							<button
-								type="button"
-								onClick={(e) => {
-									e.stopPropagation();
-									onDeleteView(view.name);
-								}}
-								className="px-2 py-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer"
-								style={{ color: "var(--color-text-muted)" }}
-								title="Delete view"
-							>
-								<TrashIcon />
-							</button>
-						</div>
-					))}
-					<div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
-
-					{hasFilters && !saveDialogOpen && (
-						<DropdownItem onClick={() => setSaveDialogOpen(true)}>
-							<BookmarkIcon />
-							Save current filters as view...
+							<span className="flex-1 truncate">{view.name}</span>
+							{view.view_type && view.view_type !== "table" && (
+								<span
+									className="text-[9px] px-1.5 py-0.5 rounded ml-1 capitalize"
+									style={{
+										background: "var(--color-surface-hover)",
+										color: "var(--color-text-muted)",
+									}}
+								>
+									{view.view_type}
+								</span>
+							)}
+							{view.filters && view.filters.rules.length > 0 && (
+								<span
+									className="text-[10px] ml-1"
+									style={{ color: "var(--color-text-muted)" }}
+								>
+									{view.filters.rules.length} filter{view.filters.rules.length !== 1 ? "s" : ""}
+								</span>
+							)}
 						</DropdownItem>
-					)}
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								onDeleteView(view.name);
+							}}
+							className="px-2 py-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer"
+							style={{ color: "var(--color-text-muted)" }}
+							title="Delete view"
+						>
+							<TrashIcon />
+						</button>
+					</div>
+				))}
+				<div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
 
-					{saveDialogOpen && (
-						<div className="px-3 py-2 flex items-center gap-1">
-							<input
-								ref={saveInputRef}
-								type="text"
-								value={saveViewName}
-								onChange={(e) => setSaveViewName(e.target.value)}
+				{hasFilters && !saveDialogOpen && (
+					<DropdownItem onClick={() => setSaveDialogOpen(true)}>
+						<BookmarkIcon />
+						Save current filters as view...
+					</DropdownItem>
+				)}
+
+				{saveDialogOpen && (
+					<div className="px-3 py-2 flex items-center gap-1">
+						<input
+							ref={saveInputRef}
+							type="text"
+							value={saveViewName}
+							onChange={(e) => setSaveViewName(e.target.value)}
 							onKeyDown={(e) => {
 								if (e.key === "Enter") {handleSaveView();}
 								if (e.key === "Escape") {setSaveDialogOpen(false);}
 							}}
-								placeholder="View name..."
-								className="px-2 py-1 rounded-md text-xs outline-none flex-1"
-								style={{
-									background: "var(--color-bg)",
-									border: "1px solid var(--color-border)",
-									color: "var(--color-text)",
-								}}
-							/>
+							placeholder="View name..."
+							className="px-2 py-1 rounded-md text-xs outline-none flex-1"
+							style={{
+								background: "var(--color-bg)",
+								border: "1px solid var(--color-border)",
+								color: "var(--color-text)",
+							}}
+						/>
+						<button
+							type="button"
+							onClick={handleSaveView}
+							className="px-2 py-1 rounded-md text-xs transition-colors cursor-pointer"
+							style={{
+								background: "var(--color-accent)",
+								color: "white",
+							}}
+						>
+							Save
+						</button>
+					</div>
+				)}
+
+				{activeViewName && (
+					<>
+						<div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
+						<DropdownItem onClick={() => {
+							clearAll();
+							setViewsOpen(false);
+						}}>
+							<XIcon size={12} />
+							Clear active view
+						</DropdownItem>
+					</>
+				)}
+			</Dropdown>
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// FilterPopover — compact pill button + popover with rules editor
+// ---------------------------------------------------------------------------
+
+function FilterPopover({
+	ruleCount,
+	hasFilters,
+	filters,
+	fields,
+	groupedFields,
+	members,
+	addRule,
+	updateRule,
+	removeRule,
+	clearAll,
+	toggleConjunction,
+	fieldPickerOpen,
+	setFieldPickerOpen,
+}: {
+	ruleCount: number;
+	hasFilters: boolean;
+	filters: FilterGroup;
+	fields: Field[];
+	groupedFields: Record<string, Field[]>;
+	members?: Array<{ id: string; name: string }>;
+	addRule: (fieldName: string) => void;
+	updateRule: (id: string, updates: Partial<FilterRule>) => void;
+	removeRule: (id: string) => void;
+	clearAll: () => void;
+	toggleConjunction: () => void;
+	fieldPickerOpen: boolean;
+	setFieldPickerOpen: (open: boolean) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!open) {return;}
+		const handler = (e: MouseEvent) => {
+			const target = e.target as Node;
+			if (ref.current && !ref.current.contains(target)) {
+				setOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handler);
+		return () => document.removeEventListener("mousedown", handler);
+	}, [open]);
+
+	return (
+		<div className="relative" ref={ref}>
+			<button
+				type="button"
+				onClick={() => setOpen((v) => !v)}
+				className="flex items-center gap-1 h-7 px-2 rounded-md text-xs transition-colors cursor-pointer flex-shrink-0"
+				style={{
+					color: hasFilters ? "var(--color-accent)" : "var(--color-text-muted)",
+					border: `1px solid ${hasFilters ? "var(--color-accent)" : "var(--color-border)"}`,
+					background: hasFilters ? "var(--color-accent-light, rgba(99,102,241,0.1))" : "transparent",
+				}}
+				title={hasFilters ? `${ruleCount} active filter${ruleCount !== 1 ? "s" : ""}` : "Add a filter"}
+			>
+				<FilterIcon />
+				<span className="hidden md:inline">
+					{hasFilters ? `Filter · ${ruleCount}` : "Filter"}
+				</span>
+			</button>
+
+			{open && (
+				<div
+					className="absolute right-0 top-full mt-1 z-50 rounded-lg border shadow-lg p-3 min-w-[300px] sm:min-w-[420px] max-w-[calc(100vw-2rem)] flex flex-col gap-2"
+					style={{
+						borderColor: "var(--color-border)",
+						background: "var(--color-surface)",
+						boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+					}}
+				>
+					<div className="flex items-center justify-between">
+						<div
+							className="text-[10px] font-semibold uppercase tracking-wider"
+							style={{ color: "var(--color-text-muted)" }}
+						>
+							Filters
+						</div>
+						{filters.rules.length >= 2 && (
 							<button
 								type="button"
-								onClick={handleSaveView}
-								className="px-2 py-1 rounded-md text-xs transition-colors cursor-pointer"
+								onClick={toggleConjunction}
+								className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider transition-colors cursor-pointer"
 								style={{
-									background: "var(--color-accent)",
-									color: "white",
+									background: "var(--color-accent-light, rgba(99,102,241,0.1))",
+									color: "var(--color-accent)",
+									border: "1px solid var(--color-accent)",
 								}}
+								title={`Matching ${filters.conjunction === "and" ? "ALL" : "ANY"} rules. Click to toggle.`}
 							>
-								Save
+								Match {filters.conjunction === "and" ? "ALL" : "ANY"}
 							</button>
+						)}
+					</div>
+
+					{hasFilters ? (
+						<div className="flex flex-col gap-1.5">
+							{filters.rules.map((rule, idx) => {
+								if (isFilterGroup(rule)) {return null;}
+								const field = fields.find((f) => f.name === rule.field);
+								return (
+									<div key={rule.id} className="flex items-center gap-1.5">
+										<span
+											className="text-[10px] font-semibold uppercase w-10 text-center flex-shrink-0"
+											style={{ color: "var(--color-text-muted)" }}
+										>
+											{idx === 0 ? "Where" : filters.conjunction}
+										</span>
+										<FilterRuleRow
+											rule={rule}
+											field={field}
+											fields={fields}
+											members={members}
+											onUpdate={(updates) => updateRule(rule.id, updates)}
+											onRemove={() => removeRule(rule.id)}
+										/>
+									</div>
+								);
+							})}
+						</div>
+					) : (
+						<div
+							className="text-[11px] py-1"
+							style={{ color: "var(--color-text-muted)" }}
+						>
+							No filters applied. Add one below.
 						</div>
 					)}
 
-					{activeViewName && (
-						<>
-							<div className="border-t my-1" style={{ borderColor: "var(--color-border)" }} />
-							<DropdownItem onClick={() => {
-								clearAll();
-								setViewsOpen(false);
-							}}>
-								<XIcon size={12} />
-								Clear active view
-							</DropdownItem>
-						</>
-					)}
-				</Dropdown>
-			</div>
-
-			{/* Expanded filter rule editors (shown when rules exist) */}
-			{hasFilters && (
-				<div className="space-y-1.5 pl-5">
-					{filters.rules.map((rule, idx) => {
-						if (isFilterGroup(rule)) {return null;}
-						const field = fields.find((f) => f.name === rule.field);
-						return (
-							<div key={rule.id} className="flex items-center gap-1.5">
-								{idx > 0 && (
-									<span
-										className="text-[10px] font-semibold uppercase w-8 text-center flex-shrink-0"
+					<div className="flex items-center gap-2 pt-1">
+						<Dropdown
+							trigger={
+								<button
+									type="button"
+									className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors cursor-pointer"
+									style={{
+										color: "var(--color-text-muted)",
+										border: "1px dashed var(--color-border)",
+									}}
+								>
+									<PlusIcon /> Add filter
+								</button>
+							}
+							open={fieldPickerOpen}
+							onOpenChange={setFieldPickerOpen}
+						>
+							{Object.entries(groupedFields).map(([type, typeFields]) => (
+								<div key={type}>
+									<div
+										className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider"
 										style={{ color: "var(--color-text-muted)" }}
 									>
-										{filters.conjunction}
-									</span>
-								)}
-								{idx === 0 && (
-									<span className="w-8 flex-shrink-0" />
-								)}
-								<FilterRuleRow
-									rule={rule}
-									field={field}
-									fields={fields}
-									members={members}
-									onUpdate={(updates) => updateRule(rule.id, updates)}
-									onRemove={() => removeRule(rule.id)}
-								/>
-							</div>
-						);
-					})}
+										{FIELD_TYPE_ICONS[type] ?? "?"} {type}
+									</div>
+									{typeFields.map((f) => (
+										<DropdownItem key={f.name} onClick={() => addRule(f.name)}>
+											{f.name}
+										</DropdownItem>
+									))}
+								</div>
+							))}
+						</Dropdown>
+
+						{hasFilters && (
+							<button
+								type="button"
+								onClick={clearAll}
+								className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors cursor-pointer"
+								style={{
+									color: "var(--color-accent)",
+									background: "var(--color-accent-light, rgba(99,102,241,0.1))",
+								}}
+							>
+								<XIcon size={10} />
+								Clear all
+							</button>
+						)}
+					</div>
 				</div>
 			)}
 		</div>

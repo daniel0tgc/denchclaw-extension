@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 import {
   buildDenchCloudConfigPatch,
   fetchDenchCloudCatalog,
@@ -6,12 +7,8 @@ import {
   readConfiguredDenchCloudSettings,
   validateDenchCloudApiKey,
 } from "./dench-cloud.js";
-import { buildDenchCloudConfigPatch as buildRuntimePluginConfigPatch } from "../../extensions/dench-ai-gateway/index.js";
 
-function createJsonResponse(params?: {
-  status?: number;
-  payload?: unknown;
-}): Response {
+function createJsonResponse(params?: { status?: number; payload?: unknown }): Response {
   const status = params?.status ?? 200;
   return {
     status,
@@ -60,13 +57,15 @@ describe("dench-cloud helpers", () => {
         displayName: "GPT-5.4",
         contextWindow: 128000,
         maxTokens: 128000,
-        cost: expect.objectContaining({
+        cost: {
           input: 3.375,
           output: 20.25,
-          marginPercent: 0.35,
-        }),
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
       }),
     ]);
+    expect(models[0]?.cost).not.toHaveProperty("marginPercent");
   });
 
   it("falls back to the bundled model list when the public catalog is unavailable", async () => {
@@ -77,6 +76,7 @@ describe("dench-cloud helpers", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://gateway.merseoriginals.com/v1/public/models");
     expect(result.source).toBe("fallback");
     expect(result.models.map((model) => model.stableId)).toEqual([
+      "moonshotai.kimi-k2.5",
       "anthropic.claude-opus-4-6-v1",
       "gpt-5.4",
       "anthropic.claude-sonnet-4-6-v1",
@@ -86,7 +86,9 @@ describe("dench-cloud helpers", () => {
   it("rejects invalid Dench Cloud API keys with an actionable message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => createJsonResponse({ status: 401, payload: {} })) as unknown as typeof fetch,
+      vi.fn(async () =>
+        createJsonResponse({ status: 401, payload: {} }),
+      ) as unknown as typeof fetch,
     );
 
     await expect(
@@ -119,7 +121,6 @@ describe("dench-cloud helpers", () => {
             output: 33.75,
             cacheRead: 0,
             cacheWrite: 0,
-            marginPercent: 0.35,
           },
         },
       ],
@@ -181,7 +182,6 @@ describe("dench-cloud helpers", () => {
             output: 33.75,
             cacheRead: 0,
             cacheWrite: 0,
-            marginPercent: 0.35,
           },
         },
       ],

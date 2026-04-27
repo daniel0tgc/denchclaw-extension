@@ -27,7 +27,9 @@ export type DenchIntegrationMetadata = {
     ownsSearch?: boolean;
     fallbackProvider?: string | null;
   };
-  apollo?: Record<string, never>;
+  apollo?: {
+    enrichmentMaxMode?: boolean;
+  };
   elevenlabs?: Record<string, never>;
   future?: {
     composio?: {
@@ -236,7 +238,9 @@ export function readIntegrationsMetadata(): DenchIntegrationMetadata {
   return {
     schemaVersion,
     ...(asRecord(parsed)?.exa ? { exa: asRecord(parsed)?.exa as DenchIntegrationMetadata["exa"] } : {}),
-    ...(asRecord(parsed)?.apollo ? { apollo: {} } : {}),
+    ...(asRecord(parsed)?.apollo
+      ? { apollo: asRecord(parsed)?.apollo as DenchIntegrationMetadata["apollo"] }
+      : {}),
     ...(asRecord(parsed)?.elevenlabs ? { elevenlabs: {} } : {}),
     ...(asRecord(parsed)?.future ? { future: asRecord(parsed)?.future as DenchIntegrationMetadata["future"] } : {}),
   };
@@ -1307,9 +1311,12 @@ export function resolveDenchGatewayCredentials(): {
   const config = readOpenClawConfigForIntegrations();
   const models = asRecord(config.models);
   const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
+  const metadata = readIntegrationsMetadata();
   return {
     apiKey: resolveDenchApiKey(config),
     gatewayUrl: resolveGatewayBaseUrl(config),
-    enrichmentMaxModeEnabled: readBoolean(provider?.enrichmentMaxMode) === true,
+    enrichmentMaxModeEnabled:
+      metadata.apollo?.enrichmentMaxMode === true ||
+      readBoolean(provider?.enrichmentMaxMode) === true,
   };
 }

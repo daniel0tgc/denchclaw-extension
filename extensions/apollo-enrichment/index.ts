@@ -111,19 +111,19 @@ function buildPeopleBody(params: Record<string, unknown>) {
     body.email = email;
   }
   if (linkedinUrl) {
-    body.linkedinUrl = linkedinUrl;
+    body.linkedin_url = linkedinUrl;
   }
   if (firstName) {
-    body.firstName = firstName;
+    body.first_name = firstName;
   }
   if (lastName) {
-    body.lastName = lastName;
+    body.last_name = lastName;
   }
   if (domain) {
     body.domain = domain;
   }
   if (organizationName) {
-    body.organizationName = organizationName;
+    body.organization_name = organizationName;
   }
 
   return body;
@@ -145,19 +145,19 @@ function buildPeopleSearchBody(params: Record<string, unknown>) {
         : undefined;
 
   if (personTitles) {
-    body.personTitles = personTitles;
+    body.person_titles = personTitles;
   }
   if (personLocations) {
-    body.personLocations = personLocations;
+    body.person_locations = personLocations;
   }
   if (organizationDomains) {
-    body.organizationDomains = organizationDomains;
+    body.organization_domains = organizationDomains;
   }
   if (page !== undefined) {
     body.page = page;
   }
   if (perPage !== undefined) {
-    body.perPage = perPage;
+    body.per_page = perPage;
   }
 
   return body;
@@ -193,7 +193,7 @@ async function executeApolloEnrich(
       if (enrichmentMaxModeEnabled) {
         body.mode = "max";
       }
-      if (!body.email && !body.linkedinUrl && !body.firstName && !body.lastName) {
+      if (!body.email && !body.linkedin_url && !body.first_name && !body.last_name) {
         return jsonResult({
           error: "People enrichment requires at least an email, LinkedIn URL, or person name.",
         });

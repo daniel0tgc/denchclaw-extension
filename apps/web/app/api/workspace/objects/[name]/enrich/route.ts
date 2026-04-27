@@ -267,7 +267,7 @@ async function callApolloGateway(
 		const body: Record<string, string> = {};
 
 		if (inputValue.includes("linkedin.com")) {
-			body.linkedinUrl = inputValue;
+			body.linkedin_url = inputValue;
 		} else if (inputValue.includes("@")) {
 			body.email = inputValue;
 		} else {

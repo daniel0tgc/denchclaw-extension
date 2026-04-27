@@ -90,6 +90,59 @@ describe("workspace enrichment route", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards LinkedIn people enrichment with gateway-compatible snake_case keys", async () => {
+    const { duckdbQueryOnFile } = await import("@/lib/workspace");
+    vi.mocked(duckdbQueryOnFile).mockImplementation((_dbFile: string, sql: string) => {
+      if (sql.includes("SELECT id FROM objects WHERE name")) {
+        return [{ id: "obj_1" }] as never;
+      }
+      if (sql.includes("SELECT id, name FROM fields")) {
+        return [{ id: "input_1", name: "LinkedIn URL" }] as never;
+      }
+      if (sql.includes("SELECT id FROM fields WHERE id")) {
+        return [{ id: "field_1" }] as never;
+      }
+      if (sql.includes("FROM entries e")) {
+        return [{ entry_id: "entry_1", input_value: "https://www.linkedin.com/in/markrachapoom" }] as never;
+      }
+      if (sql.includes("COUNT(*) as cnt")) {
+        return [{ cnt: 0 }] as never;
+      }
+      return [] as never;
+    });
+
+    global.fetch = vi.fn(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        linkedin_url: "https://www.linkedin.com/in/markrachapoom",
+        mode: "max",
+      });
+      return new Response(JSON.stringify({ person: { name: "Mark Rachapoom" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { POST } = await import("./route.js");
+    const response = await POST(
+      new Request("http://localhost/api/workspace/objects/leads/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fieldId: "field_1",
+          apolloPath: "person.name",
+          category: "people",
+          inputFieldName: "LinkedIn URL",
+          scope: 1,
+        }),
+      }),
+      { params: Promise.resolve({ name: "leads" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards mode=max for company enrichment requests when enabled", async () => {
     const { duckdbQueryOnFile } = await import("@/lib/workspace");
     vi.mocked(duckdbQueryOnFile).mockImplementation((_dbFile: string, sql: string) => {

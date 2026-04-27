@@ -13,6 +13,7 @@ import {
 } from "../../../src/cli/dench-cloud";
 import {
   applyDenchIntegrationToggleDraft,
+  ensureDefaultManagedPluginsInstalled,
   getIntegrationsState,
   readIntegrationsMetadata,
   refreshIntegrationsRuntime,
@@ -443,6 +444,7 @@ export async function saveApiKey(apiKey: string): Promise<CloudSettingsUpdateRes
   syncAllowedTools(config, readStringList(patchTools?.alsoAllow));
 
   writeConfig(config);
+  ensureDefaultManagedPluginsInstalled();
 
   const refresh = await refreshIntegrationsRuntime();
   const state = await getCloudSettingsState();

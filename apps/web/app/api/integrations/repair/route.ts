@@ -1,13 +1,13 @@
 import {
   refreshIntegrationsRuntime,
-  repairOlderIntegrationsProfile,
+  repairManagedPluginsProfile,
 } from "@/lib/integrations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST() {
-  const result = repairOlderIntegrationsProfile();
+  const result = repairManagedPluginsProfile();
   const refresh = result.changed
     ? await refreshIntegrationsRuntime()
     : {

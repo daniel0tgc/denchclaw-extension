@@ -14,6 +14,7 @@ import {
 } from "../../../src/cli/dench-cloud";
 import {
   applyDenchIntegrationToggleDraft,
+  ensureDefaultManagedPluginsInstalled,
   getIntegrationsState,
   readIntegrationsMetadata,
   refreshIntegrationsRuntime,
@@ -454,6 +455,7 @@ export async function saveApiKey(
   if (options.syncAuthProfile !== false) {
     writeDenchAuthProfileKey(apiKey);
   }
+  ensureDefaultManagedPluginsInstalled();
 
   const refresh = await refreshIntegrationsRuntime();
   const state = await getCloudSettingsState();

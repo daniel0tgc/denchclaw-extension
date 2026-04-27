@@ -13,6 +13,7 @@ const eligiblePayload = {
   },
   metadata: { schemaVersion: 1 },
   search: { builtIn: { enabled: false, denied: true, provider: "duckduckgo" }, effectiveOwner: "exa" },
+  managedPlugins: [],
   integrations: [],
 };
 

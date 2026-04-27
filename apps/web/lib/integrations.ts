@@ -59,6 +59,13 @@ export type IntegrationPluginState = {
   sourcePath: string | null;
 };
 
+export type ManagedPluginRepairId =
+  | "dench-ai-gateway"
+  | "dench-identity"
+  | "apollo"
+  | "exa"
+  | "posthog";
+
 export type IntegrationHealthIssue =
   | "missing_plugin_entry"
   | "plugin_disabled"
@@ -96,6 +103,17 @@ export type DenchIntegrationState = {
   overrideActive?: boolean;
 };
 
+export type ManagedPluginState = {
+  id: ManagedPluginRepairId;
+  pluginId: string;
+  label: string;
+  required: boolean;
+  available: boolean;
+  plugin: IntegrationPluginState;
+  healthIssues: IntegrationHealthIssue[];
+  health: DenchIntegrationState["health"];
+};
+
 export type BuiltInSearchState = {
   enabled: boolean;
   denied: boolean;
@@ -113,6 +131,7 @@ export type IntegrationsState = {
     builtIn: BuiltInSearchState;
     effectiveOwner: "exa" | "web_search" | "none";
   };
+  managedPlugins: ManagedPluginState[];
   integrations: DenchIntegrationState[];
 };
 
@@ -130,7 +149,7 @@ export type IntegrationRuntimeRefresh = {
 };
 
 export type IntegrationRepairEntry = {
-  id: "exa" | "apollo";
+  id: ManagedPluginRepairId;
   pluginId: string;
   assetAvailable: boolean;
   assetCopied: boolean;
@@ -168,9 +187,74 @@ export type DenchIntegrationToggleDraft = Partial<Record<DenchIntegrationId, boo
 const DEFAULT_GATEWAY_URL = "https://gateway.merseoriginals.com";
 const DEFAULT_FALLBACK_PROVIDER = "duckduckgo";
 const METADATA_FILENAME = ".dench-integrations.json";
+const DENCH_AI_GATEWAY_PLUGIN_ID = "dench-ai-gateway";
+const DENCH_IDENTITY_PLUGIN_ID = "dench-identity";
 const EXA_PLUGIN_ID = "exa-search";
 const APOLLO_PLUGIN_ID = "apollo-enrichment";
+const POSTHOG_PLUGIN_ID = "posthog-analytics";
 const execFileAsync = promisify(execFile);
+
+type ManagedBundledPluginSpec = {
+  id: ManagedPluginRepairId;
+  pluginId: string;
+  sourceDirName: string;
+  label: string;
+  required: boolean;
+  defaultEnabled: boolean;
+  stripConfigKeys?: string[];
+};
+
+const DENCH_MANAGED_BUNDLED_PLUGINS: ManagedBundledPluginSpec[] = [
+  {
+    id: "dench-ai-gateway",
+    pluginId: DENCH_AI_GATEWAY_PLUGIN_ID,
+    sourceDirName: DENCH_AI_GATEWAY_PLUGIN_ID,
+    label: "Dench AI Gateway",
+    required: true,
+    defaultEnabled: true,
+  },
+  {
+    id: "dench-identity",
+    pluginId: DENCH_IDENTITY_PLUGIN_ID,
+    sourceDirName: DENCH_IDENTITY_PLUGIN_ID,
+    label: "Dench Identity",
+    required: true,
+    defaultEnabled: true,
+  },
+  {
+    id: "apollo",
+    pluginId: APOLLO_PLUGIN_ID,
+    sourceDirName: APOLLO_PLUGIN_ID,
+    label: "Apollo Enrichment",
+    required: true,
+    defaultEnabled: true,
+    stripConfigKeys: ["apiKey"],
+  },
+  {
+    id: "exa",
+    pluginId: EXA_PLUGIN_ID,
+    sourceDirName: EXA_PLUGIN_ID,
+    label: "Exa Search",
+    required: true,
+    defaultEnabled: true,
+    stripConfigKeys: ["apiKey"],
+  },
+  {
+    id: "posthog",
+    pluginId: POSTHOG_PLUGIN_ID,
+    sourceDirName: POSTHOG_PLUGIN_ID,
+    label: "PostHog Analytics",
+    required: false,
+    defaultEnabled: false,
+  },
+];
+
+const REQUIRED_MANAGED_PLUGIN_IDS: ManagedPluginRepairId[] = [
+  "dench-ai-gateway",
+  "dench-identity",
+  "apollo",
+  "exa",
+];
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -317,73 +401,80 @@ function removeValue(list: string[], value: string): boolean {
   return setStringList(list, next);
 }
 
-function ensurePluginRegistration(config: OpenClawConfig, pluginId: string): boolean {
-  const plugins = ensurePluginsConfig(config);
-  const allow = ensureStringList(plugins.allow);
-  plugins.allow = allow;
-  const load = ensureRecord(plugins, "load");
-  const loadPaths = ensureStringList(load.paths);
-  load.paths = loadPaths;
-  const entries = ensureRecord(plugins, "entries");
-  const installs = ensureRecord(plugins, "installs");
-
-  let changed = false;
-  const { installPath, sourcePath } = resolveBundledPluginPaths(pluginId);
-  const pluginExists = existsSync(installPath);
-
-  changed = addUnique(allow, pluginId) || changed;
-
-  if (!entries[pluginId] || !asRecord(entries[pluginId])) {
-    entries[pluginId] = { enabled: true };
-    changed = true;
+function resolveManagedBundledPluginSpec(id: ManagedPluginRepairId): ManagedBundledPluginSpec {
+  const spec = DENCH_MANAGED_BUNDLED_PLUGINS.find((plugin) => plugin.id === id);
+  if (!spec) {
+    throw new Error(`Unknown managed plugin '${id}'.`);
   }
-  const entry = asRecord(entries[pluginId]);
-  if (entry && entry.enabled !== true) {
-    entry.enabled = true;
-    changed = true;
-  }
-
-  if (pluginExists) {
-    changed = addUnique(loadPaths, installPath) || changed;
-    const install = asRecord(installs[pluginId]);
-    if (!install) {
-      installs[pluginId] = { installPath, sourcePath };
-      changed = true;
-    } else {
-      if (install.installPath !== installPath) {
-        install.installPath = installPath;
-        changed = true;
-      }
-      if (install.sourcePath !== sourcePath) {
-        install.sourcePath = sourcePath;
-        changed = true;
-      }
-    }
-  }
-
-  return changed;
+  return spec;
 }
 
-function resolveBundledPluginPaths(pluginId: string): {
+function resolveBundledPluginPaths(sourceDirName: string): {
   installPath: string;
   sourcePath: string;
 } {
   const cwdCandidates = [
-    join(process.cwd(), "extensions", pluginId),
-    join(process.cwd(), "..", "..", "extensions", pluginId),
+    join(process.cwd(), "extensions", sourceDirName),
+    join(process.cwd(), "..", "..", "extensions", sourceDirName),
   ];
   const sourcePath = cwdCandidates.find((candidate) => existsSync(candidate)) ?? cwdCandidates[0];
   return {
-    installPath: join(resolveOpenClawStateDir(), "extensions", pluginId),
+    installPath: join(resolveOpenClawStateDir(), "extensions", sourceDirName),
     sourcePath,
   };
 }
 
-function repairBundledPluginRegistration(
+function ensureSharedExtensionCopied(): boolean {
+  const sourcePath = resolveBundledPluginPaths("shared").sourcePath;
+  const installPath = join(resolveOpenClawStateDir(), "extensions", "shared");
+  if (!existsSync(sourcePath) || existsSync(installPath)) {
+    return false;
+  }
+  mkdirSync(dirname(installPath), { recursive: true });
+  cpSync(sourcePath, installPath, { recursive: true, force: true });
+  return true;
+}
+
+function ensureDenchAiGatewayConfig(config: OpenClawConfig, entry: UnknownRecord): boolean {
+  if (!entry.enabled) {
+    return false;
+  }
+  const cfg = ensureRecord(entry, "config");
+  const gatewayUrl = resolveGatewayBaseUrl(config) ?? DEFAULT_GATEWAY_URL;
+  if (cfg.gatewayUrl === gatewayUrl) {
+    return false;
+  }
+  cfg.gatewayUrl = gatewayUrl;
+  return true;
+}
+
+function stripManagedPluginConfigKeys(entry: UnknownRecord, keys: string[] | undefined): boolean {
+  if (!keys || keys.length === 0) {
+    return false;
+  }
+  const cfg = asRecord(entry.config);
+  if (!cfg) {
+    return false;
+  }
+  let changed = false;
+  for (const key of keys) {
+    if (key in cfg) {
+      delete cfg[key];
+      changed = true;
+    }
+  }
+  if (Object.keys(cfg).length === 0) {
+    delete entry.config;
+  }
+  return changed;
+}
+
+function ensureManagedBundledPlugin(
   config: OpenClawConfig,
   params: {
-    id: "exa" | "apollo";
-    pluginId: string;
+    spec: ManagedBundledPluginSpec;
+    enabled?: boolean;
+    preserveExistingDisabled?: boolean;
   },
 ): IntegrationRepairEntry & { changed: boolean } {
   const plugins = ensurePluginsConfig(config);
@@ -395,7 +486,8 @@ function repairBundledPluginRegistration(
   const entries = ensureRecord(plugins, "entries");
   const installs = ensureRecord(plugins, "installs");
 
-  const { installPath, sourcePath } = resolveBundledPluginPaths(params.pluginId);
+  const { spec } = params;
+  const { installPath, sourcePath } = resolveBundledPluginPaths(spec.sourceDirName);
   const sourceExists = existsSync(sourcePath);
   let installExists = existsSync(installPath);
   let assetCopied = false;
@@ -414,21 +506,37 @@ function repairBundledPluginRegistration(
     issues.push("source_asset_missing");
   }
 
-  const existingEntry = asRecord(entries[params.pluginId]);
-  const preservedEnabled = existingEntry?.enabled !== false;
+  const existingEntry = asRecord(entries[spec.pluginId]);
+  const nextEnabled = params.enabled ?? (
+    params.preserveExistingDisabled && existingEntry?.enabled === false
+      ? false
+      : spec.defaultEnabled
+  );
   if (!existingEntry) {
-    entries[params.pluginId] = { enabled: preservedEnabled };
+    entries[spec.pluginId] = { enabled: nextEnabled };
+    changed = true;
+  } else if (existingEntry.enabled !== nextEnabled) {
+    existingEntry.enabled = nextEnabled;
     changed = true;
   }
 
   if (installExists) {
-    changed = addUnique(allow, params.pluginId) || changed;
+    changed = addUnique(allow, spec.pluginId) || changed;
     changed = addUnique(loadPaths, installPath) || changed;
-    const install = asRecord(installs[params.pluginId]);
+    const install = asRecord(installs[spec.pluginId]);
     if (!install) {
-      installs[params.pluginId] = { installPath, sourcePath };
+      installs[spec.pluginId] = {
+        source: "path",
+        sourcePath,
+        installPath,
+        installedAt: new Date().toISOString(),
+      };
       changed = true;
     } else {
+      if (install.source !== "path") {
+        install.source = "path";
+        changed = true;
+      }
       if (install.installPath !== installPath) {
         install.installPath = installPath;
         changed = true;
@@ -438,13 +546,22 @@ function repairBundledPluginRegistration(
         changed = true;
       }
     }
+    changed = ensureSharedExtensionCopied() || changed;
   } else {
     issues.push("install_path_missing");
   }
 
+  const entry = asRecord(entries[spec.pluginId]);
+  if (entry) {
+    changed = stripManagedPluginConfigKeys(entry, spec.stripConfigKeys) || changed;
+    if (spec.pluginId === DENCH_AI_GATEWAY_PLUGIN_ID) {
+      changed = ensureDenchAiGatewayConfig(config, entry) || changed;
+    }
+  }
+
   return {
-    id: params.id,
-    pluginId: params.pluginId,
+    id: spec.id,
+    pluginId: spec.pluginId,
     assetAvailable: installExists,
     assetCopied,
     repaired: changed && installExists,
@@ -780,6 +897,36 @@ function buildHealth(enabled: boolean, issues: IntegrationHealthIssue[]): DenchI
   };
 }
 
+function buildManagedPluginState(config: OpenClawConfig, spec: ManagedBundledPluginSpec): ManagedPluginState {
+  const plugin = readPluginState(config, spec.pluginId);
+  const healthIssues: IntegrationHealthIssue[] = [];
+  if (!plugin.configured) healthIssues.push("missing_plugin_entry");
+  if (plugin.configured && !plugin.enabled) healthIssues.push("plugin_disabled");
+  if (!plugin.allowlisted) healthIssues.push("plugin_not_allowlisted");
+  if (!plugin.loadPathConfigured) healthIssues.push("plugin_load_path_missing");
+  if (!plugin.installRecorded) healthIssues.push("plugin_install_missing");
+  if (plugin.installRecorded && !plugin.installPathExists) healthIssues.push("plugin_install_path_missing");
+
+  const available =
+    plugin.configured &&
+    plugin.enabled &&
+    plugin.allowlisted &&
+    plugin.loadPathConfigured &&
+    plugin.installRecorded &&
+    plugin.installPathExists;
+
+  return {
+    id: spec.id,
+    pluginId: spec.pluginId,
+    label: spec.label,
+    required: spec.required,
+    available,
+    plugin,
+    healthIssues,
+    health: buildHealth(plugin.enabled, healthIssues),
+  };
+}
+
 function buildExaState(
   config: OpenClawConfig,
   gatewayBaseUrl: string | null,
@@ -927,6 +1074,12 @@ export function getIntegrationsState(): IntegrationsState {
   const exa = buildExaState(config, gatewayBaseUrl, auth, eligibility, builtInSearch);
   const apollo = buildApolloState(config, gatewayBaseUrl, auth, eligibility);
   const elevenlabs = buildElevenLabsState(config, gatewayBaseUrl, auth, eligibility);
+  const managedPlugins = DENCH_MANAGED_BUNDLED_PLUGINS
+    .filter((plugin) =>
+      plugin.id === "dench-ai-gateway" ||
+      plugin.id === "dench-identity"
+    )
+    .map((plugin) => buildManagedPluginState(config, plugin));
 
   return {
     denchCloud: {
@@ -948,6 +1101,7 @@ export function getIntegrationsState(): IntegrationsState {
       builtIn: builtInSearch,
       effectiveOwner: resolveEffectiveSearchOwner({ exaState: exa, builtInSearch }),
     },
+    managedPlugins,
     integrations: [exa, apollo, elevenlabs],
   };
 }
@@ -1108,7 +1262,10 @@ export function applyDenchIntegrationToggleDraft(params: {
   switch (id) {
     case "exa": {
       if (enabled) {
-        changed = ensurePluginRegistration(config, EXA_PLUGIN_ID) || changed;
+        changed = ensureManagedBundledPlugin(config, {
+          spec: resolveManagedBundledPluginSpec("exa"),
+          enabled: true,
+        }).changed || changed;
         changed = setPluginEnabled(config, EXA_PLUGIN_ID, true) || changed;
         changed = setWebSearchPolicy(config, { enabled: false, denied: true }) || changed;
       } else {
@@ -1128,7 +1285,10 @@ export function applyDenchIntegrationToggleDraft(params: {
     }
     case "apollo": {
       if (enabled) {
-        changed = ensurePluginRegistration(config, APOLLO_PLUGIN_ID) || changed;
+        changed = ensureManagedBundledPlugin(config, {
+          spec: resolveManagedBundledPluginSpec("apollo"),
+          enabled: true,
+        }).changed || changed;
         changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, true) || changed;
       } else {
         changed = setPluginEnabled(config, APOLLO_PLUGIN_ID, false) || changed;
@@ -1185,12 +1345,14 @@ export function applyDenchIntegrationToggleDraft(params: {
   };
 }
 
-export function repairOlderIntegrationsProfile(): IntegrationsRepairResult {
+export function ensureDefaultManagedPluginsInstalled(): IntegrationsRepairResult {
   const config = readOpenClawConfigForIntegrations();
-  const repairs = [
-    repairBundledPluginRegistration(config, { id: "exa", pluginId: EXA_PLUGIN_ID }),
-    repairBundledPluginRegistration(config, { id: "apollo", pluginId: APOLLO_PLUGIN_ID }),
-  ];
+  const repairs = REQUIRED_MANAGED_PLUGIN_IDS.map((id) =>
+    ensureManagedBundledPlugin(config, {
+      spec: resolveManagedBundledPluginSpec(id),
+      enabled: true,
+    })
+  );
   const changed = repairs.some((repair) => repair.changed);
 
   if (changed) {
@@ -1206,6 +1368,9 @@ export function repairOlderIntegrationsProfile(): IntegrationsRepairResult {
     state: getIntegrationsState(),
   };
 }
+
+export const repairManagedPluginsProfile = ensureDefaultManagedPluginsInstalled;
+export const repairOlderIntegrationsProfile = ensureDefaultManagedPluginsInstalled;
 
 export function setExaIntegrationEnabled(enabled: boolean): IntegrationToggleResult {
   const config = readOpenClawConfigForIntegrations();

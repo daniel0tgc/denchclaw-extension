@@ -10,6 +10,7 @@ import type {
   DenchIntegrationState,
   IntegrationRuntimeRefresh,
   IntegrationsState,
+  ManagedPluginRepairId,
 } from "@/lib/integrations";
 
 export type IntegrationActionNotice = {
@@ -24,7 +25,7 @@ type IntegrationToggleResponse = IntegrationsState & {
 type IntegrationRepairResponse = IntegrationsState & {
   changed: boolean;
   repairs: IntegrationRepairEntry[];
-  repairedIds: Array<"exa" | "apollo">;
+  repairedIds: ManagedPluginRepairId[];
   refresh: IntegrationRuntimeRefresh;
 };
 
@@ -77,6 +78,21 @@ function integrationDisplayNameFromId(id: DenchIntegrationId, fallbackLabel?: st
       return fallbackLabel ?? "Exa";
     case "elevenlabs":
       return fallbackLabel ?? "ElevenLabs";
+  }
+}
+
+function repairDisplayNameFromId(id: ManagedPluginRepairId): string {
+  switch (id) {
+    case "apollo":
+      return "Dench Enrichments";
+    case "exa":
+      return "Exa";
+    case "dench-ai-gateway":
+      return "Dench AI Gateway";
+    case "dench-identity":
+      return "Dench Identity";
+    case "posthog":
+      return "PostHog";
   }
 }
 
@@ -204,12 +220,14 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
 
   const integrations = useMemo(() => resolvedData?.integrations ?? [], [resolvedData]);
   const needsRepair = useMemo(
-    () => integrations.some(
-      (integration) =>
-        (integration.id === "exa" || integration.id === "apollo") &&
-        integration.health.pluginMissing,
-    ),
-    [integrations],
+    () =>
+      integrations.some(
+        (integration) =>
+          (integration.id === "exa" || integration.id === "apollo") &&
+          integration.health.pluginMissing,
+      ) ||
+      (resolvedData?.managedPlugins ?? []).some((plugin) => plugin.required && plugin.health.pluginMissing),
+    [integrations, resolvedData?.managedPlugins],
   );
 
   const applyState = useCallback((nextState: IntegrationsState) => {
@@ -286,7 +304,7 @@ export function DenchIntegrationsSection(props: DenchIntegrationsSectionProps = 
       if (nextState.changed && nextState.refresh.restarted) {
         const repairedNames = nextState.repairedIds.length > 0
           ? nextState.repairedIds
-            .map((id) => integrationDisplayNameFromId(id))
+            .map((id) => repairDisplayNameFromId(id))
             .join(", ")
           : "profiles";
         setNotice({

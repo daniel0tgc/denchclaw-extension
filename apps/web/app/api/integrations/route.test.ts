@@ -18,6 +18,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: "exa",
       },
+      managedPlugins: [],
       integrations: [
         {
           id: "exa",

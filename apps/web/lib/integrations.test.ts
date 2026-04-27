@@ -461,8 +461,10 @@ describe("integrations state", () => {
       "/home/testuser/.openclaw-dench/extensions/exa-search",
     ]);
     expect(writtenConfig.plugins.installs["exa-search"]).toEqual({
+      source: "path",
       installPath: "/home/testuser/.openclaw-dench/extensions/exa-search",
       sourcePath: expect.any(String),
+      installedAt: expect.any(String),
     });
     expect(writtenConfig.tools.deny).toEqual(["web_search"]);
     expect(writtenConfig.tools.web.search).toEqual({ enabled: false });
@@ -574,7 +576,15 @@ describe("integrations state", () => {
         },
       },
       plugins: {
-        entries: {},
+        entries: {
+          "apollo-enrichment": {
+            enabled: false,
+            config: {
+              apiKey: "stale-local-key",
+              mode: "max",
+            },
+          },
+        },
       },
     });
 
@@ -600,13 +610,20 @@ describe("integrations state", () => {
     expect(result.changed).toBe(true);
     const writtenConfig = JSON.parse(openClawJson);
     expect(writtenConfig.plugins.allow).toEqual(["apollo-enrichment"]);
-    expect(writtenConfig.plugins.entries["apollo-enrichment"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.entries["apollo-enrichment"]).toEqual({
+      enabled: true,
+      config: {
+        mode: "max",
+      },
+    });
     expect(writtenConfig.plugins.load.paths).toEqual([
       "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
     ]);
     expect(writtenConfig.plugins.installs["apollo-enrichment"]).toEqual({
+      source: "path",
       installPath: "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
       sourcePath: expect.any(String),
+      installedAt: expect.any(String),
     });
   });
 
@@ -881,12 +898,18 @@ describe("integrations state", () => {
     const mockExists = vi.mocked(existsSync);
     const mockRead = vi.mocked(readFileSync);
     const mockWrite = vi.mocked(writeFileSync);
+    const bundledGatewaySource = resolveBundledExtensionSourcePath("dench-ai-gateway");
+    const bundledIdentitySource = resolveBundledExtensionSourcePath("dench-identity");
     const bundledExaSource = resolveBundledExtensionSourcePath("exa-search");
     const bundledApolloSource = resolveBundledExtensionSourcePath("apollo-enrichment");
+    const bundledSharedSource = resolveBundledExtensionSourcePath("shared");
     const existingPaths = new Set<string>([
       "/home/testuser/.openclaw-dench/openclaw.json",
+      bundledGatewaySource,
+      bundledIdentitySource,
       bundledExaSource,
       bundledApolloSource,
+      bundledSharedSource,
     ]);
     let openClawJson = JSON.stringify({
       plugins: {
@@ -911,13 +934,25 @@ describe("integrations state", () => {
       }
     });
 
-    const { repairOlderIntegrationsProfile } = await import("./integrations.js");
-    const result = repairOlderIntegrationsProfile();
+    const { repairManagedPluginsProfile } = await import("./integrations.js");
+    const result = repairManagedPluginsProfile();
 
     expect(result.changed).toBe(true);
-    expect(result.repairedIds).toEqual(["exa", "apollo"]);
+    expect(result.repairedIds).toEqual(["dench-ai-gateway", "dench-identity", "apollo", "exa"]);
     expect(result.repairs).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: "dench-ai-gateway",
+          assetAvailable: true,
+          assetCopied: true,
+          repaired: true,
+        }),
+        expect.objectContaining({
+          id: "dench-identity",
+          assetAvailable: true,
+          assetCopied: true,
+          repaired: true,
+        }),
         expect.objectContaining({
           id: "exa",
           assetAvailable: true,
@@ -932,21 +967,147 @@ describe("integrations state", () => {
         }),
       ]),
     );
-    expect(mockCopy).toHaveBeenCalledTimes(2);
+    expect(mockCopy).toHaveBeenCalledTimes(5);
+    expect(mockCopy).toHaveBeenCalledWith(
+      bundledSharedSource,
+      "/home/testuser/.openclaw-dench/extensions/shared",
+      { recursive: true, force: true },
+    );
 
     const writtenConfig = JSON.parse(openClawJson);
-    expect(writtenConfig.plugins.allow).toEqual(["exa-search", "apollo-enrichment"]);
-    expect(writtenConfig.plugins.load.paths).toEqual([
-      "/home/testuser/.openclaw-dench/extensions/exa-search",
-      "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+    expect(writtenConfig.plugins.allow).toEqual([
+      "dench-ai-gateway",
+      "dench-identity",
+      "apollo-enrichment",
+      "exa-search",
     ]);
+    expect(writtenConfig.plugins.load.paths).toEqual([
+      "/home/testuser/.openclaw-dench/extensions/dench-ai-gateway",
+      "/home/testuser/.openclaw-dench/extensions/dench-identity",
+      "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+      "/home/testuser/.openclaw-dench/extensions/exa-search",
+    ]);
+    expect(writtenConfig.plugins.entries["dench-ai-gateway"]).toEqual({
+      enabled: true,
+      config: {
+        gatewayUrl: "https://gateway.merseoriginals.com",
+      },
+    });
+    expect(writtenConfig.plugins.entries["dench-identity"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.entries["apollo-enrichment"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.entries["exa-search"]).toEqual({ enabled: true });
+    expect(writtenConfig.plugins.installs["dench-ai-gateway"]).toEqual({
+      source: "path",
+      installPath: "/home/testuser/.openclaw-dench/extensions/dench-ai-gateway",
+      sourcePath: bundledGatewaySource,
+      installedAt: expect.any(String),
+    });
+    expect(writtenConfig.plugins.installs["dench-identity"]).toEqual({
+      source: "path",
+      installPath: "/home/testuser/.openclaw-dench/extensions/dench-identity",
+      sourcePath: bundledIdentitySource,
+      installedAt: expect.any(String),
+    });
     expect(writtenConfig.plugins.installs["exa-search"]).toEqual({
+      source: "path",
       installPath: "/home/testuser/.openclaw-dench/extensions/exa-search",
       sourcePath: bundledExaSource,
+      installedAt: expect.any(String),
     });
     expect(writtenConfig.plugins.installs["apollo-enrichment"]).toEqual({
+      source: "path",
       installPath: "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
       sourcePath: bundledApolloSource,
+      installedAt: expect.any(String),
     });
+  });
+
+  it("does not rewrite an already repaired managed plugin profile", async () => {
+    const { cpSync, existsSync, readFileSync, writeFileSync } = await import("node:fs");
+    const mockCopy = vi.mocked(cpSync);
+    const mockExists = vi.mocked(existsSync);
+    const mockRead = vi.mocked(readFileSync);
+    const mockWrite = vi.mocked(writeFileSync);
+    const openClawJson = JSON.stringify({
+      plugins: {
+        allow: ["dench-ai-gateway", "dench-identity", "apollo-enrichment", "exa-search"],
+        load: {
+          paths: [
+            "/home/testuser/.openclaw-dench/extensions/dench-ai-gateway",
+            "/home/testuser/.openclaw-dench/extensions/dench-identity",
+            "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+            "/home/testuser/.openclaw-dench/extensions/exa-search",
+          ],
+        },
+        entries: {
+          "dench-ai-gateway": {
+            enabled: true,
+            config: {
+              gatewayUrl: "https://gateway.merseoriginals.com",
+            },
+          },
+          "dench-identity": { enabled: true },
+          "apollo-enrichment": { enabled: true },
+          "exa-search": { enabled: true },
+        },
+        installs: {
+          "dench-ai-gateway": {
+            source: "path",
+            sourcePath: resolveBundledExtensionSourcePath("dench-ai-gateway"),
+            installPath: "/home/testuser/.openclaw-dench/extensions/dench-ai-gateway",
+            installedAt: "2026-01-01T00:00:00.000Z",
+          },
+          "dench-identity": {
+            source: "path",
+            sourcePath: resolveBundledExtensionSourcePath("dench-identity"),
+            installPath: "/home/testuser/.openclaw-dench/extensions/dench-identity",
+            installedAt: "2026-01-01T00:00:00.000Z",
+          },
+          "apollo-enrichment": {
+            source: "path",
+            sourcePath: resolveBundledExtensionSourcePath("apollo-enrichment"),
+            installPath: "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+            installedAt: "2026-01-01T00:00:00.000Z",
+          },
+          "exa-search": {
+            source: "path",
+            sourcePath: resolveBundledExtensionSourcePath("exa-search"),
+            installPath: "/home/testuser/.openclaw-dench/extensions/exa-search",
+            installedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const existingPaths = new Set([
+      "/home/testuser/.openclaw-dench/openclaw.json",
+      resolveBundledExtensionSourcePath("dench-ai-gateway"),
+      resolveBundledExtensionSourcePath("dench-identity"),
+      resolveBundledExtensionSourcePath("apollo-enrichment"),
+      resolveBundledExtensionSourcePath("exa-search"),
+      "/home/testuser/.openclaw-dench/extensions/dench-ai-gateway",
+      "/home/testuser/.openclaw-dench/extensions/dench-identity",
+      "/home/testuser/.openclaw-dench/extensions/apollo-enrichment",
+      "/home/testuser/.openclaw-dench/extensions/exa-search",
+      resolveBundledExtensionSourcePath("shared"),
+      "/home/testuser/.openclaw-dench/extensions/shared",
+    ]);
+
+    mockExists.mockImplementation((path) => existingPaths.has(String(path)));
+    mockRead.mockImplementation((path) => {
+      if (String(path).endsWith("openclaw.json")) {
+        return openClawJson as never;
+      }
+      return "" as never;
+    });
+    mockCopy.mockClear();
+    mockWrite.mockClear();
+
+    const { repairManagedPluginsProfile } = await import("./integrations.js");
+    const result = repairManagedPluginsProfile();
+
+    expect(result.changed).toBe(false);
+    expect(result.repairedIds).toEqual([]);
+    expect(mockCopy).not.toHaveBeenCalled();
+    expect(mockWrite).not.toHaveBeenCalled();
   });
 });

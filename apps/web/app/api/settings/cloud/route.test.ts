@@ -193,6 +193,7 @@ describe("cloud settings API", () => {
           builtIn: { enabled: false, denied: true, provider: null },
           effectiveOwner: "exa" as const,
         },
+        managedPlugins: [],
         integrations: [],
       },
       changed: true,

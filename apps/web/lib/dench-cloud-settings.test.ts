@@ -85,6 +85,25 @@ const mocks = vi.hoisted(() => {
       gatewayUrl: null,
       selectedModel: null,
     })),
+    ensureDefaultManagedPluginsInstalled: vi.fn(() => ({
+      changed: false,
+      repairs: [],
+      repairedIds: [],
+      state: {
+        denchCloud: {
+          hasKey: true,
+          isPrimaryProvider: true,
+          primaryModel: "dench-cloud/claude-sonnet-4.6",
+        },
+        metadata: { schemaVersion: 1 },
+        search: {
+          builtIn: { enabled: true, denied: false, provider: null },
+          effectiveOwner: "web_search",
+        },
+        managedPlugins: [],
+        integrations: [],
+      },
+    })),
     refreshIntegrationsRuntime: vi.fn(async () => ({
       attempted: true,
       restarted: true,
@@ -122,6 +141,7 @@ vi.mock("./integrations", () => ({
     error: null,
     metadata: { schemaVersion: 1 },
   })),
+  ensureDefaultManagedPluginsInstalled: mocks.ensureDefaultManagedPluginsInstalled,
   getIntegrationsState: vi.fn(() => ({
     denchCloud: {
       hasKey: false,
@@ -133,6 +153,7 @@ vi.mock("./integrations", () => ({
       builtIn: { enabled: true, denied: false, provider: null },
       effectiveOwner: "web_search",
     },
+    managedPlugins: [],
     integrations: [],
   })),
   readIntegrationsMetadata: vi.fn(() => ({ schemaVersion: 1 })),
@@ -191,12 +212,32 @@ describe("dench cloud settings", () => {
       error: null,
       profile: "dench",
     });
+    mocks.ensureDefaultManagedPluginsInstalled.mockReturnValue({
+      changed: false,
+      repairs: [],
+      repairedIds: [],
+      state: {
+        denchCloud: {
+          hasKey: true,
+          isPrimaryProvider: true,
+          primaryModel: "dench-cloud/claude-sonnet-4.6",
+        },
+        metadata: { schemaVersion: 1 },
+        search: {
+          builtIn: { enabled: true, denied: false, provider: null },
+          effectiveOwner: "web_search",
+        },
+        managedPlugins: [],
+        integrations: [],
+      },
+    });
   });
 
   it("refreshes integrations when saving the Dench Cloud API key", async () => {
     const result = await saveApiKey("dc-key");
 
     expect(mocks.refreshIntegrationsRuntime).toHaveBeenCalledTimes(1);
+    expect(mocks.ensureDefaultManagedPluginsInstalled).toHaveBeenCalledTimes(1);
     expect(result).not.toHaveProperty("toolIndexRebuild");
 
     const written = JSON.parse(mocks.state.configText);

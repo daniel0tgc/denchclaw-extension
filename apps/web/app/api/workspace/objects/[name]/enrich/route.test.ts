@@ -18,6 +18,7 @@ vi.mock("@/lib/integrations", () => ({
       builtIn: { enabled: true, denied: false, provider: null },
       effectiveOwner: "web_search",
     },
+    managedPlugins: [],
     integrations: [{ id: "apollo", enabled: true }],
   })),
   resolveDenchGatewayCredentials: vi.fn(() => ({

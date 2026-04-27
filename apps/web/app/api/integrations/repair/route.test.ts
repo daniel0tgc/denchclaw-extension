@@ -1,20 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/integrations", () => ({
-  repairOlderIntegrationsProfile: vi.fn(() => ({
+  repairManagedPluginsProfile: vi.fn(() => ({
     changed: true,
     repairs: [
       {
-        id: "exa",
-        pluginId: "exa-search",
+        id: "dench-ai-gateway",
+        pluginId: "dench-ai-gateway",
         assetAvailable: true,
         assetCopied: true,
         repaired: true,
         issues: [],
       },
     ],
-    repairedIds: ["exa"],
+    repairedIds: ["dench-ai-gateway"],
     state: {
+      denchCloud: {
+        hasKey: true,
+        isPrimaryProvider: true,
+        primaryModel: "dench-cloud/claude-sonnet-4.6",
+      },
       metadata: { schemaVersion: 1, exa: { ownsSearch: false, fallbackProvider: "duckduckgo" } },
       search: {
         builtIn: {
@@ -24,6 +29,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: "web_search",
       },
+      managedPlugins: [],
       integrations: [],
     },
   })),
@@ -47,7 +53,7 @@ describe("integrations repair API", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.changed).toBe(true);
-    expect(json.repairedIds).toEqual(["exa"]);
+    expect(json.repairedIds).toEqual(["dench-ai-gateway"]);
     expect(json.refresh.restarted).toBe(true);
   });
 });

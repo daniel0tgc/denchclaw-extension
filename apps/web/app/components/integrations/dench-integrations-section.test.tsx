@@ -21,6 +21,7 @@ const integrationsState: IntegrationsState = {
     builtIn: { enabled: true, denied: false, provider: null },
     effectiveOwner: "web_search",
   },
+  managedPlugins: [],
   integrations: [
     {
       id: "apollo",

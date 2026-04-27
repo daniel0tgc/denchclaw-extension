@@ -18,6 +18,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: "web_search",
       },
+      managedPlugins: [],
       integrations: [
         {
           id: "exa",
@@ -106,6 +107,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: enabled ? "exa" : "web_search",
       },
+      managedPlugins: [],
       integrations: [],
     },
   })),
@@ -127,6 +129,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: "web_search",
       },
+      managedPlugins: [],
       integrations: [{ id: "apollo", enabled, available: true }],
     },
   })),
@@ -148,6 +151,7 @@ vi.mock("@/lib/integrations", () => ({
         },
         effectiveOwner: "web_search",
       },
+      managedPlugins: [],
       integrations: [{ id: "elevenlabs", enabled, available: true }],
     },
   })),
@@ -236,6 +240,7 @@ describe("integrations toggle API", () => {
           },
           effectiveOwner: "web_search",
         },
+        managedPlugins: [],
         integrations: [
           {
             id: "exa",

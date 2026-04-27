@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   advanceOnboardingStep,
   readOnboardingState,
 } from "@/lib/denchclaw-state";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
+import { writeDenchAuthProfileKey } from "@/lib/dench-auth";
 import {
   resolveComposioApiKey,
 } from "@/lib/composio";
@@ -31,51 +32,6 @@ function readOpenClawConfig(): UnknownRecord {
   } catch {
     return {};
   }
-}
-
-function authProfilePath(): string {
-  return join(
-    resolveOpenClawStateDir(),
-    "agents",
-    "main",
-    "agent",
-    "auth-profiles.json",
-  );
-}
-
-/**
- * Mirror the CLI bootstrap's `writeAuthProfileKey`. The web `saveApiKey`
- * helper writes openclaw.json but not auth-profiles.json — keeping them
- * in sync prevents the "key visible in chat but agent re-prompts" footgun.
- */
-function persistAuthProfileKey(apiKey: string): void {
-  const path = authProfilePath();
-  let raw: UnknownRecord = { version: 1, profiles: {} };
-  if (existsSync(path)) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf-8")) as UnknownRecord;
-      if (parsed && typeof parsed === "object") {
-        raw = parsed;
-      }
-    } catch {
-      // fall through to fresh file
-    }
-  }
-
-  const profiles =
-    raw.profiles && typeof raw.profiles === "object" && !Array.isArray(raw.profiles)
-      ? (raw.profiles as UnknownRecord)
-      : {};
-  profiles["dench-cloud:default"] = {
-    type: "api_key",
-    provider: "dench-cloud",
-    key: apiKey,
-  };
-  raw.profiles = profiles;
-  if (raw.version !== 1) {raw.version = 1;}
-
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(raw, null, 2) + "\n", "utf-8");
 }
 
 function isDenchCloudPrimary(config: UnknownRecord): { ok: boolean; primary: string | null } {
@@ -151,7 +107,7 @@ export async function POST(req: Request) {
   }
 
   // Validate + persist into openclaw.json (provider config, models entries, MCP).
-  const saveResult = await saveApiKey(apiKey);
+  const saveResult = await saveApiKey(apiKey, { syncAuthProfile: false });
   if (saveResult.error) {
     return Response.json({ error: saveResult.error }, { status: 400 });
   }
@@ -173,7 +129,7 @@ export async function POST(req: Request) {
   }
 
   // Mirror into auth-profiles.json so the agent runtime sees the same key.
-  persistAuthProfileKey(apiKey);
+  writeDenchAuthProfileKey(apiKey);
 
   const next = advanceOnboardingStep("dench-cloud", "connect-gmail", {
     denchCloud: {

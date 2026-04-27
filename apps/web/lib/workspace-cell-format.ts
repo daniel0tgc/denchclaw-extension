@@ -196,7 +196,7 @@ function normalizeUrl(raw: string): string | null {
 	return null;
 }
 
-function buildGoogleFaviconUrl(href: string): string | undefined {
+export function buildGoogleFaviconUrl(href: string): string | undefined {
 	try {
 		const url = new URL(href);
 		if (url.protocol !== "http:" && url.protocol !== "https:") {

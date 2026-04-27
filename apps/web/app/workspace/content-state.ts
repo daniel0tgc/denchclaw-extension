@@ -48,6 +48,7 @@ export type ObjectData = {
   }>;
   entries: Record<string, unknown>[];
   relationLabels?: Record<string, Record<string, string>>;
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   reverseRelations?: ReverseRelation[];
   effectiveDisplayField?: string;
   savedViews?: SavedView[];

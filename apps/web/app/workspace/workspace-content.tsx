@@ -3808,6 +3808,7 @@ function ObjectView({
             entries={filteredEntries}
             members={members}
             relationLabels={data.relationLabels}
+            relationFaviconUrls={data.relationFaviconUrls}
             reverseRelations={data.reverseRelations}
             onNavigateToObject={onNavigateToObject}
             onNavigateToEntry={onOpenEntry}

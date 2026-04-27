@@ -13,6 +13,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { useToast } from "./toast";
 import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
+import { RelationLink } from "./relation-link";
 import { LinkPreviewWrapper } from "./workspace-link";
 
 function safeString(val: unknown): string {
@@ -53,6 +54,10 @@ type EntryDetailData = {
   fields: Field[];
   entry: Record<string, unknown>;
   relationLabels?: Record<string, Record<string, string>>;
+  /** Per-relation-field map of related-entry-id -> favicon URL (sparse).
+   * Lets us render relation values as elegant icon+name links instead of
+   * pills. Same shape as `relationLabels`. */
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   reverseRelations?: ReverseRelation[];
   effectiveDisplayField?: string;
 };
@@ -168,10 +173,11 @@ function UserBadge({ value, members }: { value: unknown; members?: Array<{ id: s
 }
 
 function RelationChips({
-  value, field, relationLabels, onNavigateEntry,
+  value, field, relationLabels, relationFaviconUrls, onNavigateEntry,
 }: {
   value: unknown; field: Field;
   relationLabels?: Record<string, Record<string, string>>;
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   onNavigateEntry?: (
     objectName: string,
     entryId: string,
@@ -179,14 +185,15 @@ function RelationChips({
   ) => void;
 }) {
   const fieldLabels = relationLabels?.[field.name];
+  const fieldFaviconUrls = relationFaviconUrls?.[field.name];
   const ids = value == null ? [] : parseRelationValue(String(value));
   if (ids.length === 0) return <EmptyValue />;
   return (
-    <span className="flex items-center gap-1 flex-wrap">
+    <span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
       {ids.map((id) => {
         const label = fieldLabels?.[id] ?? id;
         const handleClick = field.related_object_name && onNavigateEntry
-          ? (e: React.MouseEvent<HTMLButtonElement>) => {
+          ? (e: React.MouseEvent) => {
               e.stopPropagation();
               onNavigateEntry(
                 field.related_object_name!,
@@ -196,14 +203,13 @@ function RelationChips({
             }
           : undefined;
         return (
-          <button type="button" key={id} onClick={handleClick}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${handleClick ? "cursor-pointer hover:opacity-80" : ""}`}
-            style={{ background: "rgba(96, 165, 250, 0.1)", color: "#60a5fa", border: "1px solid rgba(96, 165, 250, 0.2)" }}
-            title={handleClick ? `Open ${label}` : label}
-          >
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}><path d="M7 7h10v10" /><path d="M7 17 17 7" /></svg>
-            <span className="truncate max-w-[180px]">{label}</span>
-          </button>
+          <RelationLink
+            key={id}
+            label={label}
+            faviconUrl={fieldFaviconUrls?.[id]}
+            onClick={handleClick}
+            maxLabelWidth={220}
+          />
         );
       })}
     </span>
@@ -302,11 +308,12 @@ function EmptyValue() {
 }
 
 function FieldValue({
-  value, field, members, relationLabels, onNavigateEntry,
+  value, field, members, relationLabels, relationFaviconUrls, onNavigateEntry,
 }: {
   value: unknown; field: Field;
   members?: Array<{ id: string; name: string }>;
   relationLabels?: Record<string, Record<string, string>>;
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   onNavigateEntry?: (
     objectName: string,
     entryId: string,
@@ -321,7 +328,7 @@ function FieldValue({
       return <span style={{ color: isTrue ? "#22c55e" : "var(--color-text-muted)" }}>{isTrue ? "Yes" : "No"}</span>;
     }
     case "user": return <UserBadge value={value} members={members} />;
-    case "relation": return <RelationChips value={value} field={field} relationLabels={relationLabels} onNavigateEntry={onNavigateEntry} />;
+    case "relation": return <RelationChips value={value} field={field} relationLabels={relationLabels} relationFaviconUrls={relationFaviconUrls} onNavigateEntry={onNavigateEntry} />;
     case "tags": return <TagsBadges value={value} />;
     default: return <FormattedFieldValue value={value} fieldType={field.type} mode="detail" showUrlFavicon linkInteractionMode="button" />;
   }
@@ -721,7 +728,7 @@ export function EntryDetailPanel({
                               }}
                               title={!["user"].includes(field.type) ? "Click to edit" : undefined}
                             >
-                              <FieldValue value={value} field={field} members={members} relationLabels={data.relationLabels} onNavigateEntry={onNavigateEntry} />
+                              <FieldValue value={value} field={field} members={members} relationLabels={data.relationLabels} relationFaviconUrls={data.relationFaviconUrls} onNavigateEntry={onNavigateEntry} />
                             </div>
                           )}
                         </div>

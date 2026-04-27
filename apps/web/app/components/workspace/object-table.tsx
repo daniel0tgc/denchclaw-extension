@@ -17,6 +17,7 @@ import { parseEnrichmentMeta } from "@/lib/enrichment-columns";
 import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
 import { LinkPreviewWrapper } from "./workspace-link";
+import { RelationLink } from "./relation-link";
 
 /* ─── Types ─── */
 
@@ -56,6 +57,12 @@ type ObjectTableProps = {
 	entries: Record<string, unknown>[];
 	members?: Array<{ id: string; name: string }>;
 	relationLabels?: Record<string, Record<string, string>>;
+	/** Favicon URL per related entry, keyed by relation field name then entry
+	 * id (mirrors `relationLabels` shape). Sparse — only set when the related
+	 * entry has a URL field with a usable host. Used by `RelationCell` to
+	 * render the elegant icon+name link UI; missing entries fall back to a
+	 * letter monogram. */
+	relationFaviconUrls?: Record<string, Record<string, string>>;
 	reverseRelations?: ReverseRelation[];
 	onNavigateToObject?: (objectName: string) => void;
 	/**
@@ -219,11 +226,14 @@ function UserCell({ value, members }: { value: unknown; members?: Array<{ id: st
 }
 
 function RelationCell({
-	value, field, fieldLabels, onNavigateObject, onNavigateEntry,
+	value, field, fieldLabels, fieldFaviconUrls, onNavigateObject, onNavigateEntry,
 }: {
 	value: unknown; field: Field;
 	/** Labels for THIS field only (already narrowed). */
 	fieldLabels?: Record<string, string>;
+	/** Favicon URLs for THIS field only (already narrowed). Sparse — fall
+	 * back to a letter monogram in the icon when an entry has no URL. */
+	fieldFaviconUrls?: Record<string, string>;
 	onNavigateObject?: (objectName: string) => void;
 	onNavigateEntry?: (
 		objectName: string,
@@ -233,31 +243,36 @@ function RelationCell({
 }) {
 	const ids = value == null ? [] : parseRelationValue(String(value));
 	if (ids.length === 0) {return <span style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>--</span>;}
+	const canNavigate =
+		!!field.related_object_name && !!(onNavigateEntry || onNavigateObject);
 	return (
-		<span className="flex items-center gap-1 flex-wrap">
-			{ids.map((id) => (
-				<span
-					key={id}
-					onClick={(e) => {
-						if (!field.related_object_name) {return;}
-						if (!onNavigateEntry && !onNavigateObject) {return;}
-						e.stopPropagation();
-						if (onNavigateEntry) {
-							onNavigateEntry(
-								field.related_object_name,
-								id,
-								field.related_object_id,
-							);
-							return;
+		<span className="flex items-center gap-x-3 gap-y-1 flex-wrap">
+			{ids.map((id) => {
+				const label = fieldLabels?.[id] ?? id;
+				const handleClick = canNavigate
+					? (e: React.MouseEvent) => {
+							e.stopPropagation();
+							if (onNavigateEntry) {
+								onNavigateEntry(
+									field.related_object_name!,
+									id,
+									field.related_object_id,
+								);
+								return;
+							}
+							onNavigateObject?.(field.related_object_name!);
 						}
-						onNavigateObject?.(field.related_object_name);
-					}}
-					className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium ${field.related_object_name && (onNavigateEntry || onNavigateObject) ? "cursor-pointer" : ""}`}
-					style={{ background: "var(--color-chip-document)", color: "var(--color-chip-document-text)", border: "1px solid var(--color-border)" }}
-				>
-					<span className="truncate max-w-[180px]">{fieldLabels?.[id] ?? id}</span>
-				</span>
-			))}
+					: undefined;
+				return (
+					<RelationLink
+						key={id}
+						label={label}
+						faviconUrl={fieldFaviconUrls?.[id]}
+						onClick={handleClick}
+						maxLabelWidth={180}
+					/>
+				);
+			})}
 		</span>
 	);
 }
@@ -437,6 +452,9 @@ type EditableCellProps = {
 	 * parent's full relationLabels map so non-relation cells don't bust their
 	 * memo when the unrelated parts of the map change. */
 	fieldRelationLabels?: Record<string, string>;
+	/** Favicon URLs for THIS field only — same shape/narrowing as
+	 * `fieldRelationLabels`. Pre-narrowed for the same memo reason. */
+	fieldRelationFaviconUrls?: Record<string, string>;
 	onNavigateObject?: (objectName: string) => void;
 	onNavigateEntry?: (
 		objectName: string,
@@ -459,6 +477,7 @@ function EditableCellInner({
 	field,
 	members,
 	fieldRelationLabels,
+	fieldRelationFaviconUrls,
 	onNavigateObject,
 	onNavigateEntry,
 	onLocalValueChange,
@@ -633,6 +652,7 @@ function EditableCellInner({
 					value={initialValue}
 					field={field}
 					fieldLabels={fieldRelationLabels}
+					fieldFaviconUrls={fieldRelationFaviconUrls}
 					onNavigateObject={onNavigateObject}
 					onNavigateEntry={onNavigateEntry}
 				/>
@@ -738,6 +758,7 @@ export function ObjectTable({
 	entries,
 	members,
 	relationLabels,
+	relationFaviconUrls,
 	reverseRelations,
 	onNavigateToObject,
 	onNavigateToEntry,
@@ -1023,6 +1044,9 @@ export function ObjectTable({
 			const fieldRelationLabels = field.type === "relation"
 				? relationLabels?.[field.name]
 				: undefined;
+			const fieldRelationFaviconUrls = field.type === "relation"
+				? relationFaviconUrls?.[field.name]
+				: undefined;
 			return {
 				id: field.id,
 				accessorKey: field.name,
@@ -1102,6 +1126,7 @@ export function ObjectTable({
 							field={field}
 							members={members}
 							fieldRelationLabels={fieldRelationLabels}
+							fieldRelationFaviconUrls={fieldRelationFaviconUrls}
 							onNavigateObject={onNavigateToObject}
 							onNavigateEntry={onNavigateToEntry}
 							onLocalValueChange={updateLocalEntryField}
@@ -1236,7 +1261,7 @@ export function ObjectTable({
 		// `onEntryClick` and `updateLocalEntryField` are read inside the `cell`
 		// closures and were missing from the original deps (stale-closure bug);
 		// they're included now.
-	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn, enrichmentProgress, handleReEnrich, enrichedCellIds, openMenuFieldId]);
+	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, relationFaviconUrls, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn, enrichmentProgress, handleReEnrich, enrichedCellIds, openMenuFieldId]);
 
 	// Add entry handler — delegates to parent when provided, otherwise opens local modal.
 	const handleAdd = useCallback(() => {

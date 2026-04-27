@@ -113,9 +113,9 @@ describe("Workspace Tree & Browse API", () => {
           return Promise.resolve([
             makeDirent("knowledge", true),
             makeDirent("readme.md", false),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
-        return Promise.resolve([] as unknown as Dirent[]);
+        return Promise.resolve([] as unknown as never[]);
       });
 
       const { GET } = await import("./tree/route.js");
@@ -147,9 +147,9 @@ describe("Workspace Tree & Browse API", () => {
           return Promise.resolve([
             makeDirent("IDENTITY.md", false),
             makeDirent("notes.md", false),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
-        return Promise.resolve([] as unknown as Dirent[]);
+        return Promise.resolve([] as unknown as never[]);
       });
 
       const { GET } = await import("./tree/route.js");
@@ -169,19 +169,19 @@ describe("Workspace Tree & Browse API", () => {
         if (String(dir) === "/ws") {
           return Promise.resolve([
             makeDirent("skills", true),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
         if (String(dir) === "/ws/skills") {
           return Promise.resolve([
             makeDirent("alpha", true),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
         if (String(dir) === "/ws/skills/alpha") {
           return Promise.resolve([
             makeDirent("SKILL.md", false),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
-        return Promise.resolve([] as unknown as Dirent[]);
+        return Promise.resolve([] as unknown as never[]);
       });
 
       const { GET } = await import("./tree/route.js");
@@ -220,9 +220,9 @@ describe("Workspace Tree & Browse API", () => {
             makeDirent("opportunity", true),
             makeDirent("secret", true),
             makeDirent("email_thread", true),
-          ] as unknown as Dirent[]);
+          ] as unknown as never[]);
         }
-        return Promise.resolve([] as unknown as Dirent[]);
+        return Promise.resolve([] as unknown as never[]);
       });
 
       const { GET } = await import("./tree/route.js");
@@ -259,7 +259,7 @@ describe("Workspace Tree & Browse API", () => {
       vi.mocked(duckdbQueryAllAsync).mockReturnValue(duckdbGate);
 
       const { readdir: mockReaddir } = await import("node:fs/promises");
-      vi.mocked(mockReaddir).mockResolvedValue([] as unknown as Dirent[]);
+      vi.mocked(mockReaddir).mockResolvedValue([] as unknown as never[]);
 
       const { GET } = await import("./tree/route.js");
       const req = new Request("http://localhost/api/workspace/tree");
@@ -285,7 +285,7 @@ describe("Workspace Tree & Browse API", () => {
       vi.mocked(mockReaddir).mockReturnValue([
         makeDirent("file.txt", false),
         makeDirent("subfolder", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       vi.mocked(mockStat).mockReturnValue({ isDirectory: () => false, size: 100 } as never);
 
       const { GET } = await import("./browse/route.js");
@@ -320,7 +320,7 @@ describe("Workspace Tree & Browse API", () => {
       vi.mocked(mockExists).mockReturnValue(true);
       vi.mocked(mockReaddir).mockReturnValue([
         makeDirent("doc.md", false),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
 
       const { GET } = await import("./suggest-files/route.js");
       const req = new Request("http://localhost/api/workspace/suggest-files?q=doc");
@@ -340,9 +340,9 @@ describe("Workspace Tree & Browse API", () => {
           return [
             makeDirent("IDENTITY.md", false),
             makeDirent("doc.md", false),
-          ] as unknown as Dirent[];
+          ] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
 
       const { GET } = await import("./suggest-files/route.js");
@@ -416,9 +416,9 @@ describe("Workspace Tree & Browse API", () => {
       vi.mocked(mockExists).mockReturnValue(true);
       vi.mocked(mockReaddir).mockImplementation((dir) => {
         if (String(dir) === "/ws") {
-          return [makeDirent("readme.md", false)] as unknown as Dirent[];
+          return [makeDirent("readme.md", false)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
 
       const { GET } = await import("./search-index/route.js");

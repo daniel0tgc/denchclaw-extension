@@ -47,7 +47,7 @@ const mockStatus = {
 describe("Composio status API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedGetComposioMcpHealth.mockResolvedValue(mockStatus);
+    mockedGetComposioMcpHealth.mockResolvedValue(mockStatus as never);
   });
 
   it("GET returns the current Composio MCP health", async () => {

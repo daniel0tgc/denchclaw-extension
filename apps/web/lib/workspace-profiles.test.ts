@@ -215,7 +215,7 @@ describe("workspace (flat workspace model)", () => {
         await importWorkspace();
       mockReaddir.mockReturnValue([
         makeDirent("workspace-dev", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(
         JSON.stringify({ activeWorkspace: "dev" }) as never,
       );
@@ -232,7 +232,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-memory-ws", true),
         makeDirent("workspace-file-ws", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(
         JSON.stringify({ activeWorkspace: "file-ws" }) as never,
       );
@@ -250,7 +250,7 @@ describe("workspace (flat workspace model)", () => {
         makeDirent("workspace-beta", true),
         makeDirent("workspace-alpha", true),
         makeDirent("unrelated-dir", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       // scanWorkspaceNames sorts alphabetically, so "alpha" comes first
       expect(getActiveWorkspaceName()).toBe("alpha");
     });
@@ -266,7 +266,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-envws", true),
         makeDirent("workspace-memory", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(
         JSON.stringify({ activeWorkspace: "persisted" }) as never,
       );
@@ -285,7 +285,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace", true),
         makeDirent("workspace-memory", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(
         JSON.stringify({ activeWorkspace: "persisted" }) as never,
       );
@@ -336,7 +336,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-in-memory", true),
         makeDirent("workspace-from-file", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
 
       mockReadFile.mockReturnValue(
         JSON.stringify({ activeWorkspace: "from-file" }) as never,
@@ -358,7 +358,7 @@ describe("workspace (flat workspace model)", () => {
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      mockReaddir.mockReturnValue([] as unknown as never[]);
       const workspaces = discoverWorkspaces();
       expect(workspaces).toHaveLength(0);
     });
@@ -374,7 +374,7 @@ describe("workspace (flat workspace model)", () => {
         makeDirent("workspace-beta", true),
         makeDirent("some-other-dir", true),
         makeDirent("config.json", false),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
@@ -399,7 +399,7 @@ describe("workspace (flat workspace model)", () => {
       });
       mockReaddir.mockReturnValue([
         makeDirent("workspace", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => String(p) === join(STATE_DIR, "workspace"));
 
       const workspaces = discoverWorkspaces();
@@ -419,7 +419,7 @@ describe("workspace (flat workspace model)", () => {
         makeDirent("workspace", true),
         makeDirent("workspace-main", true),
         makeDirent("workspace-chat-slot-main-1", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
@@ -442,7 +442,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace", true),
         makeDirent("workspace-dench", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return s === join(STATE_DIR, "workspace") || s === join(STATE_DIR, "workspace-dench");
@@ -469,7 +469,7 @@ describe("workspace (flat workspace model)", () => {
         makeDirent("workspace", true),
         makeDirent("workspace-dench", true),
         makeDirent("workspace-kumareth", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
@@ -496,7 +496,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-beta", true),
         makeDirent("workspace-alpha", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
@@ -524,7 +524,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-alpha", true),
         makeDirent("workspace-beta", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockExists.mockImplementation((p) => {
         const s = String(p);
         return (
@@ -556,7 +556,7 @@ describe("workspace (flat workspace model)", () => {
       } = await importWorkspace();
       mockReaddir.mockReturnValue([
         makeDirent("workspace-dev", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
       setUIActiveWorkspace("dev");
       const wsDir = join(STATE_DIR, "workspace-dev");
@@ -576,7 +576,7 @@ describe("workspace (flat workspace model)", () => {
       mockReaddir.mockReturnValue([
         makeDirent("workspace-work", true),
         makeDirent("workspace-personal", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
 
       setUIActiveWorkspace("work");
@@ -601,7 +601,7 @@ describe("workspace (flat workspace model)", () => {
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      mockReaddir.mockReturnValue([] as unknown as never[]);
       expect(resolveWebChatDir()).toBe(
         join(STATE_DIR, "workspace", ".openclaw", "web-chat"),
       );
@@ -621,7 +621,7 @@ describe("workspace (flat workspace model)", () => {
       } = await importWorkspace();
       mockReaddir.mockReturnValue([
         makeDirent("workspace-dev", true),
-      ] as unknown as Dirent[]);
+      ] as unknown as never[]);
       mockReadFile.mockReturnValue(JSON.stringify({}) as never);
       setUIActiveWorkspace("dev");
       const wsDir = join(STATE_DIR, "workspace-dev");
@@ -631,7 +631,7 @@ describe("workspace (flat workspace model)", () => {
 
     it("returns null when no workspace dirs exist", async () => {
       const { resolveWorkspaceRoot, mockReadFile, mockReaddir } = await importWorkspace();
-      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      mockReaddir.mockReturnValue([] as unknown as never[]);
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });

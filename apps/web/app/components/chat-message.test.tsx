@@ -217,7 +217,7 @@ describe("ChatMessage", () => {
             },
             errorText:
               "Validation failed for tool \"composio_call_tool\": execution_ref is required.",
-          }],
+          } as never],
         }}
       />,
     );
@@ -255,7 +255,7 @@ describe("ChatMessage", () => {
               tool_router_session_id: "trs_posthog_123",
               error: "Gateway rejected the bridge invocation.",
             },
-          }],
+          } as never],
         }}
       />,
     );

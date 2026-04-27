@@ -710,25 +710,6 @@ export function DataTable<TData, TValue>({
 			>
 				{loading ? (
 					<LoadingSkeleton columnCount={allColumns.length} />
-				) : data.length === 0 ? (
-					<div className="flex flex-col items-center justify-center py-24 gap-4">
-						<div
-							className="rounded-full p-4 mb-2 backdrop-blur-sm"
-							style={{ background: "var(--color-glass)", border: "1px solid var(--color-border)", boxShadow: "var(--shadow-sm)" }}
-						>
-							<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--color-text-muted)" }}>
-								<circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-							</svg>
-						</div>
-						<div className="text-center">
-							<h3 className="text-base font-semibold mb-1" style={{ color: "var(--color-text)" }}>No results found</h3>
-							<p className="text-sm max-w-xs" style={{ color: "var(--color-text-muted)" }}>
-								{globalFilter
-									? "Try adjusting your search or filter criteria."
-									: "No data available yet. Create your first entry to get started."}
-							</p>
-						</div>
-					</div>
 				) : (
 					<DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
 						<table
@@ -860,16 +841,23 @@ export function DataTable<TData, TValue>({
 									</tr>
 								))}
 							</thead>
-							<DataTableBody
-								table={table}
-								activeRowId={activeRowId}
-								getRowId={getRowId}
-								enableRowSelection={enableRowSelection}
-								stickyFirstColumn={stickyFirstColumn}
-								isScrolled={isScrolled}
-								onRowClick={onRowClick}
-								getFirstDataColumnFaviconUrl={getFirstDataColumnFaviconUrl}
-							/>
+							{data.length === 0 ? (
+								<EmptyTableBody
+									columnCount={table.getVisibleLeafColumns().length}
+									isFiltered={Boolean(globalFilter)}
+								/>
+							) : (
+								<DataTableBody
+									table={table}
+									activeRowId={activeRowId}
+									getRowId={getRowId}
+									enableRowSelection={enableRowSelection}
+									stickyFirstColumn={stickyFirstColumn}
+									isScrolled={isScrolled}
+									onRowClick={onRowClick}
+									getFirstDataColumnFaviconUrl={getFirstDataColumnFaviconUrl}
+								/>
+							)}
 						</table>
 					</DndContext>
 				)}
@@ -1179,6 +1167,79 @@ const DataTableBody = React.memo(DataTableBodyInner, (prev, next) => {
 	}
 	return false;
 });
+
+/** Empty-state body. Rendered in place of `<DataTableBody/>` when there are
+ * no rows. Lives inside the same `<table>` so the column headers (including
+ * the "+ Add Column" affordance and sort/reorder controls) stay visible and
+ * reachable from the empty state — instead of swapping the entire table out
+ * for a centered "No data" message, which strands the user with no way to
+ * configure their schema or add their first entry.
+ *
+ * The inner content is `position: sticky; left: 0` with `inline-flex` so it
+ * shrink-wraps to its content size and anchors to the left edge of the
+ * visible scroll container. Without this, a `<td colSpan>` row spans the
+ * full table width — which can be much larger than the viewport for wide
+ * schemas — and the centered content would render off-screen. Sticky-left
+ * keeps the message reachable regardless of how wide the table is. */
+function EmptyTableBody({
+	columnCount,
+	isFiltered,
+}: {
+	columnCount: number;
+	isFiltered: boolean;
+}) {
+	const safeColSpan = Math.max(columnCount, 1);
+	return (
+		<tbody>
+			<tr>
+				<td colSpan={safeColSpan} className="p-0 border-0">
+					<div
+						className="flex flex-col items-center gap-4 py-24 px-12"
+						style={{ position: "sticky", left: 0, display: "inline-flex" }}
+					>
+						<div
+							className="rounded-full p-4 mb-2 backdrop-blur-sm"
+							style={{
+								background: "var(--color-glass)",
+								border: "1px solid var(--color-border)",
+								boxShadow: "var(--shadow-sm)",
+							}}
+						>
+							<svg
+								width="32"
+								height="32"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								style={{ color: "var(--color-text-muted)" }}
+							>
+								<circle cx="11" cy="11" r="8" />
+								<path d="m21 21-4.3-4.3" />
+							</svg>
+						</div>
+						<div className="text-center">
+							<h3
+								className="text-base font-semibold mb-1"
+								style={{ color: "var(--color-text)" }}
+							>
+								No results found
+							</h3>
+							<p
+								className="text-sm max-w-xs"
+								style={{ color: "var(--color-text-muted)" }}
+							>
+								{isFiltered
+									? "Try adjusting your search or filter criteria."
+									: "No data available yet. Create your first entry to get started."}
+							</p>
+						</div>
+					</div>
+				</td>
+			</tr>
+		</tbody>
+	);
+}
 
 /* ─── Sub-components ─── */
 

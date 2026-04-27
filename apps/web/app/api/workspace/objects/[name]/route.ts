@@ -11,6 +11,7 @@ import {
   readObjectYamlIcon,
 } from "@/lib/workspace";
 import { deserializeFilters, buildWhereClause, buildOrderByClause, type FieldMeta } from "@/lib/object-filters";
+import { buildGoogleFaviconUrl } from "@/lib/workspace-cell-format";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -182,9 +183,17 @@ async function resolveRelationLabels(
   entries: Record<string, unknown>[],
 ): Promise<{
   labels: Record<string, Record<string, string>>;
+  faviconUrls: Record<string, Record<string, string>>;
   relatedObjectNames: Record<string, string>;
 }> {
   const labels: Record<string, Record<string, string>> = {};
+  // Mirror of `labels`, but mapping entry_id -> favicon URL when the related
+  // entry has a URL field with a usable host. Lets the client render relation
+  // cells as elegant icon+name links (instead of opaque pills) without an
+  // extra round-trip per related entry. Sparse — entries without a URL field
+  // simply have no entry here, and the client falls back to a letter
+  // monogram.
+  const faviconUrls: Record<string, Record<string, string>> = {};
   const relatedObjectNames: Record<string, string> = {};
 
   const relationFields = fields.filter(
@@ -225,6 +234,7 @@ async function resolveRelationLabels(
 
     if (entryIds.size === 0) {
       labels[rf.name] = {};
+      faviconUrls[rf.name] = {};
       continue;
     }
 
@@ -250,9 +260,35 @@ async function resolveRelationLabels(
     }
 
     labels[rf.name] = labelMap;
+
+    // Pull URL-typed field values for the same set of related entries and
+    // pick the first usable one per entry, mirroring the client-side
+    // `computeEntryFaviconUrl` heuristic. Prefer fields in declared
+    // sort_order so the "primary" URL (typically domain/website) wins over
+    // a secondary one (e.g. linkedin).
+    const urlRows = await q<{ entry_id: string; value: string; sort_order: number }>(dbFile,
+      `SELECT e.id as entry_id, ef.value, COALESCE(f.sort_order, 999999) as sort_order
+       FROM entries e
+       JOIN entry_fields ef ON ef.entry_id = e.id
+       JOIN fields f ON f.id = ef.field_id
+       WHERE e.id IN (${idList})
+       AND f.object_id = '${sqlEscape(relObj.id)}'
+       AND f.type = 'url'
+       ORDER BY f.sort_order`,
+    );
+    const faviconMap: Record<string, string> = {};
+    for (const row of urlRows) {
+      if (faviconMap[row.entry_id]) {continue;}
+      const v = (row.value ?? "").trim();
+      if (!v) {continue;}
+      const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+      const fav = buildGoogleFaviconUrl(href);
+      if (fav) {faviconMap[row.entry_id] = fav;}
+    }
+    faviconUrls[rf.name] = faviconMap;
   }
 
-  return { labels, relatedObjectNames };
+  return { labels, faviconUrls, relatedObjectNames };
 }
 
 type ReverseRelation = {
@@ -533,7 +569,7 @@ export async function GET(
     enum_colors: f.enum_colors ? tryParseJson(f.enum_colors) : undefined,
   }));
 
-  const { labels: relationLabels, relatedObjectNames } =
+  const { labels: relationLabels, faviconUrls: relationFaviconUrls, relatedObjectNames } =
     await resolveRelationLabels(dbFile, fields, entries);
 
   const enrichedFields = parsedFields.map((f) => ({
@@ -560,6 +596,7 @@ export async function GET(
     statuses,
     entries,
     relationLabels,
+    relationFaviconUrls,
     reverseRelations,
     effectiveDisplayField,
     savedViews,

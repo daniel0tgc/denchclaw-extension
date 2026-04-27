@@ -5,6 +5,7 @@ import {
 	discoverDuckDBPaths,
 	parseRelationValue,
 } from "@/lib/workspace";
+import { buildGoogleFaviconUrl } from "@/lib/workspace-cell-format";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -177,8 +178,13 @@ export async function GET(
 			: undefined,
 	}));
 
-	// Resolve relation labels for this entry
+	// Resolve relation labels (and favicons) for this entry. Favicons mirror
+	// `relationLabels` shape: relationFaviconUrls[fieldName][entryId] = url.
+	// Sparse — only populated when the related entry has a URL field with a
+	// usable host. Lets the detail panel/modal render related entries with
+	// the same elegant icon+name link UI as the table cell.
 	const relationLabels: Record<string, Record<string, string>> = {};
+	const relationFaviconUrls: Record<string, Record<string, string>> = {};
 	const relatedObjectNames: Record<string, string> = {};
 
 	const relationFields = fields.filter(
@@ -198,6 +204,7 @@ export async function GET(
 		const val = entry[rf.name];
 		if (val == null || val === "") {
 			relationLabels[rf.name] = {};
+			relationFaviconUrls[rf.name] = {};
 			continue;
 		}
 
@@ -212,6 +219,7 @@ export async function GET(
 		const ids = parseRelationValue(valStr);
 		if (ids.length === 0) {
 			relationLabels[rf.name] = {};
+			relationFaviconUrls[rf.name] = {};
 			continue;
 		}
 
@@ -243,6 +251,27 @@ export async function GET(
 			}
 		}
 		relationLabels[rf.name] = labelMap;
+
+		const urlRows = q<{ entry_id: string; value: string }>(dbFile,
+			`SELECT e.id as entry_id, ef.value
+       FROM entries e
+       JOIN entry_fields ef ON ef.entry_id = e.id
+       JOIN fields f ON f.id = ef.field_id
+       WHERE e.id IN (${idList})
+       AND f.object_id = '${sqlEscape(relObj.id)}'
+       AND f.type = 'url'
+       ORDER BY f.sort_order`,
+		);
+		const faviconMap: Record<string, string> = {};
+		for (const row of urlRows) {
+			if (faviconMap[row.entry_id]) {continue;}
+			const v = (row.value ?? "").trim();
+			if (!v) {continue;}
+			const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+			const fav = buildGoogleFaviconUrl(href);
+			if (fav) {faviconMap[row.entry_id] = fav;}
+		}
+		relationFaviconUrls[rf.name] = faviconMap;
 	}
 
 	// Enrich fields with related object names
@@ -264,6 +293,7 @@ export async function GET(
 		fields: enrichedFields,
 		entry,
 		relationLabels,
+		relationFaviconUrls,
 		reverseRelations,
 		effectiveDisplayField,
 	});

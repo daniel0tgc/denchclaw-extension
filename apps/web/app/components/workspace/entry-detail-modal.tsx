@@ -8,6 +8,7 @@ import { parseTagsValue } from "@/lib/parse-tags";
 import { displayObjectName, displayObjectNameSingular } from "@/lib/object-display-name";
 import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
+import { RelationLink } from "./relation-link";
 
 
 function safeString(val: unknown): string {
@@ -54,6 +55,10 @@ type EntryDetailData = {
   fields: Field[];
   entry: Record<string, unknown>;
   relationLabels?: Record<string, Record<string, string>>;
+  /** Per-relation-field map of related-entry-id -> favicon URL (sparse).
+   * Same shape as `relationLabels`. Powers the elegant icon+name link UI in
+   * `RelationLink`; missing entries fall back to a letter monogram. */
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   reverseRelations?: ReverseRelation[];
   effectiveDisplayField?: string;
 };
@@ -179,11 +184,13 @@ function RelationChips({
   value,
   field,
   relationLabels,
+  relationFaviconUrls,
   onNavigateEntry,
 }: {
   value: unknown;
   field: Field;
   relationLabels?: Record<string, Record<string, string>>;
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   onNavigateEntry?: (
     objectName: string,
     entryId: string,
@@ -191,15 +198,16 @@ function RelationChips({
   ) => void;
 }) {
   const fieldLabels = relationLabels?.[field.name];
+  const fieldFaviconUrls = relationFaviconUrls?.[field.name];
   const ids = value == null ? [] : parseRelationValue(String(value));
   if (ids.length === 0) {return <EmptyValue />;}
 
   return (
-    <span className="flex items-center gap-1.5 flex-wrap">
+    <span className="flex items-center gap-x-3 gap-y-1.5 flex-wrap">
       {ids.map((id) => {
         const label = fieldLabels?.[id] ?? id;
         const handleClick = field.related_object_name && onNavigateEntry
-          ? (e: React.MouseEvent<HTMLButtonElement>) => {
+          ? (e: React.MouseEvent) => {
             e.stopPropagation();
             onNavigateEntry(
               field.related_object_name!,
@@ -209,23 +217,13 @@ function RelationChips({
           }
           : undefined;
         return (
-          <button
-            type="button"
+          <RelationLink
             key={id}
+            label={label}
+            faviconUrl={fieldFaviconUrls?.[id]}
             onClick={handleClick}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium ${handleClick ? "cursor-pointer hover:opacity-80" : ""}`}
-            style={{
-              background: "rgba(96, 165, 250, 0.1)",
-              color: "#60a5fa",
-              border: "1px solid rgba(96, 165, 250, 0.2)",
-            }}
-            title={handleClick ? `Open ${label}` : label}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0" style={{ opacity: 0.5 }}>
-              <path d="M7 7h10v10" /><path d="M7 17 17 7" />
-            </svg>
-            <span className="truncate max-w-[200px]">{label}</span>
-          </button>
+            maxLabelWidth={220}
+          />
         );
       })}
     </span>
@@ -421,12 +419,14 @@ function FieldValue({
   field,
   members,
   relationLabels,
+  relationFaviconUrls,
   onNavigateEntry,
 }: {
   value: unknown;
   field: Field;
   members?: Array<{ id: string; name: string }>;
   relationLabels?: Record<string, Record<string, string>>;
+  relationFaviconUrls?: Record<string, Record<string, string>>;
   onNavigateEntry?: (
     objectName: string,
     entryId: string,
@@ -456,6 +456,7 @@ function FieldValue({
           value={value}
           field={field}
           relationLabels={relationLabels}
+          relationFaviconUrls={relationFaviconUrls}
           onNavigateEntry={onNavigateEntry}
         />
       );
@@ -798,6 +799,7 @@ export function EntryDetailModal({
                             field={field}
                             members={members}
                             relationLabels={data.relationLabels}
+                            relationFaviconUrls={data.relationFaviconUrls}
                             onNavigateEntry={onNavigateEntry}
                           />
                         </div>

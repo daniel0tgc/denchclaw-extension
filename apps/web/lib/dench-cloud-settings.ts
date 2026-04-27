@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
+import { writeDenchAuthProfileKey } from "@/lib/dench-auth";
 import {
   type DenchCloudCatalogModel,
   DEFAULT_DENCH_CLOUD_GATEWAY_URL,
@@ -279,6 +280,10 @@ export type SaveActiveCloudSettingsInput = {
   integrations: DenchIntegrationToggleDraft;
   enrichmentMaxModeEnabled: boolean;
 };
+
+type SaveApiKeyOptions = {
+  syncAuthProfile?: boolean;
+};
 export async function getCloudVoiceState(): Promise<CloudVoiceState> {
   const config = readConfig();
   const apiKey = resolveDenchApiKey(config);
@@ -387,7 +392,10 @@ export async function getCloudSettingsState(): Promise<CloudSettingsState> {
   };
 }
 
-export async function saveApiKey(apiKey: string): Promise<CloudSettingsUpdateResult> {
+export async function saveApiKey(
+  apiKey: string,
+  options: SaveApiKeyOptions = {},
+): Promise<CloudSettingsUpdateResult> {
   const config = readConfig();
   const gatewayUrl = resolveGatewayUrl(config);
 
@@ -444,6 +452,9 @@ export async function saveApiKey(apiKey: string): Promise<CloudSettingsUpdateRes
   syncAllowedTools(config, readStringList(patchTools?.alsoAllow));
 
   writeConfig(config);
+  if (options.syncAuthProfile !== false) {
+    writeDenchAuthProfileKey(apiKey);
+  }
   ensureDefaultManagedPluginsInstalled();
 
   const refresh = await refreshIntegrationsRuntime();

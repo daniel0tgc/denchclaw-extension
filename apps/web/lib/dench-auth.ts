@@ -12,8 +12,8 @@
  * Bearer token sent by the `dench-ai-gateway` plugin's sync trigger.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 const AUTH_PROFILES_REL = join("agents", "main", "agent", "auth-profiles.json");
@@ -35,6 +35,10 @@ function readKeyFromAuthProfiles(authPath: string): string | undefined {
   }
 }
 
+function authProfilesPath(): string {
+  return join(resolveOpenClawStateDir(), AUTH_PROFILES_REL);
+}
+
 function envFallback(): string | undefined {
   return (
     process.env.DENCH_CLOUD_API_KEY?.trim() ||
@@ -44,12 +48,43 @@ function envFallback(): string | undefined {
 }
 
 export function readDenchAuthProfileKey(): string | undefined {
-  const stateDir = resolveOpenClawStateDir();
-  if (stateDir) {
-    const key = readKeyFromAuthProfiles(join(stateDir, AUTH_PROFILES_REL));
-    if (key) {
-      return key;
-    }
+  const key = readKeyFromAuthProfiles(authProfilesPath());
+  if (key) {
+    return key;
   }
   return envFallback();
+}
+
+export function writeDenchAuthProfileKey(apiKey: string): void {
+  const authPath = authProfilesPath();
+  let raw: UnknownRecord = { version: 1, profiles: {} };
+
+  if (existsSync(authPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(authPath, "utf-8")) as UnknownRecord;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        raw = parsed;
+      }
+    } catch {
+      // Fall through to a fresh auth profile if the file is unreadable.
+    }
+  }
+
+  const profiles =
+    raw.profiles && typeof raw.profiles === "object" && !Array.isArray(raw.profiles)
+      ? (raw.profiles as UnknownRecord)
+      : {};
+
+  profiles["dench-cloud:default"] = {
+    type: "api_key",
+    provider: "dench-cloud",
+    key: apiKey,
+  };
+  raw.profiles = profiles;
+  if (raw.version !== 1) {
+    raw.version = 1;
+  }
+
+  mkdirSync(dirname(authPath), { recursive: true });
+  writeFileSync(authPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const state = {
     configText: "{}\n",
+    authText: null as string | null,
   };
 
   const catalog = {
@@ -35,11 +36,27 @@ const mocks = vi.hoisted(() => {
 
   return {
     state,
-    existsSync: vi.fn(() => true),
-    readFileSync: vi.fn(() => state.configText as never),
+    existsSync: vi.fn((pathLike: unknown) => {
+      if (String(pathLike).endsWith("auth-profiles.json")) {
+        return state.authText !== null;
+      }
+      return true;
+    }),
+    readFileSync: vi.fn((pathLike: unknown) => {
+      if (String(pathLike).endsWith("auth-profiles.json")) {
+        if (state.authText === null) {
+          throw new Error("auth profile missing");
+        }
+        return state.authText as never;
+      }
+      return state.configText as never;
+    }),
     writeFileSync: vi.fn((pathLike: unknown, content: unknown) => {
       if (String(pathLike).endsWith("openclaw.json")) {
         state.configText = String(content);
+      }
+      if (String(pathLike).endsWith("auth-profiles.json")) {
+        state.authText = String(content);
       }
     }),
     mkdirSync: vi.fn(),
@@ -178,6 +195,7 @@ describe("dench cloud settings", () => {
     vi.clearAllMocks();
     vi.mocked(readIntegrationsMetadata).mockReturnValue({ schemaVersion: 1 });
     mocks.state.configText = "{}\n";
+    mocks.state.authText = null;
     mocks.validateDenchCloudApiKey.mockResolvedValue(undefined);
     mocks.fetchDenchCloudCatalog.mockResolvedValue({
       source: "live",
@@ -242,11 +260,70 @@ describe("dench cloud settings", () => {
 
     const written = JSON.parse(mocks.state.configText);
     expect(written.models.providers["dench-cloud"].apiKey).toBe("dc-key");
+    const authProfile = JSON.parse(mocks.state.authText ?? "{}");
+    expect(authProfile.profiles["dench-cloud:default"]).toEqual({
+      type: "api_key",
+      provider: "dench-cloud",
+      key: "dc-key",
+    });
     expect(written.mcp).toBeUndefined();
     expect(written.tools.alsoAllow).toEqual([
       "dench_execute_integrations",
       "dench_search_integrations",
     ]);
+  });
+
+  it("preserves unrelated auth profiles when saving the Dench Cloud API key", async () => {
+    mocks.state.authText = JSON.stringify({
+      version: 1,
+      profiles: {
+        "other-provider:default": {
+          type: "api_key",
+          provider: "other-provider",
+          key: "keep-me",
+        },
+        "dench-cloud:default": {
+          type: "api_key",
+          provider: "dench-cloud",
+          key: "old-key",
+        },
+      },
+    });
+
+    await saveApiKey("new-key");
+
+    const authProfile = JSON.parse(mocks.state.authText ?? "{}");
+    expect(authProfile.profiles["other-provider:default"]).toEqual({
+      type: "api_key",
+      provider: "other-provider",
+      key: "keep-me",
+    });
+    expect(authProfile.profiles["dench-cloud:default"]).toEqual({
+      type: "api_key",
+      provider: "dench-cloud",
+      key: "new-key",
+    });
+  });
+
+  it("does not write the auth profile when API key validation fails", async () => {
+    const existingAuthProfile = JSON.stringify({
+      version: 1,
+      profiles: {
+        "dench-cloud:default": {
+          type: "api_key",
+          provider: "dench-cloud",
+          key: "old-key",
+        },
+      },
+    });
+    mocks.state.authText = existingAuthProfile;
+    mocks.validateDenchCloudApiKey.mockRejectedValueOnce(new Error("Invalid Dench Cloud API key."));
+
+    const result = await saveApiKey("bad-key");
+
+    expect(result.error).toBe("Invalid Dench Cloud API key.");
+    expect(mocks.state.authText).toBe(existingAuthProfile);
+    expect(mocks.refreshIntegrationsRuntime).not.toHaveBeenCalled();
   });
 
   it("refreshes integrations when switching the primary model to Dench Cloud", async () => {

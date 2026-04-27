@@ -147,10 +147,15 @@ import {
   saveVoiceId,
   selectModel,
 } from "./dench-cloud-settings";
+import {
+  readIntegrationsMetadata,
+  writeIntegrationsMetadata,
+} from "./integrations";
 
 describe("dench cloud settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(readIntegrationsMetadata).mockReturnValue({ schemaVersion: 1 });
     mocks.state.configText = "{}\n";
     mocks.validateDenchCloudApiKey.mockResolvedValue(undefined);
     mocks.fetchDenchCloudCatalog.mockResolvedValue({
@@ -273,12 +278,15 @@ describe("dench cloud settings", () => {
   });
 
   it("returns the stored enrichment max mode setting in cloud state", async () => {
+    vi.mocked(readIntegrationsMetadata).mockReturnValue({
+      schemaVersion: 1,
+      apollo: { enrichmentMaxMode: true },
+    });
     mocks.state.configText = JSON.stringify({
       models: {
         providers: {
           "dench-cloud": {
             apiKey: "dc-key",
-            enrichmentMaxMode: true,
           },
         },
       },
@@ -323,6 +331,10 @@ describe("dench cloud settings", () => {
     });
 
     const written = JSON.parse(mocks.state.configText);
-    expect(written.models.providers["dench-cloud"].enrichmentMaxMode).toBe(true);
+    expect(writeIntegrationsMetadata).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      apollo: { enrichmentMaxMode: true },
+    });
+    expect(written.models.providers["dench-cloud"].enrichmentMaxMode).toBeUndefined();
   });
 });

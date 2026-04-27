@@ -78,6 +78,14 @@ function resolveDenchApiKey(config: UnknownRecord): string | null {
 }
 
 function readDenchEnrichmentMaxModeEnabled(config: UnknownRecord): boolean {
+  try {
+    const metadataValue = readIntegrationsMetadata().apollo?.enrichmentMaxMode;
+    if (typeof metadataValue === "boolean") {
+      return metadataValue;
+    }
+  } catch {
+    // Fall back to the legacy config location if metadata is unavailable.
+  }
   const models = asRecord(config.models);
   const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
   return provider?.enrichmentMaxMode === true;
@@ -539,6 +547,8 @@ export async function saveActiveCloudSettings(
   const currentEnrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled(config);
   const nextVoiceId = input.voiceId?.trim() || null;
   const nextEnrichmentMaxModeEnabled = input.enrichmentMaxModeEnabled === true;
+  const metadata = readIntegrationsMetadata();
+  let nextMetadata = metadata;
   let changed = false;
   let requiresRefresh = false;
 
@@ -604,21 +614,25 @@ export async function saveActiveCloudSettings(
     changed = true;
   }
 
-  if (currentEnrichmentMaxModeEnabled !== nextEnrichmentMaxModeEnabled) {
-    const models = ensureRecord(config, "models");
-    const providers = ensureRecord(models, "providers");
-    const denchCloud = ensureRecord(providers, "dench-cloud");
-    if (nextEnrichmentMaxModeEnabled) {
-      denchCloud.enrichmentMaxMode = true;
-    } else {
-      delete denchCloud.enrichmentMaxMode;
+  const legacyDenchProvider = asRecord(asRecord(asRecord(config.models)?.providers)?.["dench-cloud"]);
+  if (
+    currentEnrichmentMaxModeEnabled !== nextEnrichmentMaxModeEnabled ||
+    legacyDenchProvider?.enrichmentMaxMode !== undefined
+  ) {
+    nextMetadata = {
+      ...nextMetadata,
+      schemaVersion: 1,
+      apollo: nextEnrichmentMaxModeEnabled
+        ? { ...(nextMetadata.apollo ?? {}), enrichmentMaxMode: true }
+        : {},
+    };
+    if (legacyDenchProvider) {
+      delete legacyDenchProvider.enrichmentMaxMode;
     }
     changed = true;
   }
 
   const requestedIntegrations = input.integrations ?? {};
-  const metadata = readIntegrationsMetadata();
-  let nextMetadata = metadata;
 
   for (const id of ["exa", "apollo", "elevenlabs"] as DenchIntegrationId[]) {
     const requested = requestedIntegrations[id];

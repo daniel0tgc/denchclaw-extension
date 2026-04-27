@@ -24,10 +24,17 @@ function writeOpenClawConfig(stateDir: string, enrichmentMaxMode: boolean): void
     JSON.stringify({
       models: {
         providers: {
-          "dench-cloud": {
-            enrichmentMaxMode,
-          },
+          "dench-cloud": {},
         },
+      },
+    }),
+  );
+  writeFileSync(
+    path.join(stateDir, ".dench-integrations.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      apollo: {
+        enrichmentMaxMode,
       },
     }),
   );
@@ -35,27 +42,28 @@ function writeOpenClawConfig(stateDir: string, enrichmentMaxMode: boolean): void
 
 function createApi() {
   const tools: any[] = [];
-  return {
-    api: {
-      config: {
-        plugins: {
-          entries: {
-            "dench-ai-gateway": {
-              config: {
-                enabled: true,
-                gatewayUrl: "https://gateway.example.com",
-              },
+  const api = {
+    config: {
+      plugins: {
+        entries: {
+          "dench-ai-gateway": {
+            config: {
+              enabled: true,
+              gatewayUrl: "https://gateway.example.com",
             },
           },
         },
       },
-      registerTool(tool: any) {
-        tools.push(tool);
-      },
-      logger: {
-        info: vi.fn(),
-      },
     },
+    registerTool(tool: any) {
+      tools.push(tool);
+    },
+    logger: {
+      info: vi.fn(),
+    },
+  } as unknown as Parameters<typeof register>[0];
+  return {
+    api,
     tools,
   };
 }
@@ -105,6 +113,73 @@ describe("apollo-enrichment max mode", () => {
     await tools[0].execute("call_1", {
       action: "people",
       email: "jane@acme.com",
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends person name inputs with gateway-compatible snake_case keys", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    writeOpenClawConfig(stateDir, true);
+
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        first_name: "Mark",
+        last_name: "Rachapoom",
+        organization_name: "Dench",
+        linkedin_url: "https://www.linkedin.com/in/markrachapoom",
+        mode: "max",
+      });
+      return new Response(JSON.stringify({ person: { email: "mark@dench.com" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+
+    await tools[0].execute("call_1", {
+      action: "people",
+      firstName: "Mark",
+      lastName: "Rachapoom",
+      organizationName: "Dench",
+      linkedinUrl: "https://www.linkedin.com/in/markrachapoom",
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends people search filters with gateway-compatible snake_case keys", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    writeOpenClawConfig(stateDir, false);
+
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        person_titles: ["Founder"],
+        person_locations: ["San Francisco"],
+        organization_domains: ["dench.com"],
+        per_page: 5,
+      });
+      return new Response(JSON.stringify({ people: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+
+    await tools[0].execute("call_1", {
+      action: "people_search",
+      personTitles: ["Founder"],
+      personLocations: ["San Francisco"],
+      organizationDomains: ["dench.com"],
+      perPage: 5,
     });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);

@@ -175,7 +175,7 @@ describe("Composio disconnect API", () => {
   });
 
   it("rejects requests without an api key (403)", async () => {
-    mockedResolveComposioApiKey.mockReturnValue(undefined);
+    mockedResolveComposioApiKey.mockReturnValue(null);
     const response = await POST(makeRequest({ connection_id: "conn_xxx" }));
     expect(response.status).toBe(403);
     expect(mockedDisconnectComposioApp).not.toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe("Composio disconnect API", () => {
   it("rejects ineligible Dench Cloud profile (403)", async () => {
     mockedResolveComposioEligibility.mockReturnValue({
       eligible: false,
-      lockReason: "primary_provider_mismatch",
+      lockReason: "primary_provider_mismatch" as never,
       lockBadge: "external",
     });
     const response = await POST(makeRequest({ connection_id: "conn_xxx" }));

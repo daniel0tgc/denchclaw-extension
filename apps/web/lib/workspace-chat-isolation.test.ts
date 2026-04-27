@@ -183,7 +183,7 @@ describe("workspace-scoped chat session isolation", () => {
     });
     mockReaddir.mockReturnValue([
       makeDirent("workspace-dev"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const wsDir = workspaceDir("dev");
     mockExists.mockImplementation((p) => String(p) === wsDir);
@@ -207,7 +207,7 @@ describe("workspace-scoped chat session isolation", () => {
     mockReaddir.mockReturnValue([
       makeDirent("workspace-alpha"),
       makeDirent("workspace-beta"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const alphaDir = workspaceDir("alpha");
     const betaDir = workspaceDir("beta");
@@ -237,7 +237,7 @@ describe("workspace-scoped chat session isolation", () => {
     mockReaddir.mockReturnValue([
       makeDirent("workspace-work"),
       makeDirent("workspace-personal"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const workDir = workspaceDir("work");
     const personalDir = workspaceDir("personal");
@@ -258,7 +258,7 @@ describe("workspace-scoped chat session isolation", () => {
     mockReadFile.mockImplementation(() => {
       throw new Error("ENOENT");
     });
-    mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+    mockReaddir.mockReturnValue([] as unknown as never[]);
     mockExists.mockReturnValue(false);
 
     expect(resolveWebChatDir()).toBe(chatDir("default"));
@@ -279,7 +279,7 @@ describe("workspace-scoped chat session isolation", () => {
     mockReaddir.mockReturnValue([
       makeDirent("workspace-dev"),
       makeDirent("workspace-staging"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const devDir = workspaceDir("dev");
     const stagingDir = workspaceDir("staging");
@@ -304,7 +304,7 @@ describe("workspace-scoped chat session isolation", () => {
     });
     mockReaddir.mockReturnValue([
       makeDirent("workspace-work"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const wsDir = workspaceDir("work");
     mockExists.mockImplementation((p) => String(p) === wsDir);
@@ -322,7 +322,7 @@ describe("workspace-scoped chat session isolation", () => {
     const rootDir = workspaceDir("default");
     mockReaddir.mockReturnValue([
       makeDirent("workspace"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
     mockExists.mockImplementation((p) => String(p) === rootDir);
 
     setUIActiveProfile("default");
@@ -343,7 +343,7 @@ describe("workspace-scoped chat session isolation", () => {
     });
     mockReaddir.mockReturnValue([
       makeDirent("workspace-dev"),
-    ] as unknown as Dirent[]);
+    ] as unknown as never[]);
 
     const devDir = workspaceDir("dev");
     mockExists.mockImplementation((p) => String(p) === devDir);
@@ -353,7 +353,7 @@ describe("workspace-scoped chat session isolation", () => {
 
     clearUIActiveProfileCache();
     mockExists.mockReturnValue(false);
-    mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+    mockReaddir.mockReturnValue([] as unknown as never[]);
 
     expect(resolveWebChatDir()).toBe(chatDir("default"));
   });

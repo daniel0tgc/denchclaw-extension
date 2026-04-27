@@ -144,9 +144,9 @@ describe("workspace utilities", () => {
       const { resolveWorkspaceRoot, mockExists, mockReaddir } = await importWorkspace();
       mockReaddir.mockImplementation((dir, _opts) => {
         if (String(dir) === STATE_DIR) {
-          return [makeDirent("workspace-test", true)] as unknown as Dirent[];
+          return [makeDirent("workspace-test", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       mockExists.mockImplementation((p) => String(p) === WS_DIR);
       expect(resolveWorkspaceRoot()).toBe(WS_DIR);
@@ -168,9 +168,9 @@ describe("workspace utilities", () => {
           return [
             makeDirent("workspace-fromenv", true),
             makeDirent("workspace-other", true),
-          ] as unknown as Dirent[];
+          ] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       mockExists.mockReturnValue(true);
       expect(resolveWorkspaceRoot()).toBe(envWs);
@@ -182,9 +182,9 @@ describe("workspace utilities", () => {
       const fallbackWs = join(STATE_DIR, "workspace-fallback");
       mockReaddir.mockImplementation((dir, _opts) => {
         if (String(dir) === STATE_DIR) {
-          return [makeDirent("workspace-fallback", true)] as unknown as Dirent[];
+          return [makeDirent("workspace-fallback", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       mockExists.mockImplementation((p) => String(p) === fallbackWs);
       expect(resolveWorkspaceRoot()).toBe(fallbackWs);
@@ -196,9 +196,9 @@ describe("workspace utilities", () => {
       const rootWorkspace = join(STATE_DIR, "workspace");
       mockReaddir.mockImplementation((dir, _opts) => {
         if (String(dir) === STATE_DIR) {
-          return [makeDirent("workspace", true)] as unknown as Dirent[];
+          return [makeDirent("workspace", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       mockExists.mockImplementation((p) => String(p) === rootWorkspace);
       expect(resolveWorkspaceRoot()).toBe(rootWorkspace);
@@ -214,7 +214,7 @@ describe("workspace utilities", () => {
       mockReadFile.mockImplementation(() => {
         throw new Error("ENOENT");
       });
-      mockReaddir.mockReturnValue([] as unknown as Dirent[]);
+      mockReaddir.mockReturnValue([] as unknown as never[]);
       expect(resolveWebChatDir()).toBe(
         join(STATE_DIR, "workspace", ".openclaw", "web-chat"),
       );
@@ -291,9 +291,9 @@ describe("workspace utilities", () => {
       });
       mockReaddir.mockImplementation((dir) => {
         if (String(dir) === "/ws") {
-          return [makeDirent("sub", true)] as unknown as Dirent[];
+          return [makeDirent("sub", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       const result = discoverDuckDBPaths("/ws");
       expect(result).toEqual([
@@ -309,9 +309,9 @@ describe("workspace utilities", () => {
       );
       mockReaddir.mockImplementation((dir) => {
         if (String(dir) === "/ws") {
-          return [makeDirent(".hidden", true)] as unknown as Dirent[];
+          return [makeDirent(".hidden", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       expect(discoverDuckDBPaths("/ws")).toEqual([]);
     });
@@ -325,9 +325,9 @@ describe("workspace utilities", () => {
             makeDirent("tmp", true),
             makeDirent("exports", true),
             makeDirent("node_modules", true),
-          ] as unknown as Dirent[];
+          ] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       expect(discoverDuckDBPaths("/ws")).toEqual([]);
     });
@@ -346,9 +346,9 @@ describe("workspace utilities", () => {
       mockExists.mockReturnValue(false);
       mockReaddir.mockImplementation((dir) => {
         if (String(dir) === "/ws") {
-          return [makeDirent("somefile.txt", false)] as unknown as Dirent[];
+          return [makeDirent("somefile.txt", false)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       expect(discoverDuckDBPaths("/ws")).toEqual([]);
     });
@@ -379,9 +379,9 @@ describe("workspace utilities", () => {
       });
       mockReaddir.mockImplementation((dir) => {
         if (String(dir) === WS_DIR) {
-          return [makeDirent("sub", true)] as unknown as Dirent[];
+          return [makeDirent("sub", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       expect(duckdbPath()).toBe(nestedDb);
     });
@@ -595,9 +595,9 @@ describe("workspace utilities", () => {
       });
       mockReaddir.mockImplementation((dir) => {
         if (String(dir) === WS_DIR) {
-          return [makeDirent("sub", true)] as unknown as Dirent[];
+          return [makeDirent("sub", true)] as unknown as never[];
         }
-        return [] as unknown as Dirent[];
+        return [] as unknown as never[];
       });
       let callCount = 0;
       mockExecFileSync.mockImplementation(() => {
@@ -620,8 +620,8 @@ describe("workspace utilities", () => {
         return s === WS_DIR || s === rootDb || s === subDb || s === bin;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as Dirent[];}
-        return [] as unknown as Dirent[];
+        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as never[];}
+        return [] as unknown as never[];
       });
       let callCount = 0;
       mockExecFileSync.mockImplementation(() => {
@@ -651,8 +651,8 @@ describe("workspace utilities", () => {
         return s === WS_DIR || s === rootDb || s === subDb || s === bin;
       });
       mockReaddir.mockImplementation((dir) => {
-        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as Dirent[];}
-        return [] as unknown as Dirent[];
+        if (String(dir) === WS_DIR) {return [makeDirent("sub", true)] as unknown as never[];}
+        return [] as unknown as never[];
       });
       let callCount = 0;
       mockExecFileSync.mockImplementation(() => {

@@ -169,7 +169,7 @@ describe("Web Sessions API", () => {
       // Should write at least the index.json and the empty .jsonl
       expect(mockWrite).toHaveBeenCalled();
       // Verify that one of the calls is to the jsonl file
-      const calls = mockWrite.mock.calls.map((c) => String(c[0]));
+      const calls = vi.mocked(mockWrite).mock.calls.map((c) => String(c[0]));
       expect(calls.some((c) => c.endsWith(".jsonl"))).toBe(true);
     });
   });

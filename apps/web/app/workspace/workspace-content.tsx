@@ -40,6 +40,7 @@ import { ChatPanel, type ChatPanelHandle, type SubagentSpawnInfo } from "../comp
 import { EntryDetailPanel } from "../components/workspace/entry-detail-panel";
 import { useSearchIndex } from "@/lib/search-index";
 import { parseWorkspaceLink, isWorkspaceLink, parseUrlState, buildUrl, serializeUrlState, type WorkspaceUrlState } from "@/lib/workspace-links";
+import { loadTableViewState, saveTableViewState, TABLE_VIEW_URL_KEYS } from "@/lib/table-view-state";
 import {
   type WorkspaceTabsState,
   type ContentTab,
@@ -1722,22 +1723,13 @@ function WorkspacePageInner() {
         run: cronRun,
       },
     });
-    // Preserve object-view params (managed by ObjectView's own URL effect).
+    // Object-view state (search / filters / sort / view / cols / page) is
+    // intentionally NOT preserved across tab/path changes. It now lives in
+    // per-table localStorage (`lib/table-view-state.ts`), not the URL —
+    // otherwise switching from table A to table B would carry A's filter to B.
+    // The URL stays focused on navigation (path / entry / chat / browse / …).
     const current = new URLSearchParams(window.location.search);
-    const objectViewKeys = ["viewType", "view", "filters", "search", "sort", "page", "pageSize", "cols"];
     const merged: Partial<WorkspaceUrlState> = { ...projected };
-    if (projected.path) {
-      // Only carry object-view params when there's an active path; they don't
-      // make sense on a chat-only URL.
-      const u = parseUrlState(current);
-      for (const k of objectViewKeys) {
-        const key = k as keyof WorkspaceUrlState;
-        const value = u[key];
-        if (value != null && value !== false && (Array.isArray(value) ? value.length > 0 : true)) {
-          (merged as Record<string, unknown>)[k] = value;
-        }
-      }
-    }
     const nextQs = serializeUrlState(merged);
     const currentQs = current.toString();
     if (nextQs !== currentQs) {
@@ -3028,29 +3020,67 @@ function ObjectView({
   };
   const [updatingDisplayField, setUpdatingDisplayField] = useState(false);
 
-  // Read initial URL state once for this object view.
-  const initialUrlState = useMemo(() => parseUrlState(searchParams), []);  // eslint-disable-line react-hooks/exhaustive-deps
+  // Resolve the initial view state for this table.
+  //
+  // View state (search/filters/sort/view/viewType/cols/page) is now scoped
+  // per-table and persisted in localStorage rather than the URL — switching
+  // tables must NOT carry one table's filter to the next. We still read the
+  // URL on first mount so deep-link `?path=A&search=foo` style URLs work
+  // once: if localStorage has nothing for this table, the URL becomes the
+  // initial state. Subsequent state changes flow into localStorage and the
+  // view-state URL params are stripped (see effect below).
+  //
+  // ObjectView is keyed by `data.object.name` upstream, so this useMemo
+  // runs once per table (a new mount on every table switch).
+  const initialState = useMemo(() => {
+    const stored = loadTableViewState(data.object.name);
+    if (
+      stored.search !== undefined ||
+      stored.filters !== undefined ||
+      stored.sort !== undefined ||
+      stored.view !== undefined ||
+      stored.viewType !== undefined ||
+      stored.cols !== undefined ||
+      stored.page !== undefined ||
+      stored.pageSize !== undefined
+    ) {
+      return stored;
+    }
+    const url = parseUrlState(searchParams);
+    return {
+      view: url.view ?? undefined,
+      viewType: url.viewType ?? undefined,
+      filters: url.filters ?? undefined,
+      search: url.search ?? undefined,
+      sort: url.sort ?? undefined,
+      page: url.page ?? undefined,
+      pageSize: url.pageSize ?? undefined,
+      cols: url.cols ?? undefined,
+    };
+  // Initial state — frozen at mount, deliberately ignores prop/url changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.object.name]);
 
   // --- View type state ---
   const [currentViewType, setCurrentViewType] = useState<ViewType>(
-    () => initialUrlState.viewType ?? resolveViewType(undefined, undefined, data.object.default_view),
+    () => initialState.viewType ?? resolveViewType(undefined, undefined, data.object.default_view),
   );
   const [viewSettings, setViewSettings] = useState<ViewTypeSettings>(
     () => data.viewSettings ?? {},
   );
 
   // --- Filter state ---
-  const [filters, setFilters] = useState<FilterGroup>(() => initialUrlState.filters ?? emptyFilterGroup());
+  const [filters, setFilters] = useState<FilterGroup>(() => initialState.filters ?? emptyFilterGroup());
   const [savedViews, setSavedViews] = useState<SavedView[]>(data.savedViews ?? []);
-  const [activeViewName, setActiveViewName] = useState<string | undefined>(initialUrlState.view ?? data.activeView);
+  const [activeViewName, setActiveViewName] = useState<string | undefined>(initialState.view ?? data.activeView);
 
   // --- Server-side pagination state ---
-  const [serverPage, setServerPage] = useState(initialUrlState.page ?? data.page ?? 1);
-  const [serverPageSize, setServerPageSize] = useState(initialUrlState.pageSize ?? data.pageSize ?? 100);
+  const [serverPage, setServerPage] = useState(initialState.page ?? data.page ?? 1);
+  const [serverPageSize, setServerPageSize] = useState(initialState.pageSize ?? data.pageSize ?? 100);
   const [totalCount, setTotalCount] = useState(data.totalCount ?? data.entries.length);
   const [entries, setEntries] = useState(data.entries);
-  const [serverSearch, setServerSearch] = useState(initialUrlState.search ?? "");
-  const [sortRules, _setSortRules] = useState<SortRule[] | undefined>(initialUrlState.sort ?? undefined);
+  const [serverSearch, setServerSearch] = useState(initialState.search ?? "");
+  const [sortRules, _setSortRules] = useState<SortRule[] | undefined>(initialState.sort ?? undefined);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasActiveServerQuery =
     filters.rules.length > 0 ||
@@ -3058,20 +3088,20 @@ function ObjectView({
     serverSearch.trim().length > 0;
 
   // Column visibility: maps field IDs to boolean (false = hidden)
-  const [viewColumns, setViewColumns] = useState<string[] | undefined>(initialUrlState.cols ?? undefined);
+  const [viewColumns, setViewColumns] = useState<string[] | undefined>(initialState.cols ?? undefined);
   // Column widths: maps field name to pixel width (persisted in view_settings / saved views)
   const [columnWidths, setColumnWidths] = useState<Record<string, number> | undefined>(
     () => data.viewSettings?.column_widths,
   );
 
   // --- Unified toolbar state (lifted up so the controls live above the view) ---
-  const [globalFilter, setGlobalFilter] = useState<string>(initialUrlState.search ?? "");
+  const [globalFilter, setGlobalFilter] = useState<string>(initialState.search ?? "");
   const [stickyFirstColumn, setStickyFirstColumn] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Sync object view state to URL params (additive — preserves path/entry/browse params).
-  // Skip the initial render to avoid overwriting URL params that haven't been
-  // read yet or that the shell-level effect is still propagating.
+  // Persist this table's view state to localStorage and clean any stale
+  // view-state params out of the URL. Skip the first run so we don't
+  // immediately re-write storage with the just-loaded values.
   const objectViewMounted = useRef(false);
   useEffect(() => {
     if (!objectViewMounted.current) {
@@ -3079,26 +3109,32 @@ function ObjectView({
       return;
     }
 
-    const current = new URLSearchParams(window.location.search);
-    const next = new URLSearchParams(current);
-
-    for (const k of ["viewType", "view", "filters", "search", "sort", "page", "pageSize", "cols"]) {
-      next.delete(k);
-    }
-
     const defaultVt = resolveViewType(undefined, undefined, data.object.default_view);
-    if (currentViewType !== defaultVt) next.set("viewType", currentViewType);
-    if (activeViewName) next.set("view", activeViewName);
-    if (filters.rules.length > 0) next.set("filters", btoa(JSON.stringify(filters)));
-    if (serverSearch) next.set("search", serverSearch);
-    if (sortRules && sortRules.length > 0) next.set("sort", btoa(JSON.stringify(sortRules)));
-    if (serverPage > 1) next.set("page", String(serverPage));
-    if (serverPageSize !== 100) next.set("pageSize", String(serverPageSize));
-    if (viewColumns && viewColumns.length > 0) next.set("cols", viewColumns.join(","));
+    saveTableViewState(data.object.name, {
+      viewType: currentViewType !== defaultVt ? currentViewType : undefined,
+      view: activeViewName,
+      filters: filters.rules.length > 0 ? filters : undefined,
+      search: serverSearch || undefined,
+      sort: sortRules && sortRules.length > 0 ? sortRules : undefined,
+      page: serverPage > 1 ? serverPage : undefined,
+      pageSize: serverPageSize !== 100 ? serverPageSize : undefined,
+      cols: viewColumns && viewColumns.length > 0 ? viewColumns : undefined,
+    });
 
-    const nextQs = next.toString();
-    if (nextQs !== current.toString()) {
-      router.replace(nextQs ? `/?${nextQs}` : "/", { scroll: false });
+    // Strip view-state params from the URL so the URL stops being a stale
+    // source of truth — once the user has interacted, localStorage is
+    // authoritative and the URL is purely navigational.
+    const current = new URLSearchParams(window.location.search);
+    let dirty = false;
+    for (const k of TABLE_VIEW_URL_KEYS) {
+      if (current.has(k)) {
+        current.delete(k);
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      const qs = current.toString();
+      router.replace(qs ? `/?${qs}` : "/", { scroll: false });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentViewType, activeViewName, filters, serverSearch, sortRules, serverPage, serverPageSize, viewColumns]);

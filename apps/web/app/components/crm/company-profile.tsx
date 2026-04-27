@@ -87,7 +87,7 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; count: (d: CompanyResponse) 
 export function CompanyProfile({
   companyId,
   onOpenPerson,
-  onOpenCompany: _onOpenCompany,
+  onOpenCompany,
   onBackToList,
 }: {
   companyId: string;
@@ -95,7 +95,6 @@ export function CompanyProfile({
   onOpenCompany?: (id: string) => void;
   onBackToList?: () => void;
 }) {
-  void _onOpenCompany;
   const [data, setData] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,7 +162,13 @@ export function CompanyProfile({
           {tab === "overview" && <OverviewTab data={data} />}
           {tab === "team" && <TeamTab data={data} onOpenPerson={onOpenPerson} />}
           {tab === "emails" && <EmailsTab data={data} onOpenPerson={onOpenPerson} />}
-          {tab === "meetings" && <MeetingsTab data={data} onOpenPerson={onOpenPerson} />}
+          {tab === "meetings" && (
+            <MeetingsTab
+              data={data}
+              onOpenPerson={onOpenPerson}
+              onOpenCompany={onOpenCompany}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -376,9 +381,11 @@ function EmailsTab({
 function MeetingsTab({
   data,
   onOpenPerson,
+  onOpenCompany,
 }: {
   data: CompanyResponse;
   onOpenPerson?: (id: string) => void;
+  onOpenCompany?: (id: string) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -411,6 +418,7 @@ function MeetingsTab({
                   setExpandedId((prev) => (prev === event.id ? null : event.id))
                 }
                 onOpenPerson={onOpenPerson}
+                onOpenCompany={onOpenCompany}
               />
             ))}
           </ul>

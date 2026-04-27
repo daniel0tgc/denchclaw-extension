@@ -38,8 +38,31 @@ export type TreeNode = {
 type DbObject = {
   name: string;
   default_view?: string;
-  hidden_in_sidebar?: boolean | null;
+  /**
+   * DuckDB's `-json` CLI mode serializes BOOLEAN columns as JSON strings
+   * (`"true"` / `"false"`), so the value can arrive as either a real
+   * boolean or the string-coerced form depending on the underlying
+   * driver. Always normalize via `parseDuckdbBool` before reading.
+   */
+  hidden_in_sidebar?: boolean | string | number | null;
 };
+
+/**
+ * Parse a value that may be a real boolean OR a DuckDB-CLI string
+ * representation (`"true"`/`"false"`/`"0"`/`"1"`). Necessary because
+ * `duckdb -json` emits booleans as strings, which makes a naive
+ * `if (row.bool_col)` check treat `"false"` as truthy.
+ */
+function parseDuckdbBool(value: unknown): boolean {
+  if (value === true) {return true;}
+  if (value === false || value == null) {return false;}
+  if (typeof value === "number") {return value !== 0;}
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "t";
+  }
+  return false;
+}
 
 /** Read .object.yaml metadata from a directory if it exists. */
 async function pathExists(path: string): Promise<boolean> {
@@ -123,7 +146,10 @@ async function loadDbObjects(): Promise<{
     );
   }
   for (const row of rows) {
-    if (row.hidden_in_sidebar || HARDCODED_HIDDEN_OBJECT_NAMES.has(row.name)) {
+    // CRITICAL: `row.hidden_in_sidebar` may arrive as the literal string
+    // `"false"` from DuckDB's `-json` CLI mode (truthy in JS). Use
+    // `parseDuckdbBool` so we don't accidentally hide every object.
+    if (parseDuckdbBool(row.hidden_in_sidebar) || HARDCODED_HIDDEN_OBJECT_NAMES.has(row.name)) {
       hidden.add(row.name);
       // Skip CRM-only objects (email_thread / email_message / calendar_event /
       // interaction). They have dedicated UI and shouldn't show in the tree.

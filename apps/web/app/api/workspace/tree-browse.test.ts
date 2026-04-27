@@ -193,6 +193,53 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).not.toContain("~skills");
     });
 
+    it("does not hide objects when DuckDB returns hidden_in_sidebar as the string \"false\"", async () => {
+      // Regression test for #215. DuckDB's `-json` CLI mode serializes
+      // BOOLEAN columns as JSON strings (`"true"` / `"false"`). The
+      // string `"false"` is truthy in JS, so a naive
+      // `if (row.hidden_in_sidebar)` check used to mark every object as
+      // hidden — wiping all CRM folders (people, company, …) from the
+      // sidebar tree.
+      const { resolveWorkspaceRoot, duckdbQueryAllAsync } = await import("@/lib/workspace");
+      vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");
+      vi.mocked(duckdbQueryAllAsync).mockResolvedValue([
+        { name: "people", default_view: "table", hidden_in_sidebar: "false" },
+        { name: "company", default_view: "table", hidden_in_sidebar: "false" },
+        { name: "opportunity", default_view: "kanban", hidden_in_sidebar: "false" },
+        // Real boolean true should still hide. CRM-only objects stay
+        // hidden either way thanks to HARDCODED_HIDDEN_OBJECT_NAMES.
+        { name: "secret", default_view: "table", hidden_in_sidebar: "true" },
+      ] as never);
+
+      const { readdir: mockReaddir } = await import("node:fs/promises");
+      vi.mocked(mockReaddir).mockImplementation((dir) => {
+        if (String(dir) === "/ws") {
+          return Promise.resolve([
+            makeDirent("people", true),
+            makeDirent("company", true),
+            makeDirent("opportunity", true),
+            makeDirent("secret", true),
+            makeDirent("email_thread", true),
+          ] as unknown as Dirent[]);
+        }
+        return Promise.resolve([] as unknown as Dirent[]);
+      });
+
+      const { GET } = await import("./tree/route.js");
+      const req = new Request("http://localhost/api/workspace/tree");
+      const res = await GET(req);
+      const json = await res.json();
+      const rootPaths = (json.tree as Array<{ path: string }>).map((n) => n.path);
+      // All visible objects must appear in the tree.
+      expect(rootPaths).toContain("people");
+      expect(rootPaths).toContain("company");
+      expect(rootPaths).toContain("opportunity");
+      // The row marked `hidden_in_sidebar = "true"` should be filtered out.
+      expect(rootPaths).not.toContain("secret");
+      // Hardcoded-hidden CRM objects stay hidden regardless of the DB value.
+      expect(rootPaths).not.toContain("email_thread");
+    });
+
     it("yields before tree discovery completes (prevents UI freeze during active agent runs)", async () => {
       const { resolveWorkspaceRoot, duckdbQueryAll, duckdbQueryAllAsync } = await import("@/lib/workspace");
       vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");

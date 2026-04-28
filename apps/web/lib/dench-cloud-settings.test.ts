@@ -395,39 +395,17 @@ describe("dench cloud settings", () => {
     expect(written.messages.tts.providers.elevenlabs.voiceId).toBe("voice_456");
   });
 
-  it("returns the stored enrichment max mode setting in cloud state", async () => {
+  it("strips legacy enrichment max-mode metadata when saving active settings", async () => {
     vi.mocked(readIntegrationsMetadata).mockReturnValue({
       schemaVersion: 1,
-      apollo: { enrichmentMaxMode: true },
+      apollo: { enrichmentMaxMode: true } as never,
     });
     mocks.state.configText = JSON.stringify({
       models: {
         providers: {
           "dench-cloud": {
             apiKey: "dc-key",
-          },
-        },
-      },
-      agents: {
-        defaults: {
-          model: {
-            primary: "dench-cloud/claude-sonnet-4.6",
-          },
-        },
-      },
-    });
-
-    const state = await getCloudSettingsState();
-
-    expect(state.enrichmentMaxModeEnabled).toBe(true);
-  });
-
-  it("persists enrichment max mode through save_active_settings without restarting by itself", async () => {
-    mocks.state.configText = JSON.stringify({
-      models: {
-        providers: {
-          "dench-cloud": {
-            apiKey: "dc-key",
+            enrichmentMaxMode: true,
           },
         },
       },
@@ -436,23 +414,15 @@ describe("dench cloud settings", () => {
     const result = await saveActiveCloudSettings({
       stableId: null,
       voiceId: null,
-      enrichmentMaxModeEnabled: true,
       integrations: {},
     });
 
     expect(result.changed).toBe(true);
-    expect(result.refresh).toEqual({
-      attempted: false,
-      restarted: false,
-      error: null,
-      profile: "default",
-    });
-
-    const written = JSON.parse(mocks.state.configText);
     expect(writeIntegrationsMetadata).toHaveBeenCalledWith({
       schemaVersion: 1,
-      apollo: { enrichmentMaxMode: true },
+      apollo: {},
     });
+    const written = JSON.parse(mocks.state.configText);
     expect(written.models.providers["dench-cloud"].enrichmentMaxMode).toBeUndefined();
   });
 });

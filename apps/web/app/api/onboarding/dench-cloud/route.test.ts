@@ -50,7 +50,6 @@ const cloudState = {
   selectedDenchModel: null,
   selectedVoiceId: null,
   elevenLabsEnabled: false,
-  enrichmentMaxModeEnabled: false,
   models: [
     {
       id: "dench-claude-sonnet",

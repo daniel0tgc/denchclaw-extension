@@ -283,6 +283,7 @@ export function AddColumnPopover({
 	const [enrichColumns, setEnrichColumns] = useState<Array<{
 		label: string; key: string; fieldType: string; apolloPath: string;
 	}>>([]);
+	const [eligibleInputFields, setEligibleInputFields] = useState<AddColumnField[]>([]);
 
 	// Self-contained enrichment availability check so parent re-renders
 	// don't remount this component (which resets the popover open state).
@@ -314,13 +315,14 @@ export function AddColumnPopover({
 	// Load enrichment columns lazily
 	useEffect(() => {
 		if (!enrichmentAvailable) return;
-		import("@/lib/enrichment-columns").then(({ detectEnrichmentCategory, getEnrichmentColumns, autoDetectInputField }) => {
+		import("@/lib/enrichment-columns").then(({ detectEnrichmentCategory, getEnrichmentColumns, autoDetectInputField, getEligibleInputFields }) => {
 			const cat = detectEnrichmentCategory(objectName);
 			setEnrichCategory(cat);
 			if (cat) {
 				setEnrichColumns(getEnrichmentColumns(cat));
 				const currentFields = fieldsRef.current;
 				if (currentFields) {
+					setEligibleInputFields(getEligibleInputFields(cat, currentFields));
 					const autoInput = autoDetectInputField(cat, currentFields);
 					if (autoInput) setEnrichInputField(autoInput.name);
 				}
@@ -524,7 +526,7 @@ export function AddColumnPopover({
 										}}
 									>
 										<option value="">Select input column...</option>
-										{(fields ?? []).map((f) => (
+										{eligibleInputFields.map((f) => (
 											<option key={f.id} value={f.name}>{f.name}</option>
 										))}
 									</select>

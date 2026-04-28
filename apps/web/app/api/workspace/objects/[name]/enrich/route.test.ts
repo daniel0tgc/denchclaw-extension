@@ -42,8 +42,8 @@ describe("workspace enrichment route", () => {
       if (sql.includes("SELECT id FROM objects WHERE name")) {
         return [{ id: "obj_1" }] as never;
       }
-      if (sql.includes("SELECT id, name FROM fields")) {
-        return [{ id: "input_1", name: "email" }] as never;
+      if (sql.includes("SELECT id, name, type FROM fields")) {
+        return [{ id: "input_1", name: "email", type: "email" }] as never;
       }
       if (sql.includes("SELECT id FROM fields WHERE id")) {
         return [{ id: "field_1" }] as never;
@@ -97,8 +97,8 @@ describe("workspace enrichment route", () => {
       if (sql.includes("SELECT id FROM objects WHERE name")) {
         return [{ id: "obj_1" }] as never;
       }
-      if (sql.includes("SELECT id, name FROM fields")) {
-        return [{ id: "input_1", name: "LinkedIn URL" }] as never;
+      if (sql.includes("SELECT id, name, type FROM fields")) {
+        return [{ id: "input_1", name: "LinkedIn URL", type: "url" }] as never;
       }
       if (sql.includes("SELECT id FROM fields WHERE id")) {
         return [{ id: "field_1" }] as never;
@@ -150,8 +150,8 @@ describe("workspace enrichment route", () => {
       if (sql.includes("SELECT id FROM objects WHERE name")) {
         return [{ id: "obj_1" }] as never;
       }
-      if (sql.includes("SELECT id, name FROM fields")) {
-        return [{ id: "input_1", name: "website" }] as never;
+      if (sql.includes("SELECT id, name, type FROM fields")) {
+        return [{ id: "input_1", name: "website", type: "url" }] as never;
       }
       if (sql.includes("SELECT id FROM fields WHERE id")) {
         return [{ id: "field_1" }] as never;
@@ -227,8 +227,8 @@ describe("workspace enrichment route", () => {
       if (sql.includes("SELECT id FROM objects WHERE name")) {
         return [{ id: "obj_1" }] as never;
       }
-      if (sql.includes("SELECT id, name FROM fields")) {
-        return [{ id: "input_1", name: "email" }] as never;
+      if (sql.includes("SELECT id, name, type FROM fields")) {
+        return [{ id: "input_1", name: "email", type: "email" }] as never;
       }
       if (sql.includes("SELECT id FROM fields WHERE id")) {
         return [{ id: "field_1" }] as never;

@@ -951,6 +951,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.5rem 1rem;
   min-height: 2.75rem;
   border-bottom: 1px solid var(--color-border);
@@ -959,6 +960,8 @@ label {
   position: sticky;
   top: 0;
   z-index: 20;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .editor-top-bar-left {
@@ -973,7 +976,12 @@ label {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  margin-left: auto;
   flex-shrink: 0;
+  position: sticky;
+  right: 1rem;
+  z-index: 1;
+  background: var(--color-surface);
 }
 
 /* Hide the keyboard hint when the editor's container is too narrow so the
@@ -987,6 +995,9 @@ label {
 
 .editor-save-indicator {
   font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-save-unsaved {
@@ -1009,9 +1020,12 @@ label {
   background: var(--color-surface-hover);
   border-radius: 0.375rem;
   border: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .editor-save-button {
+  order: -1;
+  flex-shrink: 0;
   padding: 0.35rem 1rem;
   font-size: 0.8rem;
   font-weight: 500;
@@ -1061,6 +1075,8 @@ label {
   background: var(--color-surface);
   flex-shrink: 0;
   gap: 0.75rem;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .rich-doc-topbar-left {
@@ -1074,7 +1090,12 @@ label {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  margin-left: auto;
   flex-shrink: 0;
+  position: sticky;
+  right: 1rem;
+  z-index: 1;
+  background: var(--color-surface);
 }
 
 .rich-doc-filename {

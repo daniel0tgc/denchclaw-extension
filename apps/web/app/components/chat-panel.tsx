@@ -63,6 +63,36 @@ type ChatCloudState = {
 	models: ChatModelOption[];
 };
 
+const CHAT_BOTTOM_THRESHOLD_PX = 80;
+
+type ChatScrollMetrics = Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">;
+type ChatScrollTarget = {
+	scrollHeight: number;
+	scrollTo: (options: ScrollToOptions) => void;
+};
+
+export function getChatDistanceFromBottom({
+	clientHeight,
+	scrollHeight,
+	scrollTop,
+}: ChatScrollMetrics): number {
+	return scrollHeight - scrollTop - clientHeight;
+}
+
+export function isChatScrolledAwayFromBottom(
+	metrics: ChatScrollMetrics,
+	threshold = CHAT_BOTTOM_THRESHOLD_PX,
+): boolean {
+	return getChatDistanceFromBottom(metrics) > threshold;
+}
+
+export function scrollChatToBottom(
+	el: ChatScrollTarget,
+	behavior: ScrollBehavior = "auto",
+): void {
+	el.scrollTo({ top: el.scrollHeight, behavior });
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
 		return null;
@@ -898,27 +928,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			headerRightSlot,
 			onRuntimeStateChange,
 			onConversationActivity,
-			onOpenCloudSettings,
 			gatewaySessionKey,
 			gatewaySessionId,
 			gatewayChannel: _gatewayChannel,
 			visible,
 			searchFn,
-			historySessions,
-			historyStreamingSessionIds,
-			historySubagents,
-			historyActiveSubagentKey,
-			historyLoading,
-			historyGatewaySessions,
-			historyActiveGatewaySessionKey,
-			onSelectHistorySession,
 			onNewChatSession,
-			onSelectHistorySubagent,
-			onSelectHistoryGatewaySession,
-			onRenameHistorySession,
-			onDeleteHistorySession,
-			onStopHistorySession,
-			onStopHistorySubagent,
 		},
 		ref,
 	) {
@@ -930,7 +945,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			string | null
 		>(null);
 		const [loadingSession, setLoadingSession] = useState(false);
-		const messagesEndRef = useRef<HTMLDivElement>(null);
 
 		// ── Attachment state ──
 		const [attachedFiles, setAttachedFiles] = useState<
@@ -942,7 +956,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		useEffect(() => { setMounted(true); }, []);
 
 		useEffect(() => {
-			if (visible === false) return;
+			if (visible === false) {return;}
 			const timer = setTimeout(() => {
 				editorRef.current?.focus();
 			}, 150);
@@ -1196,9 +1210,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (!el) {return;}
 
 			const onScroll = () => {
-				const distanceFromBottom =
-					el.scrollHeight - el.scrollTop - el.clientHeight;
-				const away = distanceFromBottom > 80;
+				const away = isChatScrolledAwayFromBottom(el);
 				userScrolledAwayRef.current = away;
 				setShowScrollButton(away);
 			};
@@ -1207,8 +1219,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			return () => el.removeEventListener("scroll", onScroll);
 		}, []);
 
-		const scrollToBottom = useCallback(() => {
-			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+		const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+			const el = scrollContainerRef.current;
+			if (!el) {return;}
+			userScrolledAwayRef.current = false;
+			setShowScrollButton(false);
+			scrollChatToBottom(el, behavior);
 		}, []);
 
 		// Auto-scroll effect — skips when user has scrolled away.
@@ -1217,11 +1233,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			if (scrollRafRef.current) {return;}
 			scrollRafRef.current = requestAnimationFrame(() => {
 				scrollRafRef.current = 0;
-				messagesEndRef.current?.scrollIntoView({
-					behavior: "smooth",
-				});
+				scrollToBottom("auto");
 			});
-		}, [messages]);
+		}, [messages, scrollToBottom]);
 
 		// ── Session persistence helpers ──
 
@@ -1490,7 +1504,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		// ── Gateway session mode: load transcript + reconnect to active stream ──
 		useEffect(() => {
-			if (!gatewaySessionKey || !gatewaySessionId) return;
+			if (!gatewaySessionKey || !gatewaySessionId) {return;}
 			let cancelled = false;
 
 			reconnectAbortRef.current?.abort();
@@ -1503,7 +1517,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				let baseMessages: Array<{ id: string; role: "user" | "assistant"; parts: UIMessage["parts"] }> = [];
 				try {
 					const res = await fetch(`/api/gateway/sessions/${encodeURIComponent(gatewaySessionId)}`);
-					if (cancelled) return;
+					if (cancelled) {return;}
 					if (res.ok) {
 						const data = await res.json();
 						const sessionMessages: Array<{
@@ -1522,7 +1536,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 							};
 						});
 						baseMessages = uiMessages;
-						if (!cancelled) setMessages(baseMessages);
+						if (!cancelled) {setMessages(baseMessages);}
 					}
 				} catch { /* ignore */ }
 
@@ -2257,7 +2271,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// ── Active stream status row ──
 
 		const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-		const lastAssistantHasText = hasAssistantText(lastMsg);
 		const streamActivityLabel = getStreamActivityLabel({
 			loadingSession,
 			isReconnecting,
@@ -2741,7 +2754,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								</div>
 							</div>
 						)}
-							<div ref={messagesEndRef} />
 						</div>
 					)}
 				</div>

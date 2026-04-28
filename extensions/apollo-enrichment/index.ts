@@ -1,7 +1,6 @@
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   readDenchAuthProfileKey,
-  readDenchEnrichmentMaxModeEnabled,
   resolveDenchGatewayUrl,
 } from "../shared/dench-auth.js";
 
@@ -92,6 +91,17 @@ const ApolloEnrichParameters = {
       description: "Legacy alias for organizationDomains.",
     },
     per_page: { type: "number", description: "Legacy alias for perPage." },
+    requiredFields: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Optional Dench gateway requiredFields contract. The waterfall stops as soon as every listed field is non-null on the merged record. Omit to use the gateway's default backfill list.",
+    },
+    required_fields: {
+      type: "array",
+      items: { type: "string" },
+      description: "Legacy alias for requiredFields.",
+    },
   },
   required: ["action"],
 };
@@ -186,12 +196,13 @@ async function executeApolloEnrich(
 
   try {
     let response: Response;
-    const enrichmentMaxModeEnabled = readDenchEnrichmentMaxModeEnabled();
+    const requiredFields =
+      readStringList(params.requiredFields) ?? readStringList(params.required_fields);
 
     if (action === "people") {
       const body = buildPeopleBody(params);
-      if (enrichmentMaxModeEnabled) {
-        body.mode = "max";
+      if (requiredFields) {
+        body.requiredFields = requiredFields;
       }
       if (!body.email && !body.linkedin_url && !body.first_name && !body.last_name) {
         return jsonResult({
@@ -213,8 +224,8 @@ async function executeApolloEnrich(
       }
       const url = new URL(`${gatewayUrl}${ENRICHMENT_BASE_PATH}/company`);
       url.searchParams.set("domain", domain);
-      if (enrichmentMaxModeEnabled) {
-        url.searchParams.set("mode", "max");
+      if (requiredFields) {
+        url.searchParams.set("requiredFields", requiredFields.join(","));
       }
       response = await fetch(url, {
         method: "GET",

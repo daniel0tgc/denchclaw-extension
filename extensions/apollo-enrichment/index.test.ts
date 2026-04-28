@@ -18,7 +18,7 @@ function writeAuthProfiles(stateDir: string, key: string): void {
   );
 }
 
-function writeOpenClawConfig(stateDir: string, enrichmentMaxMode: boolean): void {
+function writeOpenClawConfig(stateDir: string): void {
   writeFileSync(
     path.join(stateDir, "openclaw.json"),
     JSON.stringify({
@@ -33,9 +33,7 @@ function writeOpenClawConfig(stateDir: string, enrichmentMaxMode: boolean): void
     path.join(stateDir, ".dench-integrations.json"),
     JSON.stringify({
       schemaVersion: 1,
-      apollo: {
-        enrichmentMaxMode,
-      },
+      apollo: {},
     }),
   );
 }
@@ -68,7 +66,7 @@ function createApi() {
   };
 }
 
-describe("apollo-enrichment max mode", () => {
+describe("apollo-enrichment requiredFields", () => {
   const originalFetch = globalThis.fetch;
   const originalStateDir = process.env.OPENCLAW_STATE_DIR;
   let stateDir: string | undefined;
@@ -87,19 +85,19 @@ describe("apollo-enrichment max mode", () => {
     }
   });
 
-  it("forwards mode=max to people enrichment when enabled", async () => {
+  it("omits requiredFields and mode by default for people enrichment", async () => {
     stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
-    writeOpenClawConfig(stateDir, true);
+    writeOpenClawConfig(stateDir);
 
     globalThis.fetch = vi.fn(async (input, init) => {
       expect(String(input)).toBe("https://gateway.example.com/v1/enrichment/people");
       expect(init?.method).toBe("POST");
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        email: "jane@acme.com",
-        mode: "max",
-      });
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({ email: "jane@acme.com" });
+      expect(body.mode).toBeUndefined();
+      expect(body.requiredFields).toBeUndefined();
       return new Response(JSON.stringify({ person: { id: "p1" } }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -118,20 +116,81 @@ describe("apollo-enrichment max mode", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards camelCase requiredFields to people enrichment when callers provide them", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    writeOpenClawConfig(stateDir);
+
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({
+        email: "jane@acme.com",
+        requiredFields: ["phone", "headline"],
+      });
+      expect(body.mode).toBeUndefined();
+      return new Response(JSON.stringify({ person: { id: "p1" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+
+    await tools[0].execute("call_1", {
+      action: "people",
+      email: "jane@acme.com",
+      requiredFields: ["phone", "headline"],
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the snake_case required_fields legacy alias", async () => {
+    stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    writeAuthProfiles(stateDir, "dc-key");
+    writeOpenClawConfig(stateDir);
+
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        email: "jane@acme.com",
+        requiredFields: ["phone"],
+      });
+      return new Response(JSON.stringify({ person: { id: "p1" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { api, tools } = createApi();
+    register(api);
+
+    await tools[0].execute("call_1", {
+      action: "people",
+      email: "jane@acme.com",
+      required_fields: ["phone"],
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("sends person name inputs with gateway-compatible snake_case keys", async () => {
     stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
-    writeOpenClawConfig(stateDir, true);
+    writeOpenClawConfig(stateDir);
 
     globalThis.fetch = vi.fn(async (_input, init) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({
         first_name: "Mark",
         last_name: "Rachapoom",
         organization_name: "Dench",
         linkedin_url: "https://www.linkedin.com/in/markrachapoom",
-        mode: "max",
       });
+      expect(body.mode).toBeUndefined();
       return new Response(JSON.stringify({ person: { email: "mark@dench.com" } }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -156,7 +215,7 @@ describe("apollo-enrichment max mode", () => {
     stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
-    writeOpenClawConfig(stateDir, false);
+    writeOpenClawConfig(stateDir);
 
     globalThis.fetch = vi.fn(async (_input, init) => {
       expect(JSON.parse(String(init?.body))).toMatchObject({
@@ -185,17 +244,18 @@ describe("apollo-enrichment max mode", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards mode=max to company enrichment when enabled", async () => {
+  it("forwards CSV requiredFields query param for company enrichment", async () => {
     stateDir = mkdtempSync(path.join(os.tmpdir(), "apollo-enrichment-state-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
     writeAuthProfiles(stateDir, "dc-key");
-    writeOpenClawConfig(stateDir, true);
+    writeOpenClawConfig(stateDir);
 
     globalThis.fetch = vi.fn(async (input, init) => {
       const url = new URL(String(input));
       expect(url.origin + url.pathname).toBe("https://gateway.example.com/v1/enrichment/company");
       expect(url.searchParams.get("domain")).toBe("acme.com");
-      expect(url.searchParams.get("mode")).toBe("max");
+      expect(url.searchParams.get("requiredFields")).toBe("description,headcount,industryList");
+      expect(url.searchParams.get("mode")).toBeNull();
       expect(init?.method).toBe("GET");
       return new Response(JSON.stringify({ organization: { id: "o1" } }), {
         status: 200,
@@ -210,6 +270,7 @@ describe("apollo-enrichment max mode", () => {
     await tools[0].execute("call_1", {
       action: "company",
       domain: "acme.com",
+      requiredFields: ["description", "headcount", "industryList"],
     });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);

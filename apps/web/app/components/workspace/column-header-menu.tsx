@@ -1,7 +1,15 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
+import {
+	autoDetectInputField,
+	buildEnrichmentMeta,
+	getAvailableEnrichmentCategories,
+	getEligibleInputFields,
+	getEnrichmentColumns,
+	type EnrichmentCategory,
+} from "@/lib/enrichment-columns";
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -244,7 +252,6 @@ export function InlineRenameInput({
 /* ─── Add Column Popover ─── */
 
 type AddColumnField = { id: string; name: string; type: string };
-type EnrichmentCategory = "people" | "company";
 type EnrichmentColumnOption = {
 	label: string;
 	key: string;
@@ -306,7 +313,6 @@ export function AddColumnPopover({
 	// Enrichment state
 	const [selectedEnrichCol, setSelectedEnrichCol] = useState<EnrichmentColumnOption | null>(null);
 	const [enrichInputField, setEnrichInputField] = useState<string>("");
-	const [enrichGroups, setEnrichGroups] = useState<EnrichmentColumnGroup[]>([]);
 	const [enrichScope, setEnrichScope] = useState<EnrichmentStartPayload["scope"]>("all");
 	const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
 
@@ -337,26 +343,36 @@ export function AddColumnPopover({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [position, setPosition] = useState({ top: 0, left: 0 });
 
-	// Load enrichment columns lazily
-	useEffect(() => {
-		if (!enrichmentAvailable) return;
-		import("@/lib/enrichment-columns").then(({ getAvailableEnrichmentCategories, getEnrichmentColumns, autoDetectInputField, getEligibleInputFields }) => {
-			const currentFields = fieldsRef.current ?? [];
-			const groups = getAvailableEnrichmentCategories(objectName, currentFields).map((category) => {
-				const inputFields = getEligibleInputFields(category, currentFields);
-				const autoInput = autoDetectInputField(category, currentFields);
-				return {
-					category,
-					label: category === "people" ? "People enrichment" : "Company enrichment",
-					columns: getEnrichmentColumns(category).map((column) => ({ ...column, category })),
-					inputFields,
-					defaultInputField: autoInput?.name ?? "",
-				};
-			});
-			setEnrichGroups(groups);
-			setEnrichInputField(groups.find((group) => group.defaultInputField)?.defaultInputField ?? "");
+	const enrichGroups = useMemo<EnrichmentColumnGroup[]>(() => {
+		const currentFields = fields ?? [];
+		return getAvailableEnrichmentCategories(objectName, currentFields).map((category) => {
+			const inputFields = getEligibleInputFields(category, currentFields);
+			const autoInput = autoDetectInputField(category, currentFields);
+			return {
+				category,
+				label: category === "people" ? "People enrichment" : "Company enrichment",
+				columns: getEnrichmentColumns(category).map((column) => ({ ...column, category })),
+				inputFields,
+				defaultInputField: autoInput?.name ?? "",
+			};
 		});
-	}, [enrichmentAvailable, objectName]);
+	}, [fields, objectName]);
+
+	useEffect(() => {
+		const group = selectedEnrichCol
+			? enrichGroups.find((candidate) => candidate.category === selectedEnrichCol.category)
+			: enrichGroups.find((candidate) => candidate.defaultInputField);
+		if (!group) {
+			if (enrichInputField) {
+				setEnrichInputField("");
+			}
+			return;
+		}
+		const currentInputStillValid = group.inputFields.some((field) => field.name === enrichInputField);
+		if (!currentInputStillValid && group.defaultInputField !== enrichInputField) {
+			setEnrichInputField(group.defaultInputField);
+		}
+	}, [enrichGroups, enrichInputField, selectedEnrichCol]);
 
 	const handleOpen = useCallback(() => {
 		const rect = triggerRef.current?.getBoundingClientRect();
@@ -448,7 +464,6 @@ export function AddColumnPopover({
 		setSaving(true);
 		setError(null);
 		try {
-			const { buildEnrichmentMeta } = await import("@/lib/enrichment-columns");
 			const meta = buildEnrichmentMeta(selectedEnrichCol.category, selectedEnrichCol, enrichInputField);
 			const existingOutputField = fieldsRef.current?.find(
 				(field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase(),

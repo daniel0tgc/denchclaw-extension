@@ -7,7 +7,11 @@ import {
 	getIntegrationsState,
 	resolveDenchGatewayCredentials,
 } from "@/lib/integrations";
-import { extractApolloValue, extractDomain } from "@/lib/enrichment-columns";
+import {
+	extractApolloValue,
+	extractDomain,
+	isEligibleInputField,
+} from "@/lib/enrichment-columns";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -99,12 +103,15 @@ export async function POST(
 	const objectId = objects[0].id;
 
 	// Resolve the input field ID by name
-	const inputFields = duckdbQueryOnFile<{ id: string; name: string }>(
+	const inputFields = duckdbQueryOnFile<{ id: string; name: string; type: string }>(
 		dbFile,
-		`SELECT id, name FROM fields WHERE object_id = '${sqlEscape(objectId)}' AND name = '${sqlEscape(inputFieldName)}'`,
+		`SELECT id, name, type FROM fields WHERE object_id = '${sqlEscape(objectId)}' AND name = '${sqlEscape(inputFieldName)}'`,
 	);
 	if (inputFields.length === 0) {
 		return Response.json({ error: `Input field '${inputFieldName}' not found.` }, { status: 404 });
+	}
+	if (!isEligibleInputField(category, inputFields[0])) {
+		return Response.json({ error: `Input field '${inputFieldName}' is not supported for ${category} enrichment.` }, { status: 400 });
 	}
 	const inputFieldId = inputFields[0].id;
 

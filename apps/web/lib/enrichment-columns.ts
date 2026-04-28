@@ -88,27 +88,50 @@ export function getInputDefs(category: EnrichmentCategory): EnrichmentInputDef[]
 // Auto-detect an input column from existing fields
 // ---------------------------------------------------------------------------
 
-type FieldCandidate = { id: string; name: string; type: string };
+export type FieldCandidate = { id: string; name: string; type: string };
+
+export function isEligibleInputField(
+	category: EnrichmentCategory,
+	field: FieldCandidate,
+): boolean {
+	if (category === "people") {
+		return field.type === "email" || /^e[-_]?mail/i.test(field.name) || /linkedin/i.test(field.name);
+	}
+
+	return (
+		/domain|website/i.test(field.name)
+		|| /linkedin/i.test(field.name)
+		|| (/^url$/i.test(field.name) && field.type === "url")
+	);
+}
+
+export function getEligibleInputFields(
+	category: EnrichmentCategory,
+	fields: FieldCandidate[],
+): FieldCandidate[] {
+	return fields.filter((field) => isEligibleInputField(category, field));
+}
 
 export function autoDetectInputField(
 	category: EnrichmentCategory,
 	fields: FieldCandidate[],
 ): FieldCandidate | null {
+	const eligibleFields = getEligibleInputFields(category, fields);
 	if (category === "people") {
-		const emailField = fields.find(
+		const emailField = eligibleFields.find(
 			(f) => f.type === "email" || /^e[-_]?mail/i.test(f.name),
 		);
 		if (emailField) return emailField;
-		const linkedinField = fields.find(
+		const linkedinField = eligibleFields.find(
 			(f) => /linkedin/i.test(f.name),
 		);
 		if (linkedinField) return linkedinField;
 	} else {
-		const domainField = fields.find(
-			(f) => /website|domain|^url$/i.test(f.name) || (f.type === "url" && !/linkedin|twitter|facebook/i.test(f.name)),
+		const domainField = eligibleFields.find(
+			(f) => /website|domain|^url$/i.test(f.name),
 		);
 		if (domainField) return domainField;
-		const linkedinField = fields.find(
+		const linkedinField = eligibleFields.find(
 			(f) => /linkedin/i.test(f.name),
 		);
 		if (linkedinField) return linkedinField;

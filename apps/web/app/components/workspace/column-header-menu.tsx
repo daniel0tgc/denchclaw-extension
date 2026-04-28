@@ -9,6 +9,7 @@ import {
 	getEligibleInputFields,
 	getEnrichmentColumns,
 	type EnrichmentCategory,
+	type EnrichmentColumnDef,
 } from "@/lib/enrichment-columns";
 import {
 	DropdownMenu,
@@ -473,11 +474,13 @@ export function InlineRenameInput({
 /* ─── Add Column Popover ─── */
 
 type AddColumnField = { id: string; name: string; type: string };
-type EnrichmentColumnOption = {
-	label: string;
-	key: string;
-	fieldType: string;
-	apolloPath: string;
+// Options carry the full `EnrichmentColumnDef` (including `requiredFields`
+// and `extractionFallbacks`) so they can be passed straight to
+// `buildEnrichmentMeta` without losing type information. The runtime
+// values come from `getEnrichmentColumns(category)` (which returns
+// `EnrichmentColumnDef[]`) plus the active `category`, so the type just
+// needs to mirror what's already there.
+type EnrichmentColumnOption = EnrichmentColumnDef & {
 	category: EnrichmentCategory;
 };
 type EnrichmentColumnGroup = {

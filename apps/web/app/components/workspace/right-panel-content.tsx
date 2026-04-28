@@ -17,7 +17,7 @@
  * the active tab.
  */
 
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -82,6 +82,17 @@ export type RightPanelContentProps = {
 
   // upstream signals
   onDuckDBMissing?: () => void;
+  /**
+   * Hand the active tab's `refreshActive` callback back up to the parent so
+   * upstream code (e.g. column creation, entry mutations) can force a
+   * re-fetch of the cached content payload after a successful write.
+   *
+   * Without this wire, `useTabContent`'s cache would never be invalidated
+   * for things like a newly-created field — the row data updates via the
+   * separate paginated entries fetch, but the schema (fields list) stays
+   * stale and new columns never render.
+   */
+  onRefreshActiveChange?: (refresh: () => void) => void;
 
   /**
    * Render the resolved content body. The parent passes its own
@@ -126,16 +137,21 @@ export function RightPanelContent(props: RightPanelContentProps) {
     onCloseContentToRight,
     onCloseAllContent,
     onDuckDBMissing,
+    onRefreshActiveChange,
     renderContent,
     renderEntryDetail,
     renderPlaceholder,
   } = props;
 
-  const { content } = useTabContent(activeContentTab, {
+  const { content, refreshActive } = useTabContent(activeContentTab, {
     tree,
     cronJobs,
     onDuckDBMissing,
   });
+
+  useEffect(() => {
+    onRefreshActiveChange?.(refreshActive);
+  }, [refreshActive, onRefreshActiveChange]);
 
   const activePath = activeContentTab?.path ?? null;
 

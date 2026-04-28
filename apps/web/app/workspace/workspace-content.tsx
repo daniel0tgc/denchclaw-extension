@@ -2014,6 +2014,9 @@ function WorkspacePageInner() {
   const refreshCurrentObject = useCallback(async () => {
     refreshActiveRef.current();
   }, []);
+  const handleRefreshActiveChange = useCallback((refresh: () => void) => {
+    refreshActiveRef.current = refresh;
+  }, []);
 
   // Auto-refresh the active object tab when the workspace tree updates.
   const prevTreeRef = useRef(tree);
@@ -2657,6 +2660,7 @@ function WorkspacePageInner() {
                 onCloseContentToRight={handleTabCloseToRight}
                 onCloseAllContent={handleTabCloseAll}
                 onDuckDBMissing={handleDuckDBMissing}
+                onRefreshActiveChange={handleRefreshActiveChange}
                 renderContent={renderRightPanelContentBody}
                 renderEntryDetail={renderRightPanelEntryDetail}
                 renderPlaceholder={renderRightPanelPlaceholder}
@@ -2698,6 +2702,7 @@ function WorkspacePageInner() {
                   onCloseContentToRight={handleTabCloseToRight}
                   onCloseAllContent={handleTabCloseAll}
                   onDuckDBMissing={handleDuckDBMissing}
+                  onRefreshActiveChange={handleRefreshActiveChange}
                   renderContent={renderRightPanelContentBody}
                   renderEntryDetail={renderRightPanelEntryDetail}
                   renderPlaceholder={renderRightPanelPlaceholder}

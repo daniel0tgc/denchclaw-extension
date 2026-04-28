@@ -66,16 +66,20 @@ describe("getEligibleInputFields", () => {
 });
 
 describe("requiredFields mapping", () => {
-	it("attaches a non-empty canonical requiredFields list to every column", () => {
+	it("records requiredFields per catalog column (empty means gateway default backfill)", () => {
 		for (const column of [...PEOPLE_ENRICHMENT_COLUMNS, ...COMPANY_ENRICHMENT_COLUMNS]) {
-			expect(column.requiredFields.length).toBeGreaterThan(0);
+			expect(Array.isArray(column.requiredFields)).toBe(true);
 		}
+		expect(
+			PEOPLE_ENRICHMENT_COLUMNS.find((column) => column.label === "Title")?.requiredFields,
+		).toEqual([]);
 	});
 
 	it("resolves canonical requiredFields from an apolloPath", () => {
 		expect(getRequiredFieldsForApolloPath("people", "person.contact.phone_numbers.0.sanitized_number"))
 			.toEqual(["phone"]);
 		expect(getRequiredFieldsForApolloPath("people", "person.headline")).toEqual(["headline"]);
+		expect(getRequiredFieldsForApolloPath("people", "person.title")).toEqual([]);
 		expect(getRequiredFieldsForApolloPath("company", "organization.industry")).toEqual(["industryList"]);
 		expect(getRequiredFieldsForApolloPath("company", "organization.website_url")).toEqual(["website"]);
 	});
@@ -103,5 +107,15 @@ describe("extractEnrichmentValue", () => {
 
 	it("returns null when no path resolves", () => {
 		expect(extractEnrichmentValue({}, phoneColumn!)).toBeNull();
+	});
+
+	it("does not map Title to LinkedIn headline when only headline data exists", () => {
+		const titleColumn = PEOPLE_ENRICHMENT_COLUMNS.find((column) => column.label === "Title")!;
+		expect(
+			extractEnrichmentValue(
+				{ person: { headline: "CEO at Acme" }, headline: "CEO at Acme" },
+				titleColumn,
+			),
+		).toBeNull();
 	});
 });

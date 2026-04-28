@@ -41,6 +41,7 @@ import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
 import { prepareFilesForChatUpload } from "@/lib/chat-image-preparation";
 import { formatTableSelectionContext, type TableSelectionContext } from "@/lib/table-selection";
+import type { WorkspaceContext } from "@/lib/agent-message";
 
 // ── Attachment types & helpers ──
 
@@ -982,6 +983,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		const userHtmlMapRef = useRef(new Map<string, string>());
 		const pendingHtmlRef = useRef<string | null>(null);
 
+		// Workspace context to send with the next /api/chat POST. Set by
+		// handleEditorSubmit just before it calls sendMessage; read once and
+		// cleared by the transport body callback below. Sending it as a
+		// structured field (instead of baking prefixes into the user message)
+		// keeps persisted user text — and the chat title — clean.
+		const pendingWorkspaceContextRef = useRef<WorkspaceContext | null>(null);
+
 		// ── Message queue (messages to send after current run completes) ──
 		const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 		// Ref mirror of queuedMessages, so callbacks that close over state
@@ -1052,6 +1060,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						if (pendingHtmlRef.current) {
 							extra.userHtml = pendingHtmlRef.current;
 							pendingHtmlRef.current = null;
+						}
+						if (pendingWorkspaceContextRef.current) {
+							extra.workspaceContext = pendingWorkspaceContextRef.current;
+							pendingWorkspaceContextRef.current = null;
 						}
 					return extra;
 				},
@@ -1831,38 +1843,66 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					}
 				}
 
-				// Build message with optional attachment prefix
-				let messageText = userText;
-
-				// Merge mention paths and attachment paths
+				// Merge mention paths and attachment paths into the structured
+				// workspaceContext sent alongside the message. Previously these
+				// were baked into the user message as `[Attached files: …]` /
+				// `[Context: workspace …]` / `[Selected table …]` prefixes;
+				// that polluted the persisted user text and produced ugly chat
+				// titles. We now send raw userText to /api/chat and rebuild
+				// the agent prompt server-side via buildAgentMessage.
 				const allFilePaths = [
 					...mentionedFiles.map((f) => f.path),
 					...currentAttachments.map((f) => f.path),
 				];
+
+				const announceFilePath =
+					!!fileContext &&
+					lastAnnouncedFilePathRef.current !== fileContext.path;
+
+				const workspaceContext: WorkspaceContext = {};
 				if (allFilePaths.length > 0) {
-					const prefix = `[Attached files: ${allFilePaths.join(", ")}]`;
-					messageText = messageText
-						? `${prefix}\n\n${messageText}`
-						: prefix;
+					workspaceContext.attachedFilePaths = allFilePaths;
+				}
+				if (announceFilePath && fileContext) {
+					workspaceContext.filePath = fileContext.path;
+					workspaceContext.isDirectory = fileContext.isDirectory;
+				}
+				if (fileContext?.tableSelection) {
+					workspaceContext.tableSelection = fileContext.tableSelection;
 				}
 
-				if (fileContext && lastAnnouncedFilePathRef.current !== fileContext.path) {
-					const label = fileContext.isDirectory ? "directory" : "file";
-					messageText = `[Context: workspace ${label} '${fileContext.path}']\n\n${messageText}`;
+				if (announceFilePath && fileContext) {
 					lastAnnouncedFilePathRef.current = fileContext.path;
 				}
 
-				if (fileContext?.tableSelection) {
-					messageText = `${formatTableSelectionContext(fileContext.tableSelection)}\n\n${messageText}`;
-				}
-
-				// Store HTML for display and pipe to server via transport
-				userHtmlMapRef.current.set(messageText, html);
+				// Store HTML keyed by raw userText so the user-message renderer
+				// (chat-message.tsx) can recover the rich-text version when
+				// echoing back the message that was just sent.
+				userHtmlMapRef.current.set(userText, html);
 				pendingHtmlRef.current = html;
 
 				userScrolledAwayRef.current = false;
 
 				if (gatewaySessionKey) {
+					// The gateway flow is a separate transport (POST /api/gateway/chat
+					// sends `{message: string}` to an upstream gateway that owns
+					// session storage). It still expects an inline-prefixed prompt,
+					// so we assemble messageText the legacy way for that path only.
+					let messageText = userText;
+					if (allFilePaths.length > 0) {
+						const prefix = `[Attached files: ${allFilePaths.join(", ")}]`;
+						messageText = messageText
+							? `${prefix}\n\n${messageText}`
+							: prefix;
+					}
+					if (announceFilePath && fileContext) {
+						const label = fileContext.isDirectory ? "directory" : "file";
+						messageText = `[Context: workspace ${label} '${fileContext.path}']\n\n${messageText}`;
+					}
+					if (fileContext?.tableSelection) {
+						messageText = `${formatTableSelectionContext(fileContext.tableSelection)}\n\n${messageText}`;
+					}
+
 					const userMsg = {
 						id: `user-${Date.now()}`,
 						role: "user" as const,
@@ -1887,7 +1927,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						setStreamError("Failed to send message.");
 					}
 				} else {
-					void sendMessage({ text: messageText });
+					// /api/chat path: send raw userText + structured
+					// workspaceContext via the transport body callback.
+					if (Object.keys(workspaceContext).length > 0) {
+						pendingWorkspaceContextRef.current = workspaceContext;
+					}
+					void sendMessage({ text: userText });
 				}
 
 				setTimeout(() => {

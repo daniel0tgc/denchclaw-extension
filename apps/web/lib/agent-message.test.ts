@@ -1,0 +1,107 @@
+import { describe, expect, it } from "vitest";
+import { buildAgentMessage } from "./agent-message";
+import type { TableSelectionContext } from "./table-selection";
+
+describe("buildAgentMessage", () => {
+	it("returns userText unchanged when no context is provided", () => {
+		expect(buildAgentMessage({ userText: "hello" })).toBe("hello");
+	});
+
+	it("prepends [Attached files: ...] when attachments are listed", () => {
+		expect(
+			buildAgentMessage({
+				userText: "summarize",
+				workspaceContext: { attachedFilePaths: ["a.md", "b.md"] },
+			}),
+		).toBe("[Attached files: a.md, b.md]\n\nsummarize");
+	});
+
+	it("prepends [Context: workspace file '...'] when filePath is provided", () => {
+		expect(
+			buildAgentMessage({
+				userText: "what is this?",
+				workspaceContext: { filePath: "doc.md", isDirectory: false },
+			}),
+		).toBe("[Context: workspace file 'doc.md']\n\nwhat is this?");
+	});
+
+	it("uses 'directory' label for directory contexts", () => {
+		expect(
+			buildAgentMessage({
+				userText: "list everyone",
+				workspaceContext: { filePath: "~crm/people", isDirectory: true },
+			}),
+		).toBe(
+			"[Context: workspace directory '~crm/people']\n\nlist everyone",
+		);
+	});
+
+	it("applies the workspace prefix to file context paths", () => {
+		expect(
+			buildAgentMessage({
+				userText: "ok",
+				workspaceContext: { filePath: "doc.md", isDirectory: false },
+				workspacePrefix: "/home/user/.openclaw/work",
+			}),
+		).toBe(
+			"[Context: workspace file '/home/user/.openclaw/work/doc.md']\n\nok",
+		);
+	});
+
+	it("prepends a [Selected table ...] block when tableSelection is provided", () => {
+		const selection: TableSelectionContext = {
+			objectName: "people",
+			kind: "rows",
+			rowCount: 1,
+			columnCount: 2,
+			columns: ["name", "email"],
+			rows: [
+				{
+					rowIndex: 0,
+					entryId: "p1",
+					values: { name: "Ada", email: "ada@example.com" },
+				},
+			],
+			updatedAt: 0,
+		};
+		const out = buildAgentMessage({
+			userText: "anything weird?",
+			workspaceContext: { tableSelection: selection },
+		});
+		expect(out).toContain("[Selected table rows: people]");
+		expect(out).toContain("anything weird?");
+	});
+
+	it("orders prefixes: tableSelection > filePath > attachedFiles > userText", () => {
+		const selection: TableSelectionContext = {
+			objectName: "people",
+			kind: "cells",
+			rowCount: 1,
+			columnCount: 1,
+			columns: ["email"],
+			cells: [
+				{ rowIndex: 0, entryId: "p1", fieldName: "email", value: "x" },
+			],
+			updatedAt: 0,
+		};
+		const out = buildAgentMessage({
+			userText: "go",
+			workspaceContext: {
+				attachedFilePaths: ["a.md"],
+				filePath: "doc.md",
+				isDirectory: false,
+				tableSelection: selection,
+			},
+		});
+
+		const tableIdx = out.indexOf("[Selected table");
+		const ctxIdx = out.indexOf("[Context: workspace");
+		const attIdx = out.indexOf("[Attached files:");
+		const goIdx = out.indexOf("go");
+
+		expect(tableIdx).toBeGreaterThanOrEqual(0);
+		expect(tableIdx).toBeLessThan(ctxIdx);
+		expect(ctxIdx).toBeLessThan(attIdx);
+		expect(attIdx).toBeLessThan(goIdx);
+	});
+});

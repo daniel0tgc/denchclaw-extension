@@ -425,6 +425,10 @@ describe("Chat API routes", () => {
     });
 
     it("resolves workspace file paths in message", async () => {
+      // Post v3-chat refactor, the client sends raw user text plus a
+      // structured `workspaceContext` body field. The route reconstructs
+      // the `[Context: workspace file '...']` prefix and applies the
+      // workspace prefix from resolveAgentWorkspacePrefix.
       const { resolveAgentWorkspacePrefix } = await import("@/lib/workspace");
       vi.mocked(resolveAgentWorkspacePrefix).mockReturnValue("workspace");
       const { startRun, hasActiveRun, subscribeToRun } = await import("@/lib/active-runs");
@@ -441,17 +445,83 @@ describe("Chat API routes", () => {
             {
               id: "m1",
               role: "user",
-              parts: [{ type: "text", text: "[Context: workspace file 'doc.md']" }],
+              parts: [{ type: "text", text: "what does this say?" }],
             },
           ],
           sessionId: "s1",
+          workspaceContext: { filePath: "doc.md", isDirectory: false },
         }),
       });
       await POST(req);
       expect(startRun).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining("workspace/doc.md"),
+          message: expect.stringContaining(
+            "[Context: workspace file 'workspace/doc.md']",
+          ),
         }),
+      );
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("what does this say?"),
+        }),
+      );
+    });
+
+    it("rebuilds agent message from raw user text + structured workspace context", async () => {
+      const { resolveAgentWorkspacePrefix } = await import("@/lib/workspace");
+      vi.mocked(resolveAgentWorkspacePrefix).mockReturnValue(null);
+      const { startRun, persistUserMessage, hasActiveRun, subscribeToRun } =
+        await import("@/lib/active-runs");
+      vi.mocked(hasActiveRun).mockReturnValue(false);
+      vi.mocked(subscribeToRun).mockReturnValue(() => {});
+      vi.mocked(startRun).mockClear();
+      vi.mocked(persistUserMessage).mockClear();
+
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "m1",
+              role: "user",
+              parts: [{ type: "text", text: "summarize this" }],
+            },
+          ],
+          sessionId: "s1",
+          workspaceContext: {
+            filePath: "~crm/people",
+            isDirectory: true,
+            attachedFilePaths: ["notes.md"],
+          },
+        }),
+      });
+      await POST(req);
+
+      // Agent gets the prefixed prompt (so its tool/context use is unchanged).
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining(
+            "[Context: workspace directory '~crm/people']",
+          ),
+        }),
+      );
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("[Attached files: notes.md]"),
+        }),
+      );
+      expect(startRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("summarize this"),
+        }),
+      );
+      // But the persisted user text stays clean — this is what the chat
+      // title backfill reads, so it must not include the bracketed prefixes.
+      expect(persistUserMessage).toHaveBeenCalledWith(
+        "s1",
+        expect.objectContaining({ content: "summarize this" }),
       );
     });
 

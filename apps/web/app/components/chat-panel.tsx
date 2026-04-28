@@ -763,14 +763,6 @@ export type FileContext = {
 	tableSelection?: TableSelectionContext;
 };
 
-type FileScopedSession = {
-	id: string;
-	title: string;
-	createdAt: number;
-	updatedAt: number;
-	messageCount: number;
-};
-
 /** A message waiting to be sent after the current agent run finishes. */
 type QueuedMessage = {
 	id: string;
@@ -973,11 +965,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 		// the user opens a different file on the right panel and sends a new message,
 		// the agent is re-informed about the current context.
 		const lastAnnouncedFilePathRef = useRef<string | null>(null);
-
-		// File-scoped session list (compact mode only)
-		const [fileSessions, setFileSessions] = useState<
-			FileScopedSession[]
-		>([]);
 
 		// ── Rich HTML for user messages (keyed by message ID or text fallback) ──
 		const userHtmlMapRef = useRef(new Map<string, string>());
@@ -1240,19 +1227,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 		const createSession = useCallback(
 			async (title: string): Promise<string> => {
-				const body: Record<string, string> = { title };
-				if (filePath) {
-					body.filePath = filePath;
-				}
+				// All chat sessions are workspace-level since the v3 three-column
+				// refactor. The previous behavior — binding `filePath` on the
+				// session whenever any content tab was active — caused the
+				// workspace sidebar to hide perfectly normal chats started from
+				// CRM views or virtual tabs (the sidebar still filters out
+				// sessions with `filePath` set, which is the correct behavior
+				// for legacy file-scoped sessions). Workspace context for the
+				// agent is now carried per-message via `workspaceContext` on
+				// POST /api/chat, so the session itself stays unscoped.
 				const res = await fetch("/api/web-sessions", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(body),
+					body: JSON.stringify({ title }),
 				});
 				const data = await res.json();
 				return data.session.id;
 			},
-			[filePath],
+			[],
 		);
 
 		// ── Stream reconnection ──
@@ -1393,34 +1385,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			[setMessages],
 		);
 
-		// ── File-scoped session initialization ──
-		const fetchFileSessionsRef = useRef<
-			(() => Promise<FileScopedSession[]>) | null
-		>(null);
-
-		fetchFileSessionsRef.current = async () => {
-			if (!filePath) {
-				return [];
-			}
-			try {
-				const res = await fetch(
-					`/api/web-sessions?filePath=${encodeURIComponent(filePath)}`,
-				);
-				const data = await res.json();
-				return (data.sessions || []) as FileScopedSession[];
-			} catch {
-				return [];
-			}
-		};
-
-		// v3 three-column refactor: file-scoped sessions were removed.
-		// The center chat keeps its current session regardless of which file is opened on
-		// the right panel. `fileContext` (via `filePath`) only augments the message payload
-		// ("[Context: workspace file 'X']") and the input placeholder — it no longer resets
-		// the panel or swaps to a file-scoped session.
-		useEffect(() => {
-			return;
-		}, [filePath]);
+		// v3 three-column refactor: file-scoped sessions were removed. The
+		// center chat keeps its current session regardless of which file is
+		// open on the right panel. `fileContext` (via `filePath`) only
+		// augments the per-message workspaceContext payload — it never
+		// resets the panel or swaps to a file-scoped session.
 
 		// v3: auto-restore session on mount or URL change.
 		// Note: this previously short-circuited when `filePath` was set (file-scoped chat mode);
@@ -1631,14 +1600,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					savedMessageIdsRef.current.add(m.id);
 				}
 
-			if (filePath) {
-				void fetchFileSessionsRef.current?.().then(
-					(sessions) => {
-						setFileSessions(sessions);
-					},
-				);
-			}
-
 			if (filePath && onFileChanged) {
 					fetch(
 						`/api/workspace/file?path=${encodeURIComponent(filePath)}`,
@@ -1838,14 +1799,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					sessionIdRef.current = sessionId;
 					onActiveSessionChange?.(sessionId);
 					onSessionsChange?.();
-
-					if (filePath) {
-						void fetchFileSessionsRef.current?.().then(
-							(sessions) => {
-								setFileSessions(sessions);
-							},
-						);
-					}
 				}
 
 				// Merge mention paths and attachment paths into the structured
@@ -1951,7 +1904,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 				createSession,
 				onActiveSessionChange,
 				onSessionsChange,
-				filePath,
 				fileContext,
 				sendMessage,
 				gatewaySessionKey,

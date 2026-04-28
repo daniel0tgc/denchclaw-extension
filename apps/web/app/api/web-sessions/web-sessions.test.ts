@@ -119,6 +119,24 @@ describe("Web Sessions API", () => {
       expect(mockWrite).toHaveBeenCalled();
     });
 
+    it("creates a workspace-level session (no filePath) when filePath is omitted", async () => {
+      // The chat panel's createSession (post v3 fix) intentionally never
+      // sends `filePath` — workspace context is now per-message, not
+      // per-session. The sidebar filter still hides any session that
+      // does have a filePath, so this assertion guards against a
+      // regression where filePath sneaks back into createSession bodies.
+      const { POST } = await import("./route.js");
+      const req = new Request("http://localhost/api/web-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Workspace Chat" }),
+      });
+      const res = await POST(req);
+      const json = await res.json();
+      expect(json.session.title).toBe("Workspace Chat");
+      expect(json.session.filePath).toBeUndefined();
+    });
+
     it("creates session with custom title", async () => {
       const { POST } = await import("./route.js");
       const req = new Request("http://localhost/api/web-sessions", {

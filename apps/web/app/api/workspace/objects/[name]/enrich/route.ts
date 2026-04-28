@@ -11,7 +11,6 @@ import {
 	extractDomain,
 	extractEnrichmentValue,
 	getEnrichmentColumns,
-	getRequiredFieldsForApolloPath,
 	isEligibleInputField,
 	type EnrichmentColumnDef,
 } from "@/lib/enrichment-columns";
@@ -87,7 +86,9 @@ export async function POST(
 		key: apolloPath,
 		fieldType: "text",
 		apolloPath,
-		requiredFields: getRequiredFieldsForApolloPath(category, apolloPath),
+		// Unknown column: never send a narrowing contract; gateway uses its default
+		// backfill list (getRequiredFieldsForApolloPath would yield [] here anyway).
+		requiredFields: [],
 	};
 
 	if (

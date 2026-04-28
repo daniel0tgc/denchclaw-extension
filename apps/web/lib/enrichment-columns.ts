@@ -15,7 +15,8 @@ export type EnrichmentColumnDef = {
 	apolloPath: string;
 	/**
 	 * Canonical Dench gateway field names sent in the `requiredFields` contract.
-	 * Must match entries in the gateway's people/company allowlist.
+	 * Each entry must be on the gateway allowlist when non-empty.
+	 * Omit (empty array) so the gateway uses its default backfill behavior.
 	 */
 	requiredFields: string[];
 	/**
@@ -104,8 +105,12 @@ export const PEOPLE_ENRICHMENT_COLUMNS: EnrichmentColumnDef[] = [
 		key: "person.title",
 		fieldType: "text",
 		apolloPath: "person.title",
-		requiredFields: ["headline"],
-		extractionFallbacks: ["headline", "person.headline"],
+		// Do not mirror the Headline column's `requiredFields: ["headline"]` —
+		// that duplicated the gateway contract and tended to return the same
+		// string as LinkedIn headline. Omit the contract to use default backfill,
+		// then prefer legacy `person.title` and merged `title` before any headline.
+		requiredFields: [],
+		extractionFallbacks: ["title"],
 	},
 	{
 		label: "Location",
@@ -275,7 +280,7 @@ export function inferInputKind(
 // Extract a value from the Apollo response using a dot-path
 // ---------------------------------------------------------------------------
 
-export function extractApolloValue(
+function extractApolloValue(
 	payload: Record<string, unknown>,
 	apolloPath: string,
 ): string | null {

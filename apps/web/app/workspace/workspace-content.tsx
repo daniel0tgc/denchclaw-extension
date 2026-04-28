@@ -900,10 +900,7 @@ function WorkspacePageInner() {
   // Whether the left sidebar is in compact (icon-only) mode.
   const isLeftSidebarCompact = leftSidebarWidth < LEFT_SIDEBAR_FULL_MIN;
   const reservedLeftSidebarWidth = !isMobile && !leftSidebarCollapsed ? leftSidebarWidth : 0;
-  const maxUsableRightPanelWidth = useMemo(() => {
-    if (rightPanelCollapsed) {
-      return 0;
-    }
+  const availableRightPanelMaxWidth = useMemo(() => {
     const totalWidth = layoutWidth || (typeof window !== "undefined" ? window.innerWidth : 0);
     if (!totalWidth) {
       return rightPanelWidth;
@@ -913,10 +910,10 @@ function WorkspacePageInner() {
       RIGHT_PANEL_MIN,
       RIGHT_PANEL_MAX,
     );
-  }, [isMobile, layoutWidth, reservedLeftSidebarWidth, rightPanelCollapsed, rightPanelWidth]);
+  }, [layoutWidth, reservedLeftSidebarWidth, rightPanelWidth]);
   const effectiveRightPanelWidth = rightPanelCollapsed
     ? 0
-    : Math.min(rightPanelWidth, maxUsableRightPanelWidth);
+    : Math.min(rightPanelWidth, availableRightPanelMaxWidth);
 
   // Snap-aware resize handler: dragging below the compact threshold snaps to icon mode;
   // dragging into the gap between threshold and full min snaps to full min.
@@ -2618,7 +2615,7 @@ function WorkspacePageInner() {
               mode="right"
               containerRef={layoutRef}
               min={RIGHT_PANEL_MIN}
-              max={maxUsableRightPanelWidth || RIGHT_PANEL_MAX}
+              max={availableRightPanelMaxWidth}
               onResize={setRightPanelWidth}
             />
             <RightPanel>

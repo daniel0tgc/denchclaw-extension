@@ -1098,8 +1098,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			}
 		}, [messages.length, optimisticUserText]);
 
-		// Track an in-flight pre-created session so we don't fire it twice.
-		const preCreatedSessionRef = useRef<Promise<string> | null>(null);
+		// Sessions are now created lazily on the first submit (see
+		// handleEditorSubmit). The previous "warmup on hero mount" path
+		// produced empty session rows in the sidebar whenever the user
+		// opened a +/new chat and then navigated away without typing.
 
 		const isStreaming =
 			status === "streaming" ||
@@ -1825,10 +1827,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 						setOptimisticUserText(userText);
 					}
 
-					// Reuse a session that may already be in flight from the
-					// pre-create-on-mount warmup. Fall back to a fresh call.
-					sessionId = await (preCreatedSessionRef.current ?? createSession(title));
-					preCreatedSessionRef.current = null;
+					// Create the session lazily on first submit. This is the
+					// only place where a workspace-level session is created
+					// from the chat panel — the previous mount-time warmup
+					// was removed because it produced empty session rows in
+					// the sidebar whenever a user opened a chat and walked
+					// away without typing.
+					sessionId = await createSession(title);
 					setCurrentSessionId(sessionId);
 					sessionIdRef.current = sessionId;
 					onActiveSessionChange?.(sessionId);
@@ -2096,13 +2101,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			userHtmlMapRef.current.clear();
 			lastAnnouncedFilePathRef.current = null;
 			newSessionPendingRef.current = false;
-			// Drop any in-flight warmup session — otherwise the next submit
-			// would reuse the pre-warmed id (handleEditorSubmit reads this
-			// ref before falling back to a fresh createSession), silently
-			// threading the "new" chat into the old session instead of
-			// starting clean. The pre-create effect will re-arm on the next
-			// tick for the new chat.
-			preCreatedSessionRef.current = null;
 			setQueuedMessages([]);
 			requestAnimationFrame(() => {
 				editorRef.current?.focus();
@@ -2305,25 +2303,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			!isSubagentMode &&
 			!loadingSession &&
 			optimisticUserText === null;
-
-		// Warm up the session in the background while the user is still on
-		// the hero screen, so the first submit doesn't pay for createSession
-		// (which can be slow on cold-start dev compiles). Pre-creates only
-		// when the panel is visible and there's no session yet.
-		useEffect(() => {
-			if (
-				!visible ||
-				currentSessionId ||
-				isSubagentMode ||
-				isGatewayMode ||
-				loadingSession ||
-				preCreatedSessionRef.current ||
-				messages.length > 0
-			) {
-				return;
-			}
-			preCreatedSessionRef.current = createSession("New Chat");
-		}, [visible, currentSessionId, isSubagentMode, isGatewayMode, loadingSession, messages.length, createSession]);
 
 		// ── Input bar content (shared between hero and bottom positions) ──
 

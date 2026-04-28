@@ -39,6 +39,7 @@ export function EditableTitleHeading({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -60,11 +61,15 @@ export function EditableTitleHeading({
   }, []);
 
   const commit = useCallback(async () => {
+    if (committingRef.current) {
+      return;
+    }
     const next = draft.trim();
     if (!next) {
       cancelEdit();
       return;
     }
+    committingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -74,6 +79,7 @@ export function EditableTitleHeading({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save name.");
     } finally {
+      committingRef.current = false;
       setSaving(false);
     }
   }, [draft, cancelEdit, saveName]);

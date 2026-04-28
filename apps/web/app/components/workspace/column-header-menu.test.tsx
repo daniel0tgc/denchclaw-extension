@@ -69,6 +69,49 @@ describe("AddColumnPopover", () => {
 		expect(screen.getByRole("button", { name: "Text" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
 	});
+
+	it("refreshes fields after reusing an existing enrichment output column", async () => {
+		const user = userEvent.setup();
+		const onCreated = vi.fn();
+		const onEnrichmentStart = vi.fn();
+		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url === "/api/workspace/enrichment-status") {
+				return new Response(JSON.stringify({ available: true }));
+			}
+			if (url === "/api/workspace/objects/leads/fields/field_full_name" && init?.method === "PATCH") {
+				return new Response(JSON.stringify({ ok: true }));
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+		global.fetch = fetchMock as typeof fetch;
+
+		render(
+			<AddColumnPopover
+				objectName="leads"
+				fields={[
+					{ id: "field_email", name: "Email", type: "email" },
+					{ id: "field_full_name", name: "Full Name", type: "text" },
+				]}
+				enrichmentAvailable
+				onCreated={onCreated}
+				onEnrichmentStart={onEnrichmentStart}
+			/>,
+		);
+
+		await user.click(screen.getByTitle("Add column"));
+		await user.click(await screen.findByRole("button", { name: "Full Name" }));
+		await user.click(screen.getByRole("button", { name: "Enrich all" }));
+
+		await waitFor(() => {
+			expect(onCreated).toHaveBeenCalledTimes(1);
+		});
+		expect(onEnrichmentStart).toHaveBeenCalledWith(expect.objectContaining({
+			fieldId: "field_full_name",
+			fieldName: "Full Name",
+			inputFieldName: "Email",
+		}));
+	});
 });
 
 describe("SelectOptionsEditor", () => {
@@ -98,5 +141,31 @@ describe("SelectOptionsEditor", () => {
 
 		await user.click(screen.getByRole("button", { name: "Remove option Customer" }));
 		expect(onOptionsUpdate).toHaveBeenLastCalledWith(["Prospect", "Qualified"]);
+	});
+
+	it("does not double-save when an option input blurs before clicking save", async () => {
+		let resolveSave: (() => void) | undefined;
+		const onOptionsUpdate = vi.fn(() => new Promise<void>((resolve) => {
+			resolveSave = resolve;
+		}));
+
+		render(
+			<SelectOptionsEditor
+				values={["Lead", "Customer"]}
+				onSave={onOptionsUpdate}
+			/>,
+		);
+
+		const leadInput = screen.getByLabelText("Edit option Lead");
+		fireEvent.change(leadInput, { target: { value: "Prospect" } });
+		fireEvent.blur(leadInput);
+		fireEvent.click(screen.getByRole("button", { name: "Save option Prospect" }));
+
+		expect(onOptionsUpdate).toHaveBeenCalledTimes(1);
+		expect(onOptionsUpdate).toHaveBeenCalledWith(["Prospect", "Customer"]);
+		resolveSave?.();
+		await waitFor(() => {
+			expect(screen.queryByText("Saving...")).not.toBeInTheDocument();
+		});
 	});
 });

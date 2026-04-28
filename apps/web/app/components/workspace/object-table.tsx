@@ -770,7 +770,7 @@ function FirstColumnCellInner({ value, entryId, onEntryClick }: FirstColumnCellP
 					onClick={handleOpenClick}
 					title="Open"
 					aria-label="Open entry"
-					className="absolute right-0 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium cursor-pointer opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 transition-opacity duration-100 outline-none focus-visible:ring-1"
+					className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium cursor-pointer opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 transition-opacity duration-100 outline-none focus-visible:ring-1"
 					style={{
 						background: "var(--color-bg)",
 						color: "var(--color-text-muted)",

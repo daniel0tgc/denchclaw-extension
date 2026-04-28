@@ -42,7 +42,7 @@ describe("getEligibleInputFields", () => {
 			{ id: "email", name: "Email", type: "email" },
 		])).toEqual(["people"]);
 
-		expect(getAvailableEnrichmentCategories("accounts_list", [
+		expect(getAvailableEnrichmentCategories("portfolio", [
 			{ id: "domain", name: "Domain", type: "text" },
 		])).toEqual(["company"]);
 	});

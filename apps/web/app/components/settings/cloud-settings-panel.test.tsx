@@ -38,7 +38,6 @@ const baseState = {
   selectedDenchModel: null,
   selectedVoiceId: null,
   elevenLabsEnabled: true,
-  enrichmentMaxModeEnabled: false,
   models: [
     {
       id: "claude-opus-4.6",
@@ -214,14 +213,12 @@ describe("CloudSettingsPanel", () => {
           action: string;
           stableId: string;
           voiceId: string;
-        enrichmentMaxModeEnabled: boolean;
           integrations: Record<string, boolean>;
         };
         expect(body).toEqual({
           action: "save_active_settings",
           stableId: "anthropic.claude-opus-4-6-v1",
           voiceId: "voice_123",
-        enrichmentMaxModeEnabled: true,
           integrations: {
             exa: true,
             apollo: false,
@@ -234,7 +231,6 @@ describe("CloudSettingsPanel", () => {
             isDenchPrimary: true,
             selectedDenchModel: "anthropic.claude-opus-4-6-v1",
             selectedVoiceId: "voice_123",
-            enrichmentMaxModeEnabled: true,
           },
           integrationsState: {
             ...integrationsState,
@@ -277,7 +273,6 @@ describe("CloudSettingsPanel", () => {
     });
     await user.click(voiceTrigger);
     await user.click(await screen.findByRole("menuitemradio", { name: /Rachel/ }));
-    await user.click(screen.getByRole("switch", { name: "Enable enrichment max mode" }));
     await user.click(screen.getByRole("button", { name: "Exa:off:open" }));
 
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -291,7 +286,7 @@ describe("CloudSettingsPanel", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
-  it("shows the full provider logo lineup on the max mode card", async () => {
+  it("shows the full provider logo lineup on the enrichment waterfall card", async () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url === "/api/settings/cloud") {
@@ -311,7 +306,10 @@ describe("CloudSettingsPanel", () => {
 
     render(<CloudSettingsPanel />);
 
-    await screen.findByRole("switch", { name: "Enable enrichment max mode" });
+    await waitFor(() => {
+      expect(screen.getByText("Dench Enrichment")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Waterfall providers")).toBeInTheDocument();
 
     expect(screen.getByTitle("Dench")).toBeInTheDocument();
     expect(screen.getByTitle("Aviato")).toBeInTheDocument();

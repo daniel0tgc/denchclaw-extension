@@ -14,7 +14,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { Switch } from "../ui/switch";
 
 type CloudStatus = "no_key" | "invalid_key" | "valid";
 
@@ -44,7 +43,6 @@ type CloudState = {
   selectedDenchModel: string | null;
   selectedVoiceId: string | null;
   elevenLabsEnabled: boolean;
-  enrichmentMaxModeEnabled: boolean;
   models: CatalogModel[];
   recommendedModelId: string;
   validationError?: string;
@@ -64,7 +62,7 @@ type ActionNotice = {
 
 type IntegrationDraftState = Record<DenchIntegrationId, boolean>;
 
-const MAX_MODE_PROVIDER_LOGOS = [
+const ENRICHMENT_WATERFALL_PROVIDERS = [
   { id: "dench", name: "Dench", src: "/dench-workspace-icon.png", rounded: true },
   { id: "aviato", name: "Aviato", src: "/integrations/aviato.ico", rounded: true },
   { id: "apollo", name: "Apollo", src: "/integrations/apollo.ico", rounded: true },
@@ -154,39 +152,22 @@ function NoticeBanner({ notice }: { notice: ActionNotice }) {
   );
 }
 
-function EnrichmentMaxModeCard({
-  enabled,
-  disabled,
-  onToggle,
-}: {
-  enabled: boolean;
-  disabled: boolean;
-  onToggle: (enabled: boolean) => void;
-}) {
+function EnrichmentWaterfallCard() {
   return (
     <div
       className="rounded-xl border px-4 py-4"
       style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-            Enrichment Max Mode
-          </div>
-          <div className="max-w-[42rem] text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
-            Run the full Dench enrichment waterfall for people and company requests, even after an early hit.
-            This gives you richer merged results, but it can take longer and use more credits.
-          </div>
+      <div className="space-y-1">
+        <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
+          Dench Enrichment
         </div>
-        <Switch
-          aria-label="Enable enrichment max mode"
-          checked={enabled}
-          disabled={disabled}
-          onCheckedChange={onToggle}
-        />
+        <div className="max-w-[42rem] text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
+          Waterfall providers
+        </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        {MAX_MODE_PROVIDER_LOGOS.map((provider) => (
+        {ENRICHMENT_WATERFALL_PROVIDERS.map((provider) => (
           <div
             key={provider.id}
             className="flex h-8 w-8 items-center justify-center"
@@ -538,7 +519,6 @@ export function CloudSettingsPanel() {
   const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftVoiceId, setDraftVoiceId] = useState<string | null>(null);
-  const [draftEnrichmentMaxModeEnabled, setDraftEnrichmentMaxModeEnabled] = useState(false);
   const [draftIntegrations, setDraftIntegrations] = useState<IntegrationDraftState>({
     exa: false,
     apollo: false,
@@ -642,10 +622,8 @@ export function CloudSettingsPanel() {
     }
     setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
     setDraftVoiceId(data.selectedVoiceId);
-    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
     setDraftIntegrations(buildIntegrationDraft(integrationsDataRef.current));
   }, [
-    data?.enrichmentMaxModeEnabled,
     data?.status,
     data?.isDenchPrimary,
     data?.selectedDenchModel,
@@ -705,11 +683,6 @@ export function CloudSettingsPanel() {
     setDraftVoiceId(voiceId);
   }, []);
 
-  const handleDraftEnrichmentMaxModeChange = useCallback((enabled: boolean) => {
-    setNotice(null);
-    setDraftEnrichmentMaxModeEnabled(enabled);
-  }, []);
-
   const handleDraftIntegrationToggle = useCallback((integration: DenchIntegrationState, enabled: boolean) => {
     setNotice(null);
     setDraftIntegrations((current) => ({
@@ -725,15 +698,11 @@ export function CloudSettingsPanel() {
     setNotice(null);
     setDraftModel(data.isDenchPrimary ? data.selectedDenchModel : null);
     setDraftVoiceId(data.selectedVoiceId);
-    setDraftEnrichmentMaxModeEnabled(data.enrichmentMaxModeEnabled);
     setDraftIntegrations(buildIntegrationDraft(integrationsData));
   }, [data, integrationsData]);
 
   const baselineModel = data?.status === "valid" && data.isDenchPrimary ? data.selectedDenchModel : null;
   const baselineVoiceId = data?.status === "valid" ? data.selectedVoiceId : null;
-  const baselineEnrichmentMaxModeEnabled = data?.status === "valid"
-    ? data.enrichmentMaxModeEnabled
-    : false;
   const baselineIntegrations = useMemo(
     () => buildIntegrationDraft(integrationsData),
     [integrationsData],
@@ -741,7 +710,6 @@ export function CloudSettingsPanel() {
   const hasUnsavedChanges = Boolean(data?.status === "valid" && (
     draftModel !== baselineModel
     || draftVoiceId !== baselineVoiceId
-    || draftEnrichmentMaxModeEnabled !== baselineEnrichmentMaxModeEnabled
     || draftIntegrations.exa !== baselineIntegrations.exa
     || draftIntegrations.apollo !== baselineIntegrations.apollo
     || draftIntegrations.elevenlabs !== baselineIntegrations.elevenlabs
@@ -765,7 +733,6 @@ export function CloudSettingsPanel() {
           action: "save_active_settings",
           stableId: draftModel,
           voiceId: draftVoiceId,
-          enrichmentMaxModeEnabled: draftEnrichmentMaxModeEnabled,
           integrations: draftIntegrations,
         }),
       });
@@ -811,7 +778,7 @@ export function CloudSettingsPanel() {
     } finally {
       setSavingActive(false);
     }
-  }, [draftEnrichmentMaxModeEnabled, draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
+  }, [draftIntegrations, draftModel, draftVoiceId, fetchIntegrations]);
 
   const handleRepairIntegrations = useCallback(async () => {
     setRepairingIntegrations(true);
@@ -933,11 +900,7 @@ export function CloudSettingsPanel() {
           onRepair={() => void handleRepairIntegrations()}
         />
       </div>
-      <EnrichmentMaxModeCard
-        enabled={draftEnrichmentMaxModeEnabled}
-        disabled={savingActive}
-        onToggle={handleDraftEnrichmentMaxModeChange}
-      />
+      <EnrichmentWaterfallCard />
       <McpServersSection />
       <div className="flex items-center justify-end gap-2 pt-2">
         <Button

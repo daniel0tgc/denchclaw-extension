@@ -443,6 +443,16 @@ export function AddColumnPopover({
 			);
 
 			if (existingOutputField) {
+				const metaRes = await fetch(`/api/workspace/objects/${encodeURIComponent(objectName)}/fields/${encodeURIComponent(existingOutputField.id)}`, {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ default_value: JSON.stringify(meta) }),
+				});
+				if (!metaRes.ok) {
+					const data = await metaRes.json().catch(() => ({ error: "Failed" }));
+					setError(data.error ?? "Failed to mark existing field as enrichment");
+					return;
+				}
 				handleClose();
 				onEnrichmentStartRef.current?.({
 					fieldId: existingOutputField.id,

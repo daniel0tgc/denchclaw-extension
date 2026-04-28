@@ -17,8 +17,8 @@ function sqlEscape(s: string): string {
 
 /**
  * PATCH /api/workspace/objects/[name]/fields/[fieldId]
- * Rename a field.
- * Body: { name: string }
+ * Update field metadata.
+ * Body: { name?: string, default_value?: string | null }
  */
 export async function PATCH(
 	req: Request,
@@ -44,15 +44,22 @@ export async function PATCH(
 	}
 
 	const body = await req.json();
-	const newName: string = body.name;
+	const newName = typeof body.name === "string" ? body.name.trim() : null;
+	const hasDefaultValue = Object.prototype.hasOwnProperty.call(body, "default_value");
+	const defaultValue: unknown = body.default_value;
 
 	if (
-		!newName ||
-		typeof newName !== "string" ||
-		newName.trim().length === 0
+		(!newName || newName.length === 0)
+		&& !hasDefaultValue
 	) {
 		return Response.json(
-			{ error: "Name is required" },
+			{ error: "Name or default_value is required" },
+			{ status: 400 },
+		);
+	}
+	if (hasDefaultValue && defaultValue !== null && typeof defaultValue !== "string") {
+		return Response.json(
+			{ error: "default_value must be a string or null" },
 			{ status: 400 },
 		);
 	}
@@ -80,19 +87,29 @@ export async function PATCH(
 		);
 	}
 
-	// Check for duplicate name
-	const duplicateCheck = duckdbQueryOnFile<{ cnt: number }>(dbFile,
-		`SELECT COUNT(*) as cnt FROM fields WHERE object_id = '${sqlEscape(objectId)}' AND name = '${sqlEscape(newName.trim())}' AND id != '${sqlEscape(fieldId)}'`,
-	);
-	if (duplicateCheck[0]?.cnt > 0) {
-		return Response.json(
-			{ error: "A field with that name already exists" },
-			{ status: 409 },
+	if (newName && newName.length > 0) {
+		// Check for duplicate name
+		const duplicateCheck = duckdbQueryOnFile<{ cnt: number }>(dbFile,
+			`SELECT COUNT(*) as cnt FROM fields WHERE object_id = '${sqlEscape(objectId)}' AND name = '${sqlEscape(newName)}' AND id != '${sqlEscape(fieldId)}'`,
 		);
+		if (duplicateCheck[0]?.cnt > 0) {
+			return Response.json(
+				{ error: "A field with that name already exists" },
+				{ status: 409 },
+			);
+		}
+	}
+
+	const updates: string[] = [];
+	if (newName && newName.length > 0) {
+		updates.push(`name = '${sqlEscape(newName)}'`);
+	}
+	if (hasDefaultValue) {
+		updates.push(defaultValue === null ? "default_value = NULL" : `default_value = '${sqlEscape(defaultValue as string)}'`);
 	}
 
 	const ok = duckdbExecOnFile(dbFile,
-		`UPDATE fields SET name = '${sqlEscape(newName.trim())}' WHERE id = '${sqlEscape(fieldId)}'`,
+		`UPDATE fields SET ${updates.join(", ")} WHERE id = '${sqlEscape(fieldId)}'`,
 	);
 
 	if (!ok) {

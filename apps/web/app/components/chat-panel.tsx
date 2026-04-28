@@ -2825,7 +2825,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 								<div className="absolute inset-x-0 -top-10 flex justify-center pointer-events-none z-30">
 									<button
 										type="button"
-										onClick={scrollToBottom}
+										onClick={() => scrollToBottom()}
 										className="pointer-events-auto w-8 h-8 rounded-full flex items-center justify-center shadow-md border transition-colors"
 										style={{
 											background: "var(--color-surface)",

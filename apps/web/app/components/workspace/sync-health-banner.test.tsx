@@ -194,23 +194,38 @@ describe("SyncHealthBanner", () => {
   });
 
   it("dismiss hides the banner for the same failure mode but it returns when the mode changes", async () => {
+    // Make the failure mode flip explicit instead of call-count based.
+    // The previous version raced: with `pollIntervalMs={20}`, the next
+    // poll could fire mid-`userEvent.click`, flipping `errA → errB`
+    // before the dismiss-hides-banner assertion ran. Then the banner
+    // would re-appear with a *new* errorKey, breaking the assertion.
+    // Letting the test own the body lets us assert against a stable
+    // failure mode during the dismiss step.
     const errA = gmailGenericErrorBody("Composio HTTP 502 — bad gateway");
     const errB = gmailGenericErrorBody("Composio HTTP 503 — service unavailable");
-    global.fetch = mockStatusSequence(errA, errA, errB) as unknown as typeof fetch;
+    let currentBody: StatusBody = errA;
+    global.fetch = vi.fn(
+      async () => jsonResponse(currentBody),
+    ) as unknown as typeof fetch;
 
     const user = userEvent.setup();
-    render(<SyncHealthBanner pollIntervalMs={20} />);
+    render(<SyncHealthBanner pollIntervalMs={50} />);
 
+    // First poll → errA → banner shows.
     await waitFor(() =>
       expect(screen.getByTestId("sync-health-banner-gmail")).toBeInTheDocument(),
     );
 
+    // Dismiss the errA banner. Subsequent polls still return errA, so
+    // the dismissed errorKey keeps the banner hidden.
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() =>
       expect(screen.queryByTestId("sync-health-banner-gmail")).toBeNull(),
     );
 
-    // Wait for the next poll to flip the failure mode → banner returns.
+    // Flip the failure mode → next poll picks up errB → banner returns
+    // with the new errorKey.
+    currentBody = errB;
     await waitFor(
       () => expect(screen.getByTestId("sync-health-banner-gmail")).toBeInTheDocument(),
       { timeout: 2000 },

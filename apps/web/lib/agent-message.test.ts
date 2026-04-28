@@ -50,6 +50,28 @@ describe("buildAgentMessage", () => {
 		);
 	});
 
+	it("does NOT apply the workspace prefix to directory context paths", () => {
+		// The legacy server regex only matched `workspace file '...'`, so
+		// directory paths (especially virtual surfaces like `~crm/people`)
+		// were always passed through unprefixed. Prefixing them would
+		// produce nonsensical paths like `<workspaceRoot>/~crm/people`.
+		expect(
+			buildAgentMessage({
+				userText: "list",
+				workspaceContext: { filePath: "~crm/people", isDirectory: true },
+				workspacePrefix: "/home/user/.openclaw/work",
+			}),
+		).toBe("[Context: workspace directory '~crm/people']\n\nlist");
+
+		expect(
+			buildAgentMessage({
+				userText: "list",
+				workspaceContext: { filePath: "subdir", isDirectory: true },
+				workspacePrefix: "/home/user/.openclaw/work",
+			}),
+		).toBe("[Context: workspace directory 'subdir']\n\nlist");
+	});
+
 	it("prepends a [Selected table ...] block when tableSelection is provided", () => {
 		const selection: TableSelectionContext = {
 			objectName: "people",

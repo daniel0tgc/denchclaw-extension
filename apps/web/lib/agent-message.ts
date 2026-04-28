@@ -52,9 +52,14 @@ export function buildAgentMessage(args: {
 
 	if (ctx.filePath) {
 		const label = ctx.isDirectory ? "directory" : "file";
-		const fullPath = workspacePrefix
-			? `${workspacePrefix}/${ctx.filePath}`
-			: ctx.filePath;
+		// Match the legacy server regex which only rewrote `workspace file`
+		// paths. Directory paths (including virtual surfaces like `~crm/...`)
+		// were never prefixed — prefixing them produces nonsensical paths
+		// like `<workspaceRoot>/~crm/people` that the agent can't resolve.
+		const fullPath =
+			workspacePrefix && !ctx.isDirectory
+				? `${workspacePrefix}/${ctx.filePath}`
+				: ctx.filePath;
 		message = `[Context: workspace ${label} '${fullPath}']\n\n${message}`;
 	}
 

@@ -13,6 +13,16 @@ export type EnrichmentColumnDef = {
 	fieldType: string;
 	/** Dot-path into the Apollo response payload to extract the value. */
 	apolloPath: string;
+	/**
+	 * Canonical Dench gateway field names sent in the `requiredFields` contract.
+	 * Must match entries in the gateway's people/company allowlist.
+	 */
+	requiredFields: string[];
+	/**
+	 * Additional dot-paths to try if `apolloPath` returns null. Lets the gateway
+	 * evolve toward canonical merged responses without breaking extraction.
+	 */
+	extractionFallbacks?: string[];
 };
 
 export type EnrichmentInputDef = {
@@ -41,23 +51,121 @@ export function detectEnrichmentCategory(
 // ---------------------------------------------------------------------------
 
 export const PEOPLE_ENRICHMENT_COLUMNS: EnrichmentColumnDef[] = [
-	{ label: "Full Name", key: "person.name", fieldType: "text", apolloPath: "person.name" },
-	{ label: "Email", key: "person.email", fieldType: "email", apolloPath: "person.email" },
-	{ label: "Headline", key: "person.headline", fieldType: "text", apolloPath: "person.headline" },
-	{ label: "LinkedIn URL", key: "person.linkedin_url", fieldType: "url", apolloPath: "person.linkedin_url" },
-	{ label: "Twitter URL", key: "person.twitter_url", fieldType: "url", apolloPath: "person.twitter_url" },
-	{ label: "Phone", key: "person.phone", fieldType: "phone", apolloPath: "person.contact.phone_numbers.0.sanitized_number" },
-	{ label: "Title", key: "person.title", fieldType: "text", apolloPath: "person.title" },
-	{ label: "Location", key: "person.location", fieldType: "text", apolloPath: "__computed.location" },
+	{
+		label: "Full Name",
+		key: "person.name",
+		fieldType: "text",
+		apolloPath: "person.name",
+		requiredFields: ["fullName"],
+		extractionFallbacks: ["fullName", "person.fullName"],
+	},
+	{
+		label: "Email",
+		key: "person.email",
+		fieldType: "email",
+		apolloPath: "person.email",
+		requiredFields: ["email"],
+		extractionFallbacks: ["email"],
+	},
+	{
+		label: "Headline",
+		key: "person.headline",
+		fieldType: "text",
+		apolloPath: "person.headline",
+		requiredFields: ["headline"],
+		extractionFallbacks: ["headline"],
+	},
+	{
+		label: "LinkedIn URL",
+		key: "person.linkedin_url",
+		fieldType: "url",
+		apolloPath: "person.linkedin_url",
+		requiredFields: ["linkedinID"],
+		extractionFallbacks: ["linkedin_url", "URLs.linkedin", "person.URLs.linkedin"],
+	},
+	{
+		label: "Twitter URL",
+		key: "person.twitter_url",
+		fieldType: "url",
+		apolloPath: "person.twitter_url",
+		requiredFields: ["URLs"],
+		extractionFallbacks: ["twitter_url", "URLs.twitter", "person.URLs.twitter"],
+	},
+	{
+		label: "Phone",
+		key: "person.phone",
+		fieldType: "phone",
+		apolloPath: "person.contact.phone_numbers.0.sanitized_number",
+		requiredFields: ["phone"],
+		extractionFallbacks: ["phone", "person.phone"],
+	},
+	{
+		label: "Title",
+		key: "person.title",
+		fieldType: "text",
+		apolloPath: "person.title",
+		requiredFields: ["headline"],
+		extractionFallbacks: ["headline", "person.headline"],
+	},
+	{
+		label: "Location",
+		key: "person.location",
+		fieldType: "text",
+		apolloPath: "__computed.location",
+		requiredFields: ["location"],
+		extractionFallbacks: ["location", "person.location"],
+	},
 ];
 
 export const COMPANY_ENRICHMENT_COLUMNS: EnrichmentColumnDef[] = [
-	{ label: "Company Name", key: "organization.name", fieldType: "text", apolloPath: "organization.name" },
-	{ label: "Website URL", key: "organization.website_url", fieldType: "url", apolloPath: "organization.website_url" },
-	{ label: "Industry", key: "organization.industry", fieldType: "text", apolloPath: "organization.industry" },
-	{ label: "LinkedIn URL", key: "organization.linkedin_url", fieldType: "url", apolloPath: "organization.linkedin_url" },
-	{ label: "Total Funding", key: "organization.total_funding_printed", fieldType: "text", apolloPath: "organization.total_funding_printed" },
-	{ label: "Founded Year", key: "organization.founded_year", fieldType: "number", apolloPath: "organization.founded_year" },
+	{
+		label: "Company Name",
+		key: "organization.name",
+		fieldType: "text",
+		apolloPath: "organization.name",
+		requiredFields: ["name"],
+		extractionFallbacks: ["name"],
+	},
+	{
+		label: "Website URL",
+		key: "organization.website_url",
+		fieldType: "url",
+		apolloPath: "organization.website_url",
+		requiredFields: ["website"],
+		extractionFallbacks: ["website", "organization.website"],
+	},
+	{
+		label: "Industry",
+		key: "organization.industry",
+		fieldType: "text",
+		apolloPath: "organization.industry",
+		requiredFields: ["industryList"],
+		extractionFallbacks: ["industryList.0", "organization.industryList.0"],
+	},
+	{
+		label: "LinkedIn URL",
+		key: "organization.linkedin_url",
+		fieldType: "url",
+		apolloPath: "organization.linkedin_url",
+		requiredFields: ["linkedinID"],
+		extractionFallbacks: ["URLs.linkedin", "organization.URLs.linkedin"],
+	},
+	{
+		label: "Total Funding",
+		key: "organization.total_funding_printed",
+		fieldType: "text",
+		apolloPath: "organization.total_funding_printed",
+		requiredFields: ["totalFunding"],
+		extractionFallbacks: ["totalFunding", "organization.totalFunding"],
+	},
+	{
+		label: "Founded Year",
+		key: "organization.founded_year",
+		fieldType: "number",
+		apolloPath: "organization.founded_year",
+		requiredFields: ["founded"],
+		extractionFallbacks: ["founded", "organization.founded"],
+	},
 ];
 
 export function getEnrichmentColumns(
@@ -189,6 +297,38 @@ export function extractApolloValue(
 	if (current == null) return null;
 	if (typeof current === "object") return JSON.stringify(current);
 	return String(current);
+}
+
+/**
+ * Try the column's primary `apolloPath` first, then any `extractionFallbacks`
+ * in order. Returns the first non-null match or null.
+ */
+export function extractEnrichmentValue(
+	payload: Record<string, unknown>,
+	column: Pick<EnrichmentColumnDef, "apolloPath" | "extractionFallbacks">,
+): string | null {
+	const primary = extractApolloValue(payload, column.apolloPath);
+	if (primary != null) return primary;
+	for (const fallback of column.extractionFallbacks ?? []) {
+		const value = extractApolloValue(payload, fallback);
+		if (value != null) return value;
+	}
+	return null;
+}
+
+/**
+ * Resolve the canonical `requiredFields` list for the column whose primary
+ * `apolloPath` matches. Falls back to an empty array (gateway will then use
+ * its default backfill list) when no column matches.
+ */
+export function getRequiredFieldsForApolloPath(
+	category: EnrichmentCategory,
+	apolloPath: string,
+): string[] {
+	const column = getEnrichmentColumns(category).find(
+		(candidate) => candidate.apolloPath === apolloPath,
+	);
+	return column?.requiredFields ?? [];
 }
 
 function computeLocation(payload: Record<string, unknown>): string | null {

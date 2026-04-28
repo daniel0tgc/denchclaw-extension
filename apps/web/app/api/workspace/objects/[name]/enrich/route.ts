@@ -8,9 +8,12 @@ import {
 	resolveDenchGatewayCredentials,
 } from "@/lib/integrations";
 import {
-	extractApolloValue,
 	extractDomain,
+	extractEnrichmentValue,
+	getEnrichmentColumns,
+	getRequiredFieldsForApolloPath,
 	isEligibleInputField,
+	type EnrichmentColumnDef,
 } from "@/lib/enrichment-columns";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +61,7 @@ export async function POST(
 		return Response.json({ error: "Apollo integration is not enabled." }, { status: 403 });
 	}
 
-	const { apiKey, gatewayUrl, enrichmentMaxModeEnabled } = resolveDenchGatewayCredentials();
+	const { apiKey, gatewayUrl } = resolveDenchGatewayCredentials();
 	if (!apiKey || !gatewayUrl) {
 		return Response.json({ error: "Gateway credentials unavailable." }, { status: 500 });
 	}
@@ -73,6 +76,19 @@ export async function POST(
 	if (category !== "people" && category !== "company") {
 		return Response.json({ error: "Invalid category." }, { status: 400 });
 	}
+
+	// Resolve the canonical column def (for requiredFields + extraction fallbacks).
+	// Falls back to a synthetic column when callers pass a custom apolloPath so
+	// existing integrations keep working without bypassing extraction.
+	const matchedColumn: EnrichmentColumnDef = getEnrichmentColumns(category).find(
+		(candidate) => candidate.apolloPath === apolloPath,
+	) ?? {
+		label: "",
+		key: apolloPath,
+		fieldType: "text",
+		apolloPath,
+		requiredFields: getRequiredFieldsForApolloPath(category, apolloPath),
+	};
 
 	if (
 		scope !== "all"
@@ -183,30 +199,30 @@ export async function POST(
 				}
 
 				try {
-					const payload = await callApolloGateway(
+					const result = await callApolloGateway(
 						gatewayUrl,
 						apiKey,
 						category,
 						inputValue,
-						enrichmentMaxModeEnabled,
+						matchedColumn.requiredFields,
 					);
 					if (cancelled) break;
 
-					if (!payload) {
+					if (!result.ok) {
 						failed++;
 						send({
 							type: "error",
 							entryId: entry.entry_id,
-							error: "No data returned",
+							error: result.error,
 							current: i + 1,
 							total,
 						});
 						continue;
 					}
 
-					const value = extractApolloValue(
-						payload as Record<string, unknown>,
-						apolloPath,
+					const value = extractEnrichmentValue(
+						result.payload as Record<string, unknown>,
+						matchedColumn,
 					);
 
 					if (value == null) {
@@ -263,25 +279,29 @@ export async function POST(
 	});
 }
 
+type GatewayCallResult =
+	| { ok: true; payload: unknown }
+	| { ok: false; error: string };
+
 async function callApolloGateway(
 	gatewayUrl: string,
 	apiKey: string,
 	category: "people" | "company",
 	inputValue: string,
-	enrichmentMaxModeEnabled: boolean,
-): Promise<unknown> {
+	requiredFields: string[],
+): Promise<GatewayCallResult> {
 	if (category === "people") {
-		const body: Record<string, string> = {};
+		const body: Record<string, unknown> = {};
 
 		if (inputValue.includes("linkedin.com")) {
 			body.linkedin_url = inputValue;
 		} else if (inputValue.includes("@")) {
 			body.email = inputValue;
 		} else {
-			return null;
+			return { ok: false, error: "Unsupported people identifier" };
 		}
-		if (enrichmentMaxModeEnabled) {
-			body.mode = "max";
+		if (requiredFields.length > 0) {
+			body.requiredFields = requiredFields;
 		}
 
 		const response = await fetch(
@@ -296,26 +316,55 @@ async function callApolloGateway(
 			},
 		);
 
-		if (!response.ok) return null;
-		return response.json();
+		if (!response.ok) {
+			return { ok: false, error: await formatGatewayError(response) };
+		}
+		return { ok: true, payload: await response.json() };
 	}
 
-	// Company enrichment
 	const domain = extractDomain(inputValue);
-	if (!domain) return null;
+	if (!domain) {
+		return { ok: false, error: "Could not extract domain" };
+	}
 
 	const url = new URL(`${gatewayUrl}${ENRICHMENT_BASE_PATH}/company`);
 	url.searchParams.set("domain", domain);
-	if (enrichmentMaxModeEnabled) {
-		url.searchParams.set("mode", "max");
+	if (requiredFields.length > 0) {
+		url.searchParams.set("requiredFields", requiredFields.join(","));
 	}
 	const response = await fetch(url, {
 		method: "GET",
 		headers: { authorization: `Bearer ${apiKey}` },
 	});
 
-	if (!response.ok) return null;
-	return response.json();
+	if (!response.ok) {
+		return { ok: false, error: await formatGatewayError(response) };
+	}
+	return { ok: true, payload: await response.json() };
+}
+
+async function formatGatewayError(response: Response): Promise<string> {
+	let body: unknown = null;
+	try {
+		body = await response.json();
+	} catch {
+		// Body not JSON; fall back to status-only messages below.
+	}
+	const error = (body as { error?: { code?: string; message?: string } } | null)?.error;
+	const code = error?.code;
+	const message = error?.message;
+
+	if (response.status === 404 || code === "not_found") {
+		return "No data returned";
+	}
+	if (response.status === 503 || code === "provider_unavailable") {
+		return "Gateway providers unavailable";
+	}
+	if (code === "invalid_required_field") {
+		return message ?? "Invalid required field";
+	}
+	if (message) return message;
+	return `Gateway request failed (HTTP ${response.status})`;
 }
 
 function patchEntryField(

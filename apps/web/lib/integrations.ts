@@ -27,9 +27,7 @@ export type DenchIntegrationMetadata = {
     ownsSearch?: boolean;
     fallbackProvider?: string | null;
   };
-  apollo?: {
-    enrichmentMaxMode?: boolean;
-  };
+  apollo?: Record<string, never>;
   elevenlabs?: Record<string, never>;
   future?: {
     composio?: {
@@ -1471,17 +1469,10 @@ export function setElevenLabsIntegrationEnabled(enabled: boolean): IntegrationTo
 export function resolveDenchGatewayCredentials(): {
   apiKey: string | null;
   gatewayUrl: string | null;
-  enrichmentMaxModeEnabled: boolean;
 } {
   const config = readOpenClawConfigForIntegrations();
-  const models = asRecord(config.models);
-  const provider = asRecord(asRecord(models?.providers)?.["dench-cloud"]);
-  const metadata = readIntegrationsMetadata();
   return {
     apiKey: resolveDenchApiKey(config),
     gatewayUrl: resolveGatewayBaseUrl(config),
-    enrichmentMaxModeEnabled:
-      metadata.apollo?.enrichmentMaxMode === true ||
-      readBoolean(provider?.enrichmentMaxMode) === true,
   };
 }

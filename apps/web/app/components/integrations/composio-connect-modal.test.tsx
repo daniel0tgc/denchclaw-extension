@@ -56,7 +56,7 @@ describe("ComposioConnectModal", () => {
     }) as typeof fetch;
   });
 
-  it("renders existing accounts and connect-another-account actions", () => {
+  it("renders existing accounts without allowing another active account connection", () => {
     renderModal({
       connections: [
         {
@@ -105,7 +105,9 @@ describe("ComposioConnectModal", () => {
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
     expect(screen.getAllByText("Same account reconnected")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
+    expect(screen.getByText("One Gmail account can be connected at a time. Disconnect the current connection before connecting a different account.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect another account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Gmail" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Disconnect" })).toHaveLength(2);
   });
 

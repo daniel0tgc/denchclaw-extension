@@ -114,7 +114,7 @@ export function ComposioConnectModal({
   );
   const connected = activeConnections.length > 0;
   const primaryAction = preferredAction
-    ?? (connected ? "connect" : normalizedConnections.length > 0 ? "reconnect" : "connect");
+    ?? (normalizedConnections.length > 0 ? "reconnect" : "connect");
 
   const stopPopupPolling = useCallback(() => {
     if (popupPollRef.current !== null) {
@@ -174,6 +174,10 @@ export function ComposioConnectModal({
 
   const handleConnect = useCallback(async () => {
     if (!toolkit) return;
+    if (connected) {
+      setError(`Disconnect ${toolkit.name} before connecting a different account.`);
+      return;
+    }
     setConnecting(true);
     setError(null);
     clearPopupState();
@@ -215,7 +219,7 @@ export function ComposioConnectModal({
       setConnecting(false);
       setError(err instanceof Error ? err.message : "Failed to connect.");
     }
-  }, [clearPopupState, onConnectionChange, onOpenChange, stopPopupPolling, toolkit]);
+  }, [clearPopupState, connected, onConnectionChange, onOpenChange, stopPopupPolling, toolkit]);
 
   const handleDisconnect = useCallback(async (connectionId: string) => {
     setDisconnectingId(connectionId);
@@ -330,6 +334,18 @@ export function ComposioConnectModal({
 
           {normalizedConnections.length > 0 ? (
             <div className="space-y-2">
+              {connected && (
+                <div
+                  className="rounded-lg border px-3 py-2 text-[12px]"
+                  style={{
+                    borderColor: "var(--color-border)",
+                    background: "var(--color-surface-hover)",
+                    color: "var(--color-text-muted)",
+                  }}
+                >
+                  One {toolkit.name} account can be connected at a time. Disconnect the current connection before connecting a different account.
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   Connections
@@ -443,21 +459,21 @@ export function ComposioConnectModal({
           >
             Close
           </button>
-          <button
-            type="button"
-            className="rounded-full px-4 py-1.5 text-sm font-medium"
-            style={{ background: "var(--color-accent)", color: "#fff" }}
-            onClick={() => void handleConnect()}
-            disabled={connecting}
-          >
-            {connecting
-              ? "Waiting for authorization..."
-              : primaryAction === "reconnect"
-                ? `Reconnect ${toolkit.name}`
-                : connected
-                ? "Connect another account"
-                : `Connect ${toolkit.name}`}
-          </button>
+          {!connected && (
+            <button
+              type="button"
+              className="rounded-full px-4 py-1.5 text-sm font-medium"
+              style={{ background: "var(--color-accent)", color: "#fff" }}
+              onClick={() => void handleConnect()}
+              disabled={connecting}
+            >
+              {connecting
+                ? "Waiting for authorization..."
+                : primaryAction === "reconnect"
+                  ? `Reconnect ${toolkit.name}`
+                  : `Connect ${toolkit.name}`}
+            </button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

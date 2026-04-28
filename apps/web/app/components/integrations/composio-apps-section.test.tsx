@@ -298,7 +298,8 @@ describe("ComposioAppsSection", () => {
     expect(screen.getByText("Connections")).toBeInTheDocument();
     expect(screen.getByText("Personal Gmail")).toBeInTheDocument();
     expect(screen.getByText("Work Gmail")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect another account" })).toBeInTheDocument();
+    expect(screen.getByText("One Gmail account can be connected at a time. Disconnect the current connection before connecting a different account.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect another account" })).not.toBeInTheDocument();
   });
 
   it("shows MCP repair bar only when status is unhealthy", async () => {

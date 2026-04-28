@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 
 const {
+  fetchComposioConnectionsMock,
   initiateComposioConnectMock,
   resolveComposioApiKeyMock,
   resolveComposioEligibilityMock,
   resolveComposioGatewayUrlMock,
 } = vi.hoisted(() => ({
+  fetchComposioConnectionsMock: vi.fn(),
   initiateComposioConnectMock: vi.fn(),
   resolveComposioApiKeyMock: vi.fn(),
   resolveComposioEligibilityMock: vi.fn(),
@@ -14,6 +16,7 @@ const {
 }));
 
 vi.mock("@/lib/composio", () => ({
+  fetchComposioConnections: fetchComposioConnectionsMock,
   initiateComposioConnect: initiateComposioConnectMock,
   resolveComposioApiKey: resolveComposioApiKeyMock,
   resolveComposioEligibility: resolveComposioEligibilityMock,
@@ -33,6 +36,7 @@ describe("Composio connect API", () => {
       lockBadge: null,
     });
     resolveComposioGatewayUrlMock.mockReturnValue("https://gateway.example.com");
+    fetchComposioConnectionsMock.mockResolvedValue({ connections: [] });
     initiateComposioConnectMock.mockResolvedValue({
       redirect_url: "https://composio.example/connect/zoho",
     });
@@ -117,5 +121,65 @@ describe("Composio connect API", () => {
       "zoho",
       "https://real-org.sandbox.merseoriginals.com/api/composio/callback",
     );
+  });
+
+  it("rejects a second active connection for the same app", async () => {
+    fetchComposioConnectionsMock.mockResolvedValue({
+      connections: [
+        {
+          id: "ca_gmail_1",
+          toolkit_slug: "gmail",
+          toolkit_name: "Gmail",
+          status: "ACTIVE",
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/composio/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ toolkit: "gmail" }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "APP_ALREADY_CONNECTED",
+      connection_id: "ca_gmail_1",
+      toolkit: "gmail",
+    });
+    expect(initiateComposioConnectMock).not.toHaveBeenCalled();
+  });
+
+  it("treats Google Calendar connect slug aliases as the same app", async () => {
+    fetchComposioConnectionsMock.mockResolvedValue({
+      connections: [
+        {
+          id: "ca_calendar_1",
+          toolkit_slug: "google-calendar",
+          toolkit_name: "Google Calendar",
+          status: "ACTIVE",
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/composio/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ toolkit: "googlecalendar" }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "APP_ALREADY_CONNECTED",
+      connection_id: "ca_calendar_1",
+      toolkit: "google-calendar",
+    });
+    expect(initiateComposioConnectMock).not.toHaveBeenCalled();
   });
 });

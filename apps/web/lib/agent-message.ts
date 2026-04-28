@@ -52,14 +52,21 @@ export function buildAgentMessage(args: {
 
 	if (ctx.filePath) {
 		const label = ctx.isDirectory ? "directory" : "file";
-		// Match the legacy server regex which only rewrote `workspace file`
-		// paths. Directory paths (including virtual surfaces like `~crm/...`)
-		// were never prefixed — prefixing them produces nonsensical paths
-		// like `<workspaceRoot>/~crm/people` that the agent can't resolve.
-		const fullPath =
-			workspacePrefix && !ctx.isDirectory
-				? `${workspacePrefix}/${ctx.filePath}`
-				: ctx.filePath;
+		// Apply the workspace prefix to relative paths only — both files and
+		// real workspace directories benefit from the absolute path, but:
+		//   - virtual surfaces like `~crm/people`, `~cloud`, `~skills` are
+		//     handled by tool routing on the agent side and would become
+		//     nonsensical paths if we prefixed them (`<wsRoot>/~crm/people`).
+		//   - already-absolute paths must not be double-prefixed.
+		// The legacy server regex only matched `workspace file '...'` so
+		// directories used to silently slip through unprefixed; this is the
+		// path-shape-aware version that does the right thing for both.
+		const isVirtual = ctx.filePath.startsWith("~");
+		const isAbsolute = ctx.filePath.startsWith("/");
+		const shouldPrefix = workspacePrefix && !isVirtual && !isAbsolute;
+		const fullPath = shouldPrefix
+			? `${workspacePrefix}/${ctx.filePath}`
+			: ctx.filePath;
 		message = `[Context: workspace ${label} '${fullPath}']\n\n${message}`;
 	}
 

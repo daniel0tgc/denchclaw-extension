@@ -1600,7 +1600,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					savedMessageIdsRef.current.add(m.id);
 				}
 
-			if (filePath && onFileChanged) {
+				// The agent may have written to the active file during the
+				// stream; refresh its contents so the editor pane shows the
+				// new state. Only relevant when this chat is bound to a file.
+				if (filePath && onFileChanged) {
 					fetch(
 						`/api/workspace/file?path=${encodeURIComponent(filePath)}`,
 					)

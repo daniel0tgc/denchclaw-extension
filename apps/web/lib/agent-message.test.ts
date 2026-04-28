@@ -50,11 +50,24 @@ describe("buildAgentMessage", () => {
 		);
 	});
 
-	it("does NOT apply the workspace prefix to directory context paths", () => {
-		// The legacy server regex only matched `workspace file '...'`, so
-		// directory paths (especially virtual surfaces like `~crm/people`)
-		// were always passed through unprefixed. Prefixing them would
-		// produce nonsensical paths like `<workspaceRoot>/~crm/people`.
+	it("applies the workspace prefix to real (relative) directory paths", () => {
+		// Real workspace directories are relative to the workspace root, so
+		// the agent needs the absolute path to operate on them.
+		expect(
+			buildAgentMessage({
+				userText: "list",
+				workspaceContext: { filePath: "subdir", isDirectory: true },
+				workspacePrefix: "/home/user/.openclaw/work",
+			}),
+		).toBe(
+			"[Context: workspace directory '/home/user/.openclaw/work/subdir']\n\nlist",
+		);
+	});
+
+	it("does NOT apply the workspace prefix to virtual (~...) directory paths", () => {
+		// Virtual surfaces like `~crm/people`, `~cloud`, `~skills` are
+		// handled by tool routing on the agent side. Prefixing them would
+		// produce nonsensical paths like `<wsRoot>/~crm/people`.
 		expect(
 			buildAgentMessage({
 				userText: "list",
@@ -65,11 +78,29 @@ describe("buildAgentMessage", () => {
 
 		expect(
 			buildAgentMessage({
-				userText: "list",
-				workspaceContext: { filePath: "subdir", isDirectory: true },
+				userText: "open",
+				workspaceContext: { filePath: "~cloud", isDirectory: true },
 				workspacePrefix: "/home/user/.openclaw/work",
 			}),
-		).toBe("[Context: workspace directory 'subdir']\n\nlist");
+		).toBe("[Context: workspace directory '~cloud']\n\nopen");
+	});
+
+	it("does NOT double-prefix already-absolute paths", () => {
+		// Some legacy chats persisted absolute paths in fileContext.path
+		// (e.g. `/Users/me/.openclaw-dench/openclaw.json`). Double-prefixing
+		// them would produce paths like `<wsRoot>//Users/me/...`.
+		expect(
+			buildAgentMessage({
+				userText: "what is this?",
+				workspaceContext: {
+					filePath: "/Users/me/.openclaw-dench/openclaw.json",
+					isDirectory: false,
+				},
+				workspacePrefix: "/home/user/.openclaw/work",
+			}),
+		).toBe(
+			"[Context: workspace file '/Users/me/.openclaw-dench/openclaw.json']\n\nwhat is this?",
+		);
 	});
 
 	it("prepends a [Selected table ...] block when tableSelection is provided", () => {

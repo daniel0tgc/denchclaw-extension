@@ -911,9 +911,21 @@ function WorkspacePageInner() {
       RIGHT_PANEL_MAX,
     );
   }, [layoutWidth, reservedLeftSidebarWidth, rightPanelWidth]);
-  const effectiveRightPanelWidth = rightPanelCollapsed
-    ? 0
-    : Math.min(rightPanelWidth, availableRightPanelMaxWidth);
+  // Right panel width contract — three values, three concerns:
+  //   - rightPanelWidth          → user's saved preference (persisted to localStorage,
+  //                                only mutated by the resize handle). Never used as a
+  //                                rendered width directly.
+  //   - renderedRightPanelWidth  → preference clamped to currently-available space.
+  //                                Used as the inner content width so right-panel pages
+  //                                instantly reflow when the left sidebar opens/closes,
+  //                                instead of overflowing and getting clipped by the
+  //                                outer aside's overflow-hidden.
+  //   - effectiveRightPanelWidth → renderedRightPanelWidth, but 0 while collapsed.
+  //                                Used as the OUTER aside width so collapse animates
+  //                                smoothly (outer wipes over inner; inner stays at
+  //                                rendered width during the 200ms transition).
+  const renderedRightPanelWidth = Math.min(rightPanelWidth, availableRightPanelMaxWidth);
+  const effectiveRightPanelWidth = rightPanelCollapsed ? 0 : renderedRightPanelWidth;
 
   // Snap-aware resize handler: dragging below the compact threshold snaps to icon mode;
   // dragging into the gap between threshold and full min snaps to full min.
@@ -2610,7 +2622,7 @@ function WorkspacePageInner() {
             transition: "width 200ms ease, min-width 200ms ease",
           }}
         >
-          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: rightPanelWidth, minWidth: rightPanelWidth }}>
+          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: renderedRightPanelWidth, minWidth: renderedRightPanelWidth }}>
             <ResizeHandle
               mode="right"
               containerRef={layoutRef}

@@ -706,9 +706,9 @@ function ActivityTab({
 //   - Escape reverts the draft to the last persisted value.
 //   - "Saved · just now" / "Saving…" / red retry button under the editor.
 //
-// `data.person.notes` is the source of truth; we sync `draft` to it whenever
-// the parent reloads the person (e.g., after a name save) so we don't clobber
-// fresh server state with a stale local draft.
+// `data.person.notes` and `data.person.updated_at` are the source of truth; we
+// sync local editor state whenever the parent reloads the person so we don't
+// clobber fresh server state or show stale save timestamps.
 function NotesTab({
   data,
   onSave,
@@ -717,9 +717,10 @@ function NotesTab({
   onSave: (next: string) => Promise<void>;
 }) {
   const persisted = data.person.notes ?? "";
+  const persistedSavedAt = data.person.updated_at;
   const [draft, setDraft] = useState(persisted);
   const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<string | null>(data.person.updated_at);
+  const [savedAt, setSavedAt] = useState<string | null>(persistedSavedAt);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Used to short-circuit `commit()` if the value matches what's already
@@ -734,7 +735,8 @@ function NotesTab({
       lastSavedRef.current = persisted;
       setDraft(persisted);
     }
-  }, [persisted]);
+    setSavedAt(persistedSavedAt);
+  }, [persisted, persistedSavedAt]);
 
   // Auto-grow: reset to `auto` first so the textarea can shrink, then snap
   // to scrollHeight. Re-runs every time the draft changes.

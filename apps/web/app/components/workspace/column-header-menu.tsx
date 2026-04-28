@@ -254,6 +254,20 @@ export type EnrichmentStartPayload = {
 	scope: "all" | "empty" | number;
 };
 
+const ENRICH_SCOPE_OPTIONS: Array<{
+	value: EnrichmentStartPayload["scope"];
+	label: string;
+	buttonLabel: string;
+}> = [
+	{ value: "all", label: "Enrich all", buttonLabel: "all" },
+	{ value: "empty", label: "Enrich empty", buttonLabel: "empty" },
+	{ value: 10, label: "Enrich top 10", buttonLabel: "top 10" },
+];
+
+function enrichScopeButtonLabel(scope: EnrichmentStartPayload["scope"]): string {
+	return ENRICH_SCOPE_OPTIONS.find((option) => option.value === scope)?.buttonLabel ?? "all";
+}
+
 export function AddColumnPopover({
 	objectName,
 	onCreated,
@@ -284,6 +298,8 @@ export function AddColumnPopover({
 		label: string; key: string; fieldType: string; apolloPath: string;
 	}>>([]);
 	const [eligibleInputFields, setEligibleInputFields] = useState<AddColumnField[]>([]);
+	const [enrichScope, setEnrichScope] = useState<EnrichmentStartPayload["scope"]>("all");
+	const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
 
 	// Self-contained enrichment availability check so parent re-renders
 	// don't remount this component (which resets the popover open state).
@@ -346,12 +362,15 @@ export function AddColumnPopover({
 		setEnumInput("");
 		setError(null);
 		setSelectedEnrichCol(null);
+		setEnrichScope("all");
+		setScopeMenuOpen(false);
 	}, []);
 
 	const handleClose = useCallback(() => {
 		setOpen(false);
 		setError(null);
 		setSelectedEnrichCol(null);
+		setScopeMenuOpen(false);
 	}, []);
 
 	useEffect(() => {
@@ -431,7 +450,7 @@ export function AddColumnPopover({
 					apolloPath: selectedEnrichCol.apolloPath,
 					category: enrichCategory,
 					inputFieldName: enrichInputField,
-					scope: "all",
+					scope: enrichScope,
 				});
 				return;
 			}
@@ -465,7 +484,7 @@ export function AddColumnPopover({
 					apolloPath: selectedEnrichCol.apolloPath,
 					category: enrichCategory,
 					inputFieldName: enrichInputField,
-					scope: "all",
+					scope: enrichScope,
 				});
 			}
 		} catch {
@@ -473,9 +492,12 @@ export function AddColumnPopover({
 		} finally {
 			setSaving(false);
 		}
-	}, [selectedEnrichCol, enrichCategory, enrichInputField, objectName, handleClose, onCreated]);
+	}, [selectedEnrichCol, enrichCategory, enrichInputField, enrichScope, objectName, handleClose, onCreated]);
 
 	const showEnrichment = enrichmentAvailable && enrichCategory && enrichColumns.length > 0;
+	const selectedOutputExists = selectedEnrichCol
+		? fieldsRef.current?.some((field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase()) === true
+		: false;
 
 	return (
 		<>
@@ -553,7 +575,7 @@ export function AddColumnPopover({
 										Will enrich using &ldquo;{enrichInputField}&rdquo; column
 									</div>
 								)}
-								{fieldsRef.current?.some((field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase()) && (
+								{selectedOutputExists && (
 									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-accent)" }}>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
 										Existing &ldquo;{selectedEnrichCol.label}&rdquo; column will be enriched
@@ -572,16 +594,64 @@ export function AddColumnPopover({
 								>
 									Cancel
 								</button>
-								<button
-									type="button"
-									onClick={() => void handleEnrichCreate()}
-									disabled={saving || !enrichInputField}
-									className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
-									style={{ background: "var(--color-accent)", color: "white" }}
-								>
-									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-									{saving ? "Creating..." : "Create & Enrich All"}
-								</button>
+								<div className="relative inline-flex rounded-lg overflow-visible">
+									<button
+										type="button"
+										onClick={() => void handleEnrichCreate()}
+										disabled={saving || !enrichInputField}
+										className="px-3 py-1.5 text-xs font-medium rounded-l-lg transition-colors disabled:opacity-40 flex items-center gap-1.5"
+										style={{ background: "var(--color-accent)", color: "white" }}
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+										{saving ? "Enriching..." : `${selectedOutputExists ? "Enrich" : "Create & Enrich"} ${enrichScopeButtonLabel(enrichScope)}`}
+									</button>
+									<button
+										type="button"
+										aria-label="Choose enrichment scope"
+										aria-expanded={scopeMenuOpen}
+										onClick={() => setScopeMenuOpen((isOpen) => !isOpen)}
+										disabled={saving || !enrichInputField}
+										className="px-2 py-1.5 text-xs font-medium rounded-r-lg transition-colors disabled:opacity-40"
+										style={{
+											background: "var(--color-accent)",
+											color: "white",
+											borderLeft: "1px solid rgba(255,255,255,0.24)",
+										}}
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+									</button>
+									{scopeMenuOpen && (
+										<div
+											className="absolute right-0 bottom-full mb-1 w-36 rounded-xl p-1 text-xs"
+											style={{
+												background: "var(--color-bg)",
+												color: "var(--color-text)",
+												border: "1px solid var(--color-border)",
+												boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+											}}
+										>
+											{ENRICH_SCOPE_OPTIONS.map((option) => (
+												<button
+													key={String(option.value)}
+													type="button"
+													onClick={() => {
+														setEnrichScope(option.value);
+														setScopeMenuOpen(false);
+													}}
+													className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left hover:opacity-80"
+													style={{
+														background: enrichScope === option.value ? "var(--color-surface-hover)" : "transparent",
+													}}
+												>
+													<span>{option.label}</span>
+													{enrichScope === option.value && (
+														<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+													)}
+												</button>
+											))}
+										</div>
+									)}
+								</div>
 							</div>
 						</>
 					) : (

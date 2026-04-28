@@ -18,7 +18,7 @@ function sqlEscape(s: string): string {
 /**
  * PATCH /api/workspace/objects/[name]/fields/[fieldId]
  * Update field metadata.
- * Body: { name?: string, default_value?: string | null }
+ * Body: { name?: string, default_value?: string | null, enum_values?: string[] }
  */
 export async function PATCH(
 	req: Request,
@@ -47,19 +47,28 @@ export async function PATCH(
 	const newName = typeof body.name === "string" ? body.name.trim() : null;
 	const hasDefaultValue = Object.prototype.hasOwnProperty.call(body, "default_value");
 	const defaultValue: unknown = body.default_value;
+	const hasEnumValues = Object.prototype.hasOwnProperty.call(body, "enum_values");
+	const enumValues = hasEnumValues ? normalizeEnumValues(body.enum_values) : null;
 
 	if (
 		(!newName || newName.length === 0)
 		&& !hasDefaultValue
+		&& !hasEnumValues
 	) {
 		return Response.json(
-			{ error: "Name or default_value is required" },
+			{ error: "Name, default_value, or enum_values is required" },
 			{ status: 400 },
 		);
 	}
 	if (hasDefaultValue && defaultValue !== null && typeof defaultValue !== "string") {
 		return Response.json(
 			{ error: "default_value must be a string or null" },
+			{ status: 400 },
+		);
+	}
+	if (hasEnumValues && !enumValues) {
+		return Response.json(
+			{ error: "enum_values must be an array of unique strings" },
 			{ status: 400 },
 		);
 	}
@@ -77,13 +86,20 @@ export async function PATCH(
 	const objectId = objects[0].id;
 
 	// Validate field exists and belongs to this object
-	const fieldExists = duckdbQueryOnFile<{ cnt: number }>(dbFile,
-		`SELECT COUNT(*) as cnt FROM fields WHERE id = '${sqlEscape(fieldId)}' AND object_id = '${sqlEscape(objectId)}'`,
+	const fields = duckdbQueryOnFile<{ type: string; enum_values: string | null }>(dbFile,
+		`SELECT type, enum_values FROM fields WHERE id = '${sqlEscape(fieldId)}' AND object_id = '${sqlEscape(objectId)}'`,
 	);
-	if (!fieldExists[0] || fieldExists[0].cnt === 0) {
+	if (fields.length === 0) {
 		return Response.json(
 			{ error: "Field not found" },
 			{ status: 404 },
+		);
+	}
+	const field = fields[0];
+	if (hasEnumValues && field.type !== "enum") {
+		return Response.json(
+			{ error: "enum_values can only be updated for select fields" },
+			{ status: 400 },
 		);
 	}
 
@@ -107,6 +123,9 @@ export async function PATCH(
 	if (hasDefaultValue) {
 		updates.push(defaultValue === null ? "default_value = NULL" : `default_value = '${sqlEscape(defaultValue as string)}'`);
 	}
+	if (hasEnumValues && enumValues) {
+		updates.push(`enum_values = '${sqlEscape(JSON.stringify(enumValues))}'::JSON`);
+	}
 
 	const ok = duckdbExecOnFile(dbFile,
 		`UPDATE fields SET ${updates.join(", ")} WHERE id = '${sqlEscape(fieldId)}'`,
@@ -117,6 +136,24 @@ export async function PATCH(
 			{ error: "Failed to rename field" },
 			{ status: 500 },
 		);
+	}
+
+	if (hasEnumValues && enumValues) {
+		const changes = getEnumValueChanges(field.enum_values, enumValues);
+		if (
+			changes.removed.length === 1
+			&& changes.added.length === 1
+			&& changes.currentLength === enumValues.length
+		) {
+			duckdbExecOnFile(dbFile,
+				`UPDATE entry_fields SET value = '${sqlEscape(changes.added[0])}' WHERE field_id = '${sqlEscape(fieldId)}' AND value = '${sqlEscape(changes.removed[0])}'`,
+			);
+		} else if (changes.removed.length > 0) {
+			const removedList = changes.removed.map((value) => `'${sqlEscape(value)}'`).join(", ");
+			duckdbExecOnFile(dbFile,
+				`UPDATE entry_fields SET value = NULL WHERE field_id = '${sqlEscape(fieldId)}' AND value IN (${removedList})`,
+			);
+		}
 	}
 
 	regeneratePivotView(dbFile, name, objectId);
@@ -194,6 +231,56 @@ export async function DELETE(
 }
 
 /* ─── Shared helpers ─── */
+
+function normalizeEnumValues(value: unknown): string[] | null {
+	if (!Array.isArray(value)) {
+		return null;
+	}
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") {
+			return null;
+		}
+		const trimmed = item.trim();
+		if (!trimmed) {
+			continue;
+		}
+		const key = trimmed.toLocaleLowerCase();
+		if (seen.has(key)) {
+			return null;
+		}
+		seen.add(key);
+		normalized.push(trimmed);
+	}
+	return normalized;
+}
+
+function getEnumValueChanges(
+	currentJson: string | null,
+	nextValues: string[],
+): { added: string[]; removed: string[]; currentLength: number } {
+	if (!currentJson) {
+		return { added: nextValues, removed: [], currentLength: 0 };
+	}
+	let currentValues: unknown;
+	try {
+		currentValues = JSON.parse(currentJson);
+	} catch {
+		return { added: nextValues, removed: [], currentLength: 0 };
+	}
+	if (!Array.isArray(currentValues)) {
+		return { added: nextValues, removed: [], currentLength: 0 };
+	}
+	const currentStrings = currentValues.filter((value): value is string => typeof value === "string");
+	const nextSet = new Set(nextValues);
+	const currentSet = new Set(currentStrings);
+	return {
+		added: nextValues.filter((value) => !currentSet.has(value)),
+		removed: currentStrings.filter((value) => !nextSet.has(value)),
+		currentLength: currentStrings.length,
+	};
+}
 
 function regeneratePivotView(dbFile: string, objectName: string, objectId: string) {
 	const fields = duckdbQueryOnFile<{ name: string }>(

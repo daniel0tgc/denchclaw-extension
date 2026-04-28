@@ -1056,6 +1056,22 @@ export function ObjectTable({
 		setRenamingFieldId(null);
 	}, [objectName, onRefresh]);
 
+	const handleUpdateColumnOptions = useCallback(async (fieldId: string, values: string[]) => {
+		const res = await fetch(
+			`/api/workspace/objects/${encodeURIComponent(objectName)}/fields/${encodeURIComponent(fieldId)}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ enum_values: values }),
+			},
+		);
+		if (!res.ok) {
+			const body = (await res.json().catch(() => ({}))) as { error?: string };
+			throw new Error(body.error ?? `HTTP ${res.status}`);
+		}
+		onRefresh?.();
+	}, [objectName, onRefresh]);
+
 	const handleDeleteColumn = useCallback((fieldId: string, fieldName: string) => {
 		setConfirmState({
 			open: true,
@@ -1148,6 +1164,7 @@ export function ObjectTable({
 								onHide={() => column.toggleVisibility(false)}
 								onRename={() => setRenamingFieldId(field.id)}
 								onDelete={() => handleDeleteColumn(field.id, field.name)}
+								onOptionsUpdate={(values) => handleUpdateColumnOptions(field.id, values)}
 								canMoveLeft={fieldIdx > 0}
 								canMoveRight={fieldIdx < dataFields.length - 1}
 								onMoveLeft={() => handleMoveColumn(field.id, "left")}
@@ -1318,7 +1335,7 @@ export function ObjectTable({
 		// `onEntryClick` and `updateLocalEntryField` are read inside the `cell`
 		// closures and were missing from the original deps (stale-closure bug);
 		// they're included now.
-	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, relationFaviconUrls, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleDeleteColumn, handleMoveColumn, enrichmentProgress, handleReEnrich, enrichedCellIds, openMenuFieldId]);
+	}, [dataFields, actionFields, activeReverseRelations, objectName, members, relationLabels, relationFaviconUrls, onNavigateToObject, onNavigateToEntry, onEntryClick, onRefresh, updateLocalEntryField, showToast, renamingFieldId, handleRenameColumn, handleUpdateColumnOptions, handleDeleteColumn, handleMoveColumn, enrichmentProgress, handleReEnrich, enrichedCellIds, openMenuFieldId]);
 
 	// Add entry handler — delegates to parent when provided, otherwise opens local modal.
 	const handleAdd = useCallback(() => {

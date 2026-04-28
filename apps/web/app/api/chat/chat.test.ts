@@ -467,7 +467,12 @@ describe("Chat API routes", () => {
       );
     });
 
-    it("rebuilds agent message from raw user text + structured workspace context", async () => {
+    it("layers Context + Selected-table prefixes on top of inline attachments", async () => {
+      // [Attached files: …] is intentionally NOT moved into workspaceContext
+      // — it stays in the user message text because chat-message.tsx parses
+      // it to render the AttachedFilesCard. The agent prompt should have
+      // table selection FIRST, then Context, then Attached files, then user
+      // text — matching the legacy ordering the agent already understands.
       const { resolveAgentWorkspacePrefix } = await import("@/lib/workspace");
       vi.mocked(resolveAgentWorkspacePrefix).mockReturnValue(null);
       const { startRun, persistUserMessage, hasActiveRun, subscribeToRun } =
@@ -486,20 +491,23 @@ describe("Chat API routes", () => {
             {
               id: "m1",
               role: "user",
-              parts: [{ type: "text", text: "summarize this" }],
+              parts: [
+                {
+                  type: "text",
+                  text: "[Attached files: notes.md]\n\nsummarize this",
+                },
+              ],
             },
           ],
           sessionId: "s1",
           workspaceContext: {
             filePath: "~crm/people",
             isDirectory: true,
-            attachedFilePaths: ["notes.md"],
           },
         }),
       });
       await POST(req);
 
-      // Agent gets the prefixed prompt (so its tool/context use is unchanged).
       expect(startRun).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.stringContaining(
@@ -517,11 +525,13 @@ describe("Chat API routes", () => {
           message: expect.stringContaining("summarize this"),
         }),
       );
-      // But the persisted user text stays clean — this is what the chat
-      // title backfill reads, so it must not include the bracketed prefixes.
+      // persistUserMessage stores the message text the user actually sees
+      // (with the Attached files prefix); the title cleaner strips it on read.
       expect(persistUserMessage).toHaveBeenCalledWith(
         "s1",
-        expect.objectContaining({ content: "summarize this" }),
+        expect.objectContaining({
+          content: "[Attached files: notes.md]\n\nsummarize this",
+        }),
       );
     });
 

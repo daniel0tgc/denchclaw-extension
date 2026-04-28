@@ -7,13 +7,15 @@ describe("buildAgentMessage", () => {
 		expect(buildAgentMessage({ userText: "hello" })).toBe("hello");
 	});
 
-	it("prepends [Attached files: ...] when attachments are listed", () => {
+	it("does not touch [Attached files: ...] already in userText", () => {
+		// [Attached files: ...] stays in the message text (chat-message.tsx
+		// parses it for the AttachedFilesCard); buildAgentMessage only
+		// layers agent-only prefixes on top.
 		expect(
 			buildAgentMessage({
-				userText: "summarize",
-				workspaceContext: { attachedFilePaths: ["a.md", "b.md"] },
+				userText: "[Attached files: a.md]\n\nsummarize",
 			}),
-		).toBe("[Attached files: a.md, b.md]\n\nsummarize");
+		).toBe("[Attached files: a.md]\n\nsummarize");
 	});
 
 	it("prepends [Context: workspace file '...'] when filePath is provided", () => {
@@ -72,7 +74,7 @@ describe("buildAgentMessage", () => {
 		expect(out).toContain("anything weird?");
 	});
 
-	it("orders prefixes: tableSelection > filePath > attachedFiles > userText", () => {
+	it("orders prefixes: tableSelection > filePath > attachedFiles in userText", () => {
 		const selection: TableSelectionContext = {
 			objectName: "people",
 			kind: "cells",
@@ -84,10 +86,11 @@ describe("buildAgentMessage", () => {
 			],
 			updatedAt: 0,
 		};
+		// userText carries the attachments prefix that the client builds
+		// inline; buildAgentMessage layers Context + Selected table on top.
 		const out = buildAgentMessage({
-			userText: "go",
+			userText: "[Attached files: a.md]\n\ngo",
 			workspaceContext: {
-				attachedFilePaths: ["a.md"],
 				filePath: "doc.md",
 				isDirectory: false,
 				tableSelection: selection,

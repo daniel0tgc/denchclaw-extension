@@ -6,9 +6,13 @@ import {
 /**
  * Workspace context attached to a chat message in addition to the user's
  * typed text. The client sends this as a separate body field on POST /api/chat
- * so the persisted user message stays clean (no `[Context: ...]` /
- * `[Attached files: ...]` / `[Selected table ...]` prefixes baked in), while
- * the agent still receives the full prefixed prompt it expects.
+ * so these agent-only signals (`[Context: ...]`, `[Selected table ...]`)
+ * never get baked into the persisted user message — that's what produced
+ * ugly chat titles in the sidebar like `[Context: workspace file 'company']`.
+ *
+ * Note that `[Attached files: ...]` is intentionally NOT here: it stays in
+ * the user message text because chat-message.tsx parses that prefix to
+ * render the AttachedFilesCard. The session-title cleaner strips it.
  *
  * Each field is optional — clients only include a piece when it should
  * actually be announced to the agent on this turn (e.g. `filePath` is
@@ -19,8 +23,6 @@ export type WorkspaceContext = {
 	filePath?: string;
 	/** True when `filePath` is a directory or virtual surface (~crm/...). */
 	isDirectory?: boolean;
-	/** Paths of files mentioned in the editor or attached as uploads. */
-	attachedFilePaths?: string[];
 	/** Snapshot of selected table rows/cells, formatted into prompt text. */
 	tableSelection?: TableSelectionContext;
 };
@@ -30,6 +32,9 @@ export type WorkspaceContext = {
  * bracketed metadata blocks the client used to assemble inline. Order
  * matches the legacy client implementation so behavior is identical from
  * the agent's perspective.
+ *
+ * `[Attached files: ...]` (when present) is already in `userText`; this
+ * helper only layers on the agent-only prefixes from `workspaceContext`.
  */
 export function buildAgentMessage(args: {
 	userText: string;
@@ -43,12 +48,6 @@ export function buildAgentMessage(args: {
 	const ctx = workspaceContext;
 	if (!ctx) {
 		return message;
-	}
-
-	const attached = ctx.attachedFilePaths?.filter(Boolean) ?? [];
-	if (attached.length > 0) {
-		const attachedPrefix = `[Attached files: ${attached.join(", ")}]`;
-		message = message ? `${attachedPrefix}\n\n${message}` : attachedPrefix;
 	}
 
 	if (ctx.filePath) {

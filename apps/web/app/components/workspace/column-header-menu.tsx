@@ -83,12 +83,13 @@ export function FieldTypeIcon({ type, size = 14, className }: { type: string; si
 /* ─── Column Header Menu ─── */
 
 export type ColumnHeaderMenuProps = {
-	field: { id: string; name: string; type: string; default_value?: string };
+	field: { id: string; name: string; type: string; default_value?: string; enum_values?: string[] };
 	sortDirection: "asc" | "desc" | false;
 	onSort: (desc: boolean) => void;
 	onHide: () => void;
 	onRename: () => void;
 	onDelete: () => void;
+	onOptionsUpdate?: (values: string[]) => Promise<void>;
 	canMoveLeft: boolean;
 	canMoveRight: boolean;
 	onMoveLeft: () => void;
@@ -101,7 +102,7 @@ export type ColumnHeaderMenuProps = {
 
 export function ColumnHeaderMenu({
 	field, sortDirection, onSort, onHide, onRename, onDelete,
-	canMoveLeft, canMoveRight, onMoveLeft, onMoveRight, onReEnrich,
+	canMoveLeft, canMoveRight, onMoveLeft, onMoveRight, onReEnrich, onOptionsUpdate,
 	open: controlledOpen, onOpenChange,
 }: ColumnHeaderMenuProps) {
 	const isEnrichment = (() => {
@@ -128,7 +129,7 @@ export function ColumnHeaderMenu({
 					<path d="m6 9 6 6 6-6" />
 				</svg>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" sideOffset={6} className="min-w-[180px]">
+			<DropdownMenuContent align="start" sideOffset={6} className={field.type === "enum" ? "min-w-[260px]" : "min-w-[180px]"}>
 				<div className="flex items-center gap-2 px-2.5 py-1.5 text-xs normal-case tracking-normal" style={{ color: "var(--color-text-muted)" }}>
 					<FieldTypeIcon type={field.type} size={14} className="shrink-0" />
 					<span className="font-medium">{fieldTypeLabel(field.type)}</span>
@@ -141,6 +142,15 @@ export function ColumnHeaderMenu({
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
 					Rename
 				</DropdownMenuItem>
+				{field.type === "enum" && onOptionsUpdate && (
+					<>
+						<DropdownMenuSeparator />
+						<SelectOptionsEditor
+							values={field.enum_values ?? []}
+							onSave={onOptionsUpdate}
+						/>
+					</>
+				)}
 				{isEnrichment && onReEnrich && (
 					<>
 						<DropdownMenuSeparator />
@@ -195,6 +205,194 @@ export function ColumnHeaderMenu({
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
+}
+
+export function SelectOptionsEditor({
+	values,
+	onSave,
+}: {
+	values: string[];
+	onSave: (values: string[]) => Promise<void>;
+}) {
+	const [options, setOptions] = useState<string[]>(values);
+	const [draft, setDraft] = useState("");
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		setOptions(values);
+		setError(null);
+	}, [values]);
+
+	const saveOptions = useCallback(async (nextValues: string[]) => {
+		const normalized = normalizeOptionList(nextValues);
+		if (!normalized.ok) {
+			setError(normalized.error);
+			return false;
+		}
+		setSaving(true);
+		setError(null);
+		try {
+			await onSave(normalized.values);
+			setOptions(normalized.values);
+			return true;
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to save options");
+			return false;
+		} finally {
+			setSaving(false);
+		}
+	}, [onSave]);
+
+	const addDraft = useCallback(async () => {
+		const next = draft.trim();
+		if (!next) {
+			return;
+		}
+		const didSave = await saveOptions([...options, next]);
+		if (didSave) {
+			setDraft("");
+		}
+	}, [draft, options, saveOptions]);
+
+	const renameOption = useCallback(async (index: number, nextValue: string) => {
+		const next = [...options];
+		next[index] = nextValue;
+		await saveOptions(next);
+	}, [options, saveOptions]);
+
+	const removeOption = useCallback((index: number) => {
+		void saveOptions(options.filter((_, candidateIndex) => candidateIndex !== index));
+	}, [options, saveOptions]);
+
+	return (
+		<div
+			className="px-2.5 py-2"
+			onClick={(e) => e.stopPropagation()}
+			onPointerDown={(e) => e.stopPropagation()}
+			onKeyDown={(e) => e.stopPropagation()}
+		>
+			<div className="mb-1.5 flex items-center justify-between gap-2">
+				<span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>
+					Options
+				</span>
+				{saving && (
+					<span className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>
+						Saving...
+					</span>
+				)}
+			</div>
+			<div className="space-y-1">
+				{options.length === 0 && (
+					<div className="px-2 py-1.5 text-xs rounded-lg" style={{ color: "var(--color-text-muted)", background: "var(--color-surface)" }}>
+						No options yet
+					</div>
+				)}
+				{options.map((option, index) => (
+					<div key={`${option}:${index}`} className="flex items-center gap-1">
+						<input
+							value={option}
+							disabled={saving}
+							onChange={(e) => {
+								const next = [...options];
+								next[index] = e.target.value;
+								setOptions(next);
+							}}
+							onBlur={(e) => void renameOption(index, e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									e.preventDefault();
+									void renameOption(index, e.currentTarget.value);
+								}
+							}}
+							className="min-w-0 flex-1 rounded-full px-2 py-1 text-xs outline-none"
+							style={{
+								background: "var(--color-surface)",
+								color: "var(--color-text)",
+								border: "1px solid var(--color-border)",
+							}}
+							aria-label={`Edit option ${option}`}
+						/>
+						<button
+							type="button"
+							disabled={saving}
+							onClick={() => void renameOption(index, option)}
+							className="flex h-7 w-7 items-center justify-center rounded-full transition-colors disabled:opacity-40 hover:opacity-70"
+							style={{ color: "var(--color-text-muted)" }}
+							aria-label={`Save option ${option}`}
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+						</button>
+						<button
+							type="button"
+							disabled={saving}
+							onClick={() => removeOption(index)}
+							className="flex h-7 w-7 items-center justify-center rounded-full transition-colors disabled:opacity-40 hover:opacity-70"
+							style={{ color: "var(--color-text-muted)" }}
+							aria-label={`Remove option ${option}`}
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+						</button>
+					</div>
+				))}
+			</div>
+			<div className="mt-1.5 flex items-center gap-1">
+				<input
+					value={draft}
+					disabled={saving}
+					onChange={(e) => setDraft(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							e.preventDefault();
+							void addDraft();
+						}
+					}}
+					placeholder="Add option..."
+					className="min-w-0 flex-1 rounded-full px-2 py-1 text-xs outline-none"
+					style={{
+						background: "var(--color-surface)",
+						color: "var(--color-text)",
+						border: "1px solid var(--color-border)",
+					}}
+				/>
+				<button
+					type="button"
+					disabled={saving || !draft.trim()}
+					onClick={() => void addDraft()}
+					className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors disabled:opacity-40"
+					style={{ background: "var(--color-accent)", color: "white" }}
+					aria-label="Add option"
+				>
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+				</button>
+			</div>
+			{error && (
+				<p className="mt-1.5 px-1 text-[11px]" style={{ color: "var(--color-error)" }}>
+					{error}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function normalizeOptionList(values: string[]):
+	| { ok: true; values: string[] }
+	| { ok: false; error: string } {
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const value of values) {
+		const trimmed = value.trim();
+		if (!trimmed) {
+			continue;
+		}
+		const key = trimmed.toLocaleLowerCase();
+		if (seen.has(key)) {
+			return { ok: false, error: "Options must be unique" };
+		}
+		seen.add(key);
+		normalized.push(trimmed);
+	}
+	return { ok: true, values: normalized };
 }
 
 /* ─── Inline Rename Input ─── */
@@ -290,6 +488,18 @@ function enrichScopeButtonLabel(scope: EnrichmentStartPayload["scope"]): string 
 	return ENRICH_SCOPE_OPTIONS.find((option) => option.value === scope)?.buttonLabel ?? "all";
 }
 
+function nextDefaultFieldName(baseName: string, fields: AddColumnField[] | undefined): string {
+	const existingNames = new Set((fields ?? []).map((field) => field.name.toLocaleLowerCase()));
+	if (!existingNames.has(baseName.toLocaleLowerCase())) {
+		return baseName;
+	}
+	let index = 2;
+	while (existingNames.has(`${baseName} ${index}`.toLocaleLowerCase())) {
+		index++;
+	}
+	return `${baseName} ${index}`;
+}
+
 export function AddColumnPopover({
 	objectName,
 	onCreated,
@@ -304,7 +514,6 @@ export function AddColumnPopover({
 	onEnrichmentStart?: (payload: EnrichmentStartPayload) => void;
 }) {
 	const [open, setOpen] = useState(false);
-	const [name, setName] = useState("");
 	const [type, setType] = useState("text");
 	const [enumInput, setEnumInput] = useState("");
 	const [saving, setSaving] = useState(false);
@@ -340,7 +549,6 @@ export function AddColumnPopover({
 
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
-	const inputRef = useRef<HTMLInputElement>(null);
 	const [position, setPosition] = useState({ top: 0, left: 0 });
 
 	const enrichGroups = useMemo<EnrichmentColumnGroup[]>(() => {
@@ -385,7 +593,6 @@ export function AddColumnPopover({
 			setPosition({ top: rect.bottom + 6, left });
 		}
 		setOpen(true);
-		setName("");
 		setType("text");
 		setEnumInput("");
 		setError(null);
@@ -400,13 +607,6 @@ export function AddColumnPopover({
 		setSelectedEnrichCol(null);
 		setScopeMenuOpen(false);
 	}, []);
-
-	useEffect(() => {
-		if (open && !selectedEnrichCol) {
-			const timer = setTimeout(() => inputRef.current?.focus(), 50);
-			return () => clearTimeout(timer);
-		}
-	}, [open, selectedEnrichCol]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -430,8 +630,8 @@ export function AddColumnPopover({
 	}, [open, handleClose]);
 
 	const handleCreate = useCallback(async () => {
-		if (!name.trim()) return;
-		const body: Record<string, unknown> = { name: name.trim(), type };
+		const fieldName = nextDefaultFieldName(fieldTypeLabel(type), fieldsRef.current);
+		const body: Record<string, unknown> = { name: fieldName, type };
 		if (type === "enum") {
 			const vals = enumInput.split(",").map((s) => s.trim()).filter(Boolean);
 			if (vals.length === 0) { setError("Add at least one option"); return; }
@@ -457,7 +657,7 @@ export function AddColumnPopover({
 		} finally {
 			setSaving(false);
 		}
-	}, [name, type, enumInput, objectName, handleClose, onCreated]);
+	}, [type, enumInput, objectName, handleClose, onCreated]);
 
 	const handleEnrichCreate = useCallback(async () => {
 		if (!selectedEnrichCol || !enrichInputField) return;
@@ -698,27 +898,6 @@ export function AddColumnPopover({
 					) : (
 						/* Standard column creation view */
 						<>
-							<div className="p-3 pb-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
-								<input
-									ref={inputRef}
-									type="text"
-									value={name}
-									onChange={(e) => setName(e.target.value)}
-									onKeyDown={(e) => {
-										e.stopPropagation();
-										if (e.key === "Enter" && name.trim()) { void handleCreate(); }
-										if (e.key === "Escape") { handleClose(); }
-									}}
-									placeholder="Column name..."
-									className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
-									style={{
-										background: "var(--color-surface)",
-										color: "var(--color-text)",
-										border: "1px solid var(--color-border)",
-									}}
-								/>
-							</div>
-
 							<div className="flex-1 overflow-y-auto">
 								<div className="p-2">
 									<div className="text-[10px] font-medium uppercase tracking-wider px-1 mb-1.5" style={{ color: "var(--color-text-muted)" }}>
@@ -795,7 +974,7 @@ export function AddColumnPopover({
 										onChange={(e) => setEnumInput(e.target.value)}
 										onKeyDown={(e) => {
 											e.stopPropagation();
-											if (e.key === "Enter" && name.trim()) { void handleCreate(); }
+											if (e.key === "Enter") { void handleCreate(); }
 										}}
 										placeholder="Options (comma-separated)"
 										className="w-full px-2.5 py-1.5 text-sm rounded-lg outline-none"
@@ -807,6 +986,10 @@ export function AddColumnPopover({
 									/>
 								</div>
 							)}
+
+							<div className="px-3 pb-2 text-[11px]" style={{ color: "var(--color-text-muted)" }}>
+								Creates &ldquo;{nextDefaultFieldName(fieldTypeLabel(type), fieldsRef.current)}&rdquo;. Rename it from the column menu after creating.
+							</div>
 
 							{error && (
 								<div className="px-3 pb-2">
@@ -826,7 +1009,7 @@ export function AddColumnPopover({
 								<button
 									type="button"
 									onClick={() => void handleCreate()}
-									disabled={saving || !name.trim()}
+									disabled={saving || (type === "enum" && enumInput.split(",").map((s) => s.trim()).filter(Boolean).length === 0)}
 									className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-40"
 									style={{ background: "var(--color-accent)", color: "white" }}
 								>

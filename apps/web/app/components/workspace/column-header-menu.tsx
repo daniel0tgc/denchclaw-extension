@@ -419,6 +419,22 @@ export function AddColumnPopover({
 		try {
 			const { buildEnrichmentMeta } = await import("@/lib/enrichment-columns");
 			const meta = buildEnrichmentMeta(enrichCategory, selectedEnrichCol, enrichInputField);
+			const existingOutputField = fieldsRef.current?.find(
+				(field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase(),
+			);
+
+			if (existingOutputField) {
+				handleClose();
+				onEnrichmentStartRef.current?.({
+					fieldId: existingOutputField.id,
+					fieldName: existingOutputField.name,
+					apolloPath: selectedEnrichCol.apolloPath,
+					category: enrichCategory,
+					inputFieldName: enrichInputField,
+					scope: "all",
+				});
+				return;
+			}
 
 			const body: Record<string, unknown> = {
 				name: selectedEnrichCol.label,
@@ -535,6 +551,12 @@ export function AddColumnPopover({
 									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-text-muted)" }}>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
 										Will enrich using &ldquo;{enrichInputField}&rdquo; column
+									</div>
+								)}
+								{fieldsRef.current?.some((field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase()) && (
+									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-accent)" }}>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+										Existing &ldquo;{selectedEnrichCol.label}&rdquo; column will be enriched
 									</div>
 								)}
 								{error && (

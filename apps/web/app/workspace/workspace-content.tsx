@@ -3112,7 +3112,7 @@ function ObjectView({
     const defaultVt = resolveViewType(undefined, undefined, data.object.default_view);
     saveTableViewState(data.object.name, {
       viewType: currentViewType !== defaultVt ? currentViewType : undefined,
-      view: activeViewName,
+      view: activeViewName && activeViewName !== data.activeView ? activeViewName : undefined,
       filters: filters.rules.length > 0 ? filters : undefined,
       search: serverSearch || undefined,
       sort: sortRules && sortRules.length > 0 ? sortRules : undefined,

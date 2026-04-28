@@ -18,6 +18,7 @@ import { UrlFavicon } from "./url-favicon";
 import { LinkOpenButton } from "./link-open-button";
 import { LinkPreviewWrapper } from "./workspace-link";
 import { RelationLink } from "./relation-link";
+import type { TableCellSelectionState, TableSelectionContext } from "@/lib/table-selection";
 
 /* ─── Types ─── */
 
@@ -99,6 +100,7 @@ type ObjectTableProps = {
 	/** Controlled sticky-first-column toggle. */
 	stickyFirstColumnValue?: boolean;
 	onStickyFirstColumnChange?: (value: boolean) => void;
+	onSelectionContextChange?: (selection: TableSelectionContext | null) => void;
 };
 
 type EntryRow = Record<string, unknown> & { entry_id?: string };
@@ -834,8 +836,10 @@ export function ObjectTable({
 	onAddRequest,
 	stickyFirstColumnValue,
 	onStickyFirstColumnChange,
+	onSelectionContextChange,
 }: ObjectTableProps) {
 	const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
+	const [cellSelection, setCellSelection] = useState<TableCellSelectionState | null>(null);
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [localEntries, setLocalEntries] = useState<EntryRow[]>(entries as EntryRow[]);
 	const [confirmState, setConfirmState] = useState<{
@@ -998,6 +1002,134 @@ export function ObjectTable({
 		if (!reverseRelations) {return [];}
 		return reverseRelations.filter((rr) => Object.keys(rr.entries).length > 0);
 	}, [reverseRelations]);
+
+	const selectionColumnLabels = useMemo(() => {
+		const labels: Record<string, string> = {};
+		for (const field of dataFields) {
+			labels[field.id] = field.name;
+		}
+		labels.created_at = "created_at";
+		labels.updated_at = "updated_at";
+		for (const rr of activeReverseRelations) {
+			labels[`rev_${rr.sourceObjectName}_${rr.fieldName}`] = `${displayObjectName(rr.sourceObjectName)} via ${rr.fieldName}`;
+		}
+		for (const field of actionFields) {
+			labels[`action_${field.id}`] = field.name;
+		}
+		return labels;
+	}, [activeReverseRelations, actionFields, dataFields]);
+
+	const selectionColumns = useMemo(
+		() => Object.entries(selectionColumnLabels)
+			.filter(([columnId]) => columnVisibility?.[columnId] !== false)
+			.slice(0, 20),
+		[selectionColumnLabels, columnVisibility],
+	);
+
+	const readSelectionValue = useCallback((entry: EntryRow, columnId: string, label: string) => {
+		if (columnId === "created_at") {
+			return safeString(resolveEntryMetaValue(entry, CREATED_AT_KEYS));
+		}
+		if (columnId === "updated_at") {
+			return safeString(resolveEntryMetaValue(entry, UPDATED_AT_KEYS));
+		}
+		if (columnId.startsWith("rev_")) {
+			const relation = activeReverseRelations.find(
+				(rr) => `rev_${rr.sourceObjectName}_${rr.fieldName}` === columnId,
+			);
+			const entryId = safeString(entry.entry_id);
+			return relation?.entries[entryId]?.map((item) => item.label).join(", ") ?? "";
+		}
+		return safeString(entry[label]);
+	}, [activeReverseRelations]);
+
+	useEffect(() => {
+		if (!onSelectionContextChange) {
+			return;
+		}
+
+		const selectedRowIndexes = Object.keys(rowSelection)
+			.filter((index) => rowSelection[index])
+			.map(Number)
+			.filter((index) => Number.isInteger(index) && localEntries[index]);
+
+		if (selectedRowIndexes.length > 0) {
+			const rows = selectedRowIndexes.map((rowIndex) => {
+				const entry = localEntries[rowIndex];
+				const values: Record<string, string> = {};
+				for (const [columnId, label] of selectionColumns) {
+					values[label] = readSelectionValue(entry, columnId, label);
+				}
+				return {
+					rowIndex,
+					entryId: safeString(entry.entry_id),
+					values,
+				};
+			});
+			onSelectionContextChange({
+				objectName,
+				kind: "rows",
+				rowCount: rows.length,
+				columnCount: selectionColumns.length,
+				columns: selectionColumns.map(([, label]) => label),
+				rows,
+				updatedAt: Date.now(),
+			});
+			return;
+		}
+
+		if (!cellSelection) {
+			onSelectionContextChange(null);
+			return;
+		}
+
+		const columnIds = selectionColumns.map(([columnId]) => columnId);
+		const anchorColumnIndex = columnIds.indexOf(cellSelection.anchor.columnId);
+		const focusColumnIndex = columnIds.indexOf(cellSelection.focus.columnId);
+		if (anchorColumnIndex < 0 || focusColumnIndex < 0) {
+			onSelectionContextChange(null);
+			return;
+		}
+		const rowStart = Math.max(0, Math.min(cellSelection.anchor.rowIndex, cellSelection.focus.rowIndex));
+		const rowEnd = Math.min(localEntries.length - 1, Math.max(cellSelection.anchor.rowIndex, cellSelection.focus.rowIndex));
+		const colStart = Math.min(anchorColumnIndex, focusColumnIndex);
+		const colEnd = Math.max(anchorColumnIndex, focusColumnIndex);
+		const selectedColumns = selectionColumns.slice(colStart, colEnd + 1);
+		const cells = [];
+		for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex++) {
+			const entry = localEntries[rowIndex];
+			if (!entry) {
+				continue;
+			}
+			for (const [columnId, label] of selectedColumns) {
+				cells.push({
+					rowIndex,
+					entryId: safeString(entry.entry_id),
+					fieldName: label,
+					value: readSelectionValue(entry, columnId, label),
+				});
+			}
+		}
+		onSelectionContextChange({
+			objectName,
+			kind: "cells",
+			rowCount: rowEnd - rowStart + 1,
+			columnCount: selectedColumns.length,
+			columns: selectedColumns.map(([, label]) => label),
+			cells,
+			updatedAt: Date.now(),
+		});
+	}, [
+		cellSelection,
+		localEntries,
+		objectName,
+		onSelectionContextChange,
+		readSelectionValue,
+		rowSelection,
+		selectionColumns,
+	]);
+
+	useEffect(() => () => onSelectionContextChange?.(null), [onSelectionContextChange]);
 
 	// Precompute the first URL favicon per entry once (instead of recomputing
 	// per row, per render, which used to walk every cell of every row and
@@ -1483,9 +1615,12 @@ export function ObjectTable({
 			enableSorting
 			enableGlobalFilter
 			enableRowSelection
+			enableCellSelection
 			enableColumnReordering
 			rowSelection={rowSelection}
 			onRowSelectionChange={setRowSelection}
+			cellSelection={cellSelection}
+			onCellSelectionChange={setCellSelection}
 			onColumnReorder={handleColumnReorder}
 			searchPlaceholder={`Search ${displayObjectName(objectName)}...`}
 			onRefresh={onRefresh}

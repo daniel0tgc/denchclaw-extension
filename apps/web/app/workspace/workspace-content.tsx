@@ -73,6 +73,7 @@ import { ChatComposioModalHost } from "../components/integrations/chat-composio-
 import { CloudSettingsPanel } from "../components/settings/cloud-settings-panel";
 import { CronJobDetail } from "../components/cron/cron-job-detail";
 import { CronSessionView } from "../components/cron/cron-session-view";
+import type { TableSelectionContext } from "@/lib/table-selection";
 import type { CronJob, CronJobsResponse } from "../types/cron";
 import { useIsMobile } from "../hooks/use-mobile";
 import { ObjectFilterBar } from "../components/workspace/object-filter-bar";
@@ -562,6 +563,7 @@ function WorkspacePageInner() {
   // Terminal drawer state
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingComposioAction, setPendingComposioAction] = useState<ComposioChatAction | null>(null);
+  const [tableSelectionContext, setTableSelectionContext] = useState<TableSelectionContext | null>(null);
 
   // Tabs state — single source of truth for content + chat tabs.
   // Replaces the older tabState/activePath/content/activeContentTabId quartet
@@ -969,8 +971,8 @@ function WorkspacePageInner() {
       isVirtualPath(activePath) ||
       activeContentTab?.kind === "crm-inbox" ||
       activeContentTab?.kind === "crm-calendar";
-    return { path: activePath, filename, isDirectory };
-  }, [activePath, activeContentTab?.kind]);
+    return { path: activePath, filename, isDirectory, tableSelection: tableSelectionContext ?? undefined };
+  }, [activePath, activeContentTab?.kind, tableSelectionContext]);
 
   // Live reload from the agent: ContentRenderer/useTabContent owns the live
   // file payload now, so this stub simply forces a refresh of the active tab
@@ -2321,6 +2323,7 @@ function WorkspacePageInner() {
       onCronRunChange={setCronRun}
       onSendCommand={handleCronSendCommand}
       onMakeTabPermanent={promoteTabByPath}
+      onTableSelectionContextChange={setTableSelectionContext}
     />
   ), [
     workspaceExists, workspaceRoot, tree, activePath, browseDir, treeLoading,
@@ -2328,7 +2331,7 @@ function WorkspacePageInner() {
     refreshCurrentObject, refreshTree, handleEditorNavigate, handleOpenEntry,
     searchIndex, handleSelectCronJob, handleBackToCronDashboard,
     cronView, cronCalMode, cronDate, cronRunFilter, cronRun,
-    handleCronSendCommand, promoteTabByPath,
+    handleCronSendCommand, promoteTabByPath, setTableSelectionContext,
   ]);
 
   const renderRightPanelPlaceholder = useCallback(() => (
@@ -2695,6 +2698,7 @@ function ContentRenderer({
   onCronRunChange,
   onSendCommand,
   onMakeTabPermanent,
+  onTableSelectionContextChange,
 }: {
   content: ContentState;
   workspaceExists: boolean;
@@ -2730,6 +2734,7 @@ function ContentRenderer({
   onCronRunChange: (run: number | null) => void;
   onSendCommand: (message: string) => void;
   onMakeTabPermanent: (path: string) => void;
+  onTableSelectionContextChange: (selection: TableSelectionContext | null) => void;
 }) {
   switch (content.kind) {
     case "loading":
@@ -2750,6 +2755,7 @@ function ContentRenderer({
           onRefreshTree={onRefreshTree}
           onOpenEntry={onOpenEntry}
           activeEntryId={activeEntryId}
+          onSelectionContextChange={onTableSelectionContextChange}
         />
       );
 
@@ -2994,6 +3000,7 @@ function ObjectView({
   onRefreshTree,
   onOpenEntry,
   activeEntryId,
+  onSelectionContextChange,
 }: {
   data: ObjectData;
   members?: Array<{ id: string; name: string; email: string; role: string }>;
@@ -3006,6 +3013,7 @@ function ObjectView({
     relatedObjectId?: string,
   ) => void;
   activeEntryId?: string;
+  onSelectionContextChange?: (selection: TableSelectionContext | null) => void;
 }) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -3827,6 +3835,7 @@ function ObjectView({
             stickyFirstColumnValue={stickyFirstColumn}
             onStickyFirstColumnChange={setStickyFirstColumn}
             onAddRequest={handleOpenAddModal}
+            onSelectionContextChange={onSelectionContextChange}
           />
         )}
         {currentViewType === "calendar" && (

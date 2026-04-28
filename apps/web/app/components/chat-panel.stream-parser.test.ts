@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createStreamParser } from "./chat-panel";
+import {
+  createStreamParser,
+  getChatDistanceFromBottom,
+  isChatScrolledAwayFromBottom,
+  scrollChatToBottom,
+} from "./chat-panel";
 
 describe("createStreamParser", () => {
   it("treats user-message as turn boundary and keeps user/assistant sequence stable", () => {
@@ -120,5 +125,26 @@ describe("createStreamParser", () => {
     parser.processEvent({ type: "text-end" });
 
     expect(parser.getParts()).toEqual([{ type: "text", text: "Stable output" }]);
+  });
+});
+
+describe("chat scroll helpers", () => {
+  it("treats reserved bottom padding as still away from the true bottom", () => {
+    const metrics = { clientHeight: 600, scrollHeight: 1400, scrollTop: 660 };
+
+    expect(getChatDistanceFromBottom(metrics)).toBe(140);
+    expect(isChatScrolledAwayFromBottom(metrics)).toBe(true);
+  });
+
+  it("scrolls the chat container itself to the real bottom", () => {
+    const calls: ScrollToOptions[] = [];
+    const el = {
+      scrollHeight: 1400,
+      scrollTo: (options: ScrollToOptions) => calls.push(options),
+    };
+
+    scrollChatToBottom(el, "auto");
+
+    expect(calls).toEqual([{ top: 1400, behavior: "auto" }]);
   });
 });

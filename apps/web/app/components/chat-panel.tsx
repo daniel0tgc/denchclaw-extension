@@ -40,6 +40,7 @@ import {
 import type { ComposioChatAction } from "@/lib/composio-chat-actions";
 import type { ChatModelOption } from "@/lib/chat-models";
 import { prepareFilesForChatUpload } from "@/lib/chat-image-preparation";
+import { formatTableSelectionContext, type TableSelectionContext } from "@/lib/table-selection";
 
 // ── Attachment types & helpers ──
 
@@ -758,6 +759,7 @@ export type FileContext = {
 	filename: string;
 	/** When true the path refers to a directory rather than a file. */
 	isDirectory?: boolean;
+	tableSelection?: TableSelectionContext;
 };
 
 type FileScopedSession = {
@@ -1848,6 +1850,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					const label = fileContext.isDirectory ? "directory" : "file";
 					messageText = `[Context: workspace ${label} '${fileContext.path}']\n\n${messageText}`;
 					lastAnnouncedFilePathRef.current = fileContext.path;
+				}
+
+				if (fileContext?.tableSelection) {
+					messageText = `${formatTableSelectionContext(fileContext.tableSelection)}\n\n${messageText}`;
 				}
 
 				// Store HTML for display and pipe to server via transport

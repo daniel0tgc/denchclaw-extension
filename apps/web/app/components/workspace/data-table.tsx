@@ -44,6 +44,7 @@ import {
 } from "../ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { UrlFavicon } from "./url-favicon";
+import type { TableCellSelectionState, TableSelectionPoint } from "@/lib/table-selection";
 
 /* ─── Types ─── */
 
@@ -69,6 +70,9 @@ export type DataTableProps<TData, TValue> = {
 	enableRowSelection?: boolean;
 	rowSelection?: Record<string, boolean>;
 	onRowSelectionChange?: OnChangeFn<Record<string, boolean>>;
+	enableCellSelection?: boolean;
+	cellSelection?: TableCellSelectionState | null;
+	onCellSelectionChange?: (selection: TableCellSelectionState | null) => void;
 	bulkActions?: React.ReactNode;
 	// column features
 	enableColumnReordering?: boolean;
@@ -128,6 +132,35 @@ function fuzzyFilter(
 ) {
 	const result = rankItem(row.getValue(columnId), filterValue);
 	return result.passed;
+}
+
+const UTILITY_COLUMN_IDS = new Set(["__rownum", "select", "actions", "__add_column"]);
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) {
+		return false;
+	}
+	return Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true'], [role='button']"));
+}
+
+function resolveCellRange(
+	selection: TableCellSelectionState | null,
+	columnIds: string[],
+	rowCount: number,
+) {
+	if (!selection || rowCount === 0 || columnIds.length === 0) {
+		return null;
+	}
+	const anchorCol = columnIds.indexOf(selection.anchor.columnId);
+	const focusCol = columnIds.indexOf(selection.focus.columnId);
+	if (anchorCol < 0 || focusCol < 0) {
+		return null;
+	}
+	const rowStart = Math.max(0, Math.min(selection.anchor.rowIndex, selection.focus.rowIndex));
+	const rowEnd = Math.min(rowCount - 1, Math.max(selection.anchor.rowIndex, selection.focus.rowIndex));
+	const colStart = Math.min(anchorCol, focusCol);
+	const colEnd = Math.max(anchorCol, focusCol);
+	return { rowStart, rowEnd, colStart, colEnd };
 }
 
 /* ─── Sortable header cell (DnD) ─── */
@@ -200,6 +233,9 @@ export function DataTable<TData, TValue>({
 	enableRowSelection = false,
 	rowSelection: externalRowSelection,
 	onRowSelectionChange,
+	enableCellSelection = false,
+	cellSelection: externalCellSelection,
+	onCellSelectionChange,
 	bulkActions,
 	enableColumnReordering = false,
 	onColumnReorder,
@@ -255,6 +291,7 @@ export function DataTable<TData, TValue>({
 		setColumnSizing(initialColumnSizing ?? {});
 	}, [initialColumnSizing]);
 	const [internalRowSelection, setInternalRowSelection] = useState<Record<string, boolean>>({});
+	const [internalCellSelection, setInternalCellSelection] = useState<TableCellSelectionState | null>(null);
 	const [internalStickyFirstColumn, setInternalStickyFirstColumn] = useState(stickyFirstProp);
 	const stickyFirstColumn =
 		stickyFirstColumnValue !== undefined ? stickyFirstColumnValue : internalStickyFirstColumn;
@@ -274,6 +311,13 @@ export function DataTable<TData, TValue>({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 
 	const rowSelectionState = externalRowSelection !== undefined ? externalRowSelection : internalRowSelection;
+	const cellSelectionState = externalCellSelection !== undefined ? externalCellSelection : internalCellSelection;
+	const setCellSelection = useCallback((next: TableCellSelectionState | null) => {
+		if (externalCellSelection === undefined) {
+			setInternalCellSelection(next);
+		}
+		onCellSelectionChange?.(next);
+	}, [externalCellSelection, onCellSelectionChange]);
 
 	// Extract column ID from ColumnDef
 	const getColumnId = useCallback((c: ColumnDef<TData, TValue>): string => {
@@ -544,6 +588,11 @@ export function DataTable<TData, TValue>({
 
 	const selectedCount = Object.keys(rowSelectionState).filter((k) => rowSelectionState[k]).length;
 	const visibleColumns = table.getVisibleFlatColumns().filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column");
+	const visibleDataColumnIds = table.getVisibleLeafColumns()
+		.map((column) => column.id)
+		.filter((id) => !UTILITY_COLUMN_IDS.has(id));
+	const visibleRowCount = table.getRowModel().rows.length;
+	const cellSelectionEnabled = enableCellSelection && visibleRowCount > 0 && visibleDataColumnIds.length > 0;
 	// Stable items array for dnd-kit's SortableContext so the dnd
 	// context isn't reset on every render.
 	const sortableHeaderIds = useMemo(
@@ -566,6 +615,85 @@ export function DataTable<TData, TValue>({
 		}
 		return vars;
 	}, [columnSizingState, isResizingColumn, columnVisibility, columnOrder]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	useEffect(() => {
+		if (!cellSelectionState) {
+			return;
+		}
+		const range = resolveCellRange(cellSelectionState, visibleDataColumnIds, visibleRowCount);
+		if (!range) {
+			setCellSelection(null);
+		}
+	}, [cellSelectionState, setCellSelection, visibleDataColumnIds, visibleRowCount]);
+
+	useEffect(() => {
+		if (!cellSelectionState) {
+			return;
+		}
+		scrollContainerRef.current
+			?.querySelector("[data-dt-cell-active='true']")
+			?.scrollIntoView({ block: "nearest", inline: "nearest" });
+	}, [cellSelectionState]);
+
+	const selectedColumnsByRow = useMemo(() => {
+		const range = resolveCellRange(cellSelectionState, visibleDataColumnIds, visibleRowCount);
+		const byRow = new Map<number, string[]>();
+		if (!range) {
+			return byRow;
+		}
+		const selectedColumnIds = visibleDataColumnIds.slice(range.colStart, range.colEnd + 1);
+		for (let rowIdx = range.rowStart; rowIdx <= range.rowEnd; rowIdx++) {
+			byRow.set(rowIdx, selectedColumnIds);
+		}
+		return byRow;
+	}, [cellSelectionState, visibleDataColumnIds, visibleRowCount]);
+
+	const handleCellMouseDown = useCallback((rowIndex: number, columnId: string, event: React.MouseEvent<HTMLTableCellElement>) => {
+		if (!cellSelectionEnabled || event.button !== 0 || isEditableEventTarget(event.target)) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		scrollContainerRef.current?.focus({ preventScroll: true });
+		const nextPoint = { rowIndex, columnId };
+		setCellSelection(event.shiftKey && cellSelectionState
+			? { anchor: cellSelectionState.anchor, focus: nextPoint }
+			: { anchor: nextPoint, focus: nextPoint });
+	}, [cellSelectionEnabled, cellSelectionState, setCellSelection]);
+
+	const handleCellKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+		if (!cellSelectionEnabled || isEditableEventTarget(event.target)) {
+			return;
+		}
+		if (event.key === "Escape" && cellSelectionState) {
+			event.preventDefault();
+			setCellSelection(null);
+			return;
+		}
+		const deltas: Record<string, { row: number; col: number }> = {
+			ArrowUp: { row: -1, col: 0 },
+			ArrowDown: { row: 1, col: 0 },
+			ArrowLeft: { row: 0, col: -1 },
+			ArrowRight: { row: 0, col: 1 },
+		};
+		const delta = deltas[event.key];
+		if (!delta) {
+			return;
+		}
+		event.preventDefault();
+		const current = cellSelectionState?.focus ?? { rowIndex: 0, columnId: visibleDataColumnIds[0] };
+		const currentColIndex = Math.max(0, visibleDataColumnIds.indexOf(current.columnId));
+		const nextPoint: TableSelectionPoint = {
+			rowIndex: Math.min(Math.max(current.rowIndex + delta.row, 0), visibleRowCount - 1),
+			columnId: visibleDataColumnIds[
+				Math.min(Math.max(currentColIndex + delta.col, 0), visibleDataColumnIds.length - 1)
+			],
+		};
+		setCellSelection({
+			anchor: event.shiftKey && cellSelectionState ? cellSelectionState.anchor : nextPoint,
+			focus: nextPoint,
+		});
+	}, [cellSelectionEnabled, cellSelectionState, setCellSelection, visibleDataColumnIds, visibleRowCount]);
 
 	// ─── Render ───
 
@@ -706,6 +834,8 @@ export function DataTable<TData, TValue>({
 				ref={scrollContainerRef}
 				className="overflow-auto flex-1 min-h-0 max-h-full relative"
 				onScroll={handleScroll}
+				onKeyDown={handleCellKeyDown}
+				tabIndex={cellSelectionEnabled ? 0 : undefined}
 				style={{ overscrollBehavior: "contain" }}
 			>
 				{loading ? (
@@ -856,6 +986,9 @@ export function DataTable<TData, TValue>({
 									isScrolled={isScrolled}
 									onRowClick={onRowClick}
 									getFirstDataColumnFaviconUrl={getFirstDataColumnFaviconUrl}
+									selectedColumnsByRow={selectedColumnsByRow}
+									activeCell={cellSelectionState?.focus ?? null}
+									onCellMouseDown={handleCellMouseDown}
 								/>
 							)}
 						</table>
@@ -949,6 +1082,9 @@ type TableRowProps = {
 	isScrolled: boolean;
 	onRowClick?: (row: any, index: number) => void;
 	firstColumnFaviconUrl: string | null | undefined;
+	selectedCellColumnIds: string;
+	activeCellColumnId: string | null;
+	onCellMouseDown?: (rowIndex: number, columnId: string, event: React.MouseEvent<HTMLTableCellElement>) => void;
 	/** Stable string key encoding visible column IDs in order. When this
 	 * changes (column add/remove/reorder/visibility) the row re-renders. */
 	cellLayoutKey: string;
@@ -964,12 +1100,19 @@ function TableRowInner({
 	isScrolled,
 	onRowClick,
 	firstColumnFaviconUrl,
+	selectedCellColumnIds,
+	activeCellColumnId,
+	onCellMouseDown,
 }: TableRowProps) {
 	const visibleCells = row.getVisibleCells();
 	const firstDataIdx = 1 + (enableRowSelection ? 1 : 0);
 	const altBg = rowIdx % 2 === 0 ? "var(--color-surface)" : "var(--color-bg)";
 	const baseBg = isActive || isSelected ? "var(--color-accent-light)" : altBg;
 	const stickyBg = baseBg;
+	const selectedCellColumns = useMemo(
+		() => new Set(selectedCellColumnIds ? selectedCellColumnIds.split("|") : []),
+		[selectedCellColumnIds],
+	);
 
 	const handleClick = useCallback(() => {
 		onRowClick?.(row.original, rowIdx);
@@ -1010,19 +1153,33 @@ function TableRowInner({
 				const isSelectCol = cell.column.id === "select";
 				const isActionsCol = cell.column.id === "actions";
 				const isAddCol = cell.column.id === "__add_column";
+				const isDataCell = !isRownumCol && !isSelectCol && !isActionsCol && !isAddCol;
 				const isRightSticky = isActionsCol || isAddCol;
 				const isLastCol = colIdx === visibleCells.length - 1;
 				const cellFaviconUrl = isFirstData && !isSelectCol ? firstColumnFaviconUrl : undefined;
+				const isCellSelected = isDataCell && selectedCellColumns.has(cell.column.id);
+				const isCellActive = isDataCell && activeCellColumnId === cell.column.id;
+				const stickyShadow = isSticky && isScrolled
+					? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)"
+					: "";
+				const selectionShadow = isCellActive
+					? "inset 0 0 0 2px var(--color-accent)"
+					: isCellSelected
+						? "inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent)"
+						: "";
 
 				const cellStyle: React.CSSProperties = {
 					borderColor: "var(--color-border)",
+					...(isCellSelected
+						? { background: "color-mix(in srgb, var(--color-accent) 10%, var(--color-surface))" }
+						: {}),
+					...((stickyShadow || selectionShadow) ? { boxShadow: [stickyShadow, selectionShadow].filter(Boolean).join(", ") } : {}),
 					...(isSticky
 						? {
 								position: "sticky" as const,
 								left: enableRowSelection ? 40 : 0,
 								zIndex: 2,
-								background: stickyBg,
-								boxShadow: isScrolled ? "4px 0 12px -2px rgba(0,0,0,0.12), 2px 0 4px -1px rgba(0,0,0,0.06)" : "none",
+								background: isCellSelected ? "color-mix(in srgb, var(--color-accent) 10%, var(--color-surface))" : stickyBg,
 							}
 						: {}),
 					...(isSelectCol
@@ -1047,6 +1204,9 @@ function TableRowInner({
 				return (
 					<td
 						key={cell.id}
+						data-dt-cell-active={isCellActive ? "true" : undefined}
+						data-row-index={isDataCell ? rowIdx : undefined}
+						data-column-id={isDataCell ? cell.column.id : undefined}
 						className={cn(
 							"align-middle whitespace-nowrap text-[13px] border-b transition-colors box-border",
 							isRownumCol
@@ -1056,8 +1216,26 @@ function TableRowInner({
 									: "px-4 py-3",
 							!isLastCol && "border-r",
 							isSticky && isScrolled && "border-r-2!",
+							isDataCell && "cursor-cell select-none",
 						)}
 						style={cellStyle}
+						aria-selected={isCellSelected || undefined}
+						onMouseDown={(event) => {
+							if (isRownumCol && enableRowSelection && !isEditableEventTarget(event.target)) {
+								event.preventDefault();
+								event.stopPropagation();
+								row.toggleSelected(!row.getIsSelected());
+								return;
+							}
+							if (isDataCell) {
+								onCellMouseDown?.(rowIdx, cell.column.id, event);
+							}
+						}}
+						onClick={(event) => {
+							if (isRownumCol || isDataCell) {
+								event.stopPropagation();
+							}
+						}}
 					>
 						<div className="overflow-hidden">
 							{cellFaviconUrl ? (
@@ -1097,6 +1275,9 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
 		prev.isScrolled === next.isScrolled &&
 		prev.onRowClick === next.onRowClick &&
 		prev.firstColumnFaviconUrl === next.firstColumnFaviconUrl &&
+		prev.selectedCellColumnIds === next.selectedCellColumnIds &&
+		prev.activeCellColumnId === next.activeCellColumnId &&
+		prev.onCellMouseDown === next.onCellMouseDown &&
 		prev.cellLayoutKey === next.cellLayoutKey
 	);
 });
@@ -1111,6 +1292,9 @@ type DataTableBodyProps = {
 	isScrolled: boolean;
 	onRowClick?: (row: any, index: number) => void;
 	getFirstDataColumnFaviconUrl?: (row: Row<any>, table: Table<any>) => string | null | undefined;
+	selectedColumnsByRow: Map<number, string[]>;
+	activeCell: TableSelectionPoint | null;
+	onCellMouseDown?: (rowIndex: number, columnId: string, event: React.MouseEvent<HTMLTableCellElement>) => void;
 };
 
 function DataTableBodyInner({
@@ -1122,6 +1306,9 @@ function DataTableBodyInner({
 	isScrolled,
 	onRowClick,
 	getFirstDataColumnFaviconUrl,
+	selectedColumnsByRow,
+	activeCell,
+	onCellMouseDown,
 }: DataTableBodyProps) {
 	// Encode visible column layout as a stable string. When columns are
 	// added/removed/reordered/hidden, this changes and rows re-render.
@@ -1136,6 +1323,7 @@ function DataTableBodyInner({
 				const isSelected = row.getIsSelected();
 				const isActive = activeRowId != null && getRowId != null && getRowId(row.original) === activeRowId;
 				const firstColumnFaviconUrl = getFirstDataColumnFaviconUrl?.(row, table) ?? undefined;
+				const selectedCellColumnIds = selectedColumnsByRow.get(rowIdx)?.join("|") ?? "";
 				return (
 					<TableRow
 						key={row.id}
@@ -1148,6 +1336,9 @@ function DataTableBodyInner({
 						isScrolled={isScrolled}
 						onRowClick={onRowClick}
 						firstColumnFaviconUrl={firstColumnFaviconUrl}
+						selectedCellColumnIds={selectedCellColumnIds}
+						activeCellColumnId={activeCell?.rowIndex === rowIdx ? activeCell.columnId : null}
+						onCellMouseDown={onCellMouseDown}
 						cellLayoutKey={cellLayoutKey}
 					/>
 				);

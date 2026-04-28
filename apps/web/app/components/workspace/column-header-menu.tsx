@@ -244,6 +244,21 @@ export function InlineRenameInput({
 /* ─── Add Column Popover ─── */
 
 type AddColumnField = { id: string; name: string; type: string };
+type EnrichmentCategory = "people" | "company";
+type EnrichmentColumnOption = {
+	label: string;
+	key: string;
+	fieldType: string;
+	apolloPath: string;
+	category: EnrichmentCategory;
+};
+type EnrichmentColumnGroup = {
+	category: EnrichmentCategory;
+	label: string;
+	columns: EnrichmentColumnOption[];
+	inputFields: AddColumnField[];
+	defaultInputField: string;
+};
 
 export type EnrichmentStartPayload = {
 	fieldId: string;
@@ -289,15 +304,9 @@ export function AddColumnPopover({
 	const [error, setError] = useState<string | null>(null);
 
 	// Enrichment state
-	const [selectedEnrichCol, setSelectedEnrichCol] = useState<{
-		label: string; key: string; fieldType: string; apolloPath: string;
-	} | null>(null);
+	const [selectedEnrichCol, setSelectedEnrichCol] = useState<EnrichmentColumnOption | null>(null);
 	const [enrichInputField, setEnrichInputField] = useState<string>("");
-	const [enrichCategory, setEnrichCategory] = useState<"people" | "company" | null>(null);
-	const [enrichColumns, setEnrichColumns] = useState<Array<{
-		label: string; key: string; fieldType: string; apolloPath: string;
-	}>>([]);
-	const [eligibleInputFields, setEligibleInputFields] = useState<AddColumnField[]>([]);
+	const [enrichGroups, setEnrichGroups] = useState<EnrichmentColumnGroup[]>([]);
 	const [enrichScope, setEnrichScope] = useState<EnrichmentStartPayload["scope"]>("all");
 	const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
 
@@ -331,18 +340,21 @@ export function AddColumnPopover({
 	// Load enrichment columns lazily
 	useEffect(() => {
 		if (!enrichmentAvailable) return;
-		import("@/lib/enrichment-columns").then(({ detectEnrichmentCategory, getEnrichmentColumns, autoDetectInputField, getEligibleInputFields }) => {
-			const cat = detectEnrichmentCategory(objectName);
-			setEnrichCategory(cat);
-			if (cat) {
-				setEnrichColumns(getEnrichmentColumns(cat));
-				const currentFields = fieldsRef.current;
-				if (currentFields) {
-					setEligibleInputFields(getEligibleInputFields(cat, currentFields));
-					const autoInput = autoDetectInputField(cat, currentFields);
-					if (autoInput) setEnrichInputField(autoInput.name);
-				}
-			}
+		import("@/lib/enrichment-columns").then(({ getAvailableEnrichmentCategories, getEnrichmentColumns, autoDetectInputField, getEligibleInputFields }) => {
+			const currentFields = fieldsRef.current ?? [];
+			const groups = getAvailableEnrichmentCategories(objectName, currentFields).map((category) => {
+				const inputFields = getEligibleInputFields(category, currentFields);
+				const autoInput = autoDetectInputField(category, currentFields);
+				return {
+					category,
+					label: category === "people" ? "People enrichment" : "Company enrichment",
+					columns: getEnrichmentColumns(category).map((column) => ({ ...column, category })),
+					inputFields,
+					defaultInputField: autoInput?.name ?? "",
+				};
+			});
+			setEnrichGroups(groups);
+			setEnrichInputField(groups.find((group) => group.defaultInputField)?.defaultInputField ?? "");
 		});
 	}, [enrichmentAvailable, objectName]);
 
@@ -432,12 +444,12 @@ export function AddColumnPopover({
 	}, [name, type, enumInput, objectName, handleClose, onCreated]);
 
 	const handleEnrichCreate = useCallback(async () => {
-		if (!selectedEnrichCol || !enrichCategory || !enrichInputField) return;
+		if (!selectedEnrichCol || !enrichInputField) return;
 		setSaving(true);
 		setError(null);
 		try {
 			const { buildEnrichmentMeta } = await import("@/lib/enrichment-columns");
-			const meta = buildEnrichmentMeta(enrichCategory, selectedEnrichCol, enrichInputField);
+			const meta = buildEnrichmentMeta(selectedEnrichCol.category, selectedEnrichCol, enrichInputField);
 			const existingOutputField = fieldsRef.current?.find(
 				(field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase(),
 			);
@@ -458,7 +470,7 @@ export function AddColumnPopover({
 					fieldId: existingOutputField.id,
 					fieldName: existingOutputField.name,
 					apolloPath: selectedEnrichCol.apolloPath,
-					category: enrichCategory,
+					category: selectedEnrichCol.category,
 					inputFieldName: enrichInputField,
 					scope: enrichScope,
 				});
@@ -492,7 +504,7 @@ export function AddColumnPopover({
 					fieldId: result.fieldId,
 					fieldName: selectedEnrichCol.label,
 					apolloPath: selectedEnrichCol.apolloPath,
-					category: enrichCategory,
+					category: selectedEnrichCol.category,
 					inputFieldName: enrichInputField,
 					scope: enrichScope,
 				});
@@ -502,9 +514,13 @@ export function AddColumnPopover({
 		} finally {
 			setSaving(false);
 		}
-	}, [selectedEnrichCol, enrichCategory, enrichInputField, enrichScope, objectName, handleClose, onCreated]);
+	}, [selectedEnrichCol, enrichInputField, enrichScope, objectName, handleClose, onCreated]);
 
-	const showEnrichment = enrichmentAvailable && enrichCategory && enrichColumns.length > 0;
+	const showEnrichment = enrichmentAvailable && enrichGroups.some((group) => group.columns.length > 0);
+	const selectedGroup = selectedEnrichCol
+		? enrichGroups.find((group) => group.category === selectedEnrichCol.category)
+		: null;
+	const selectedInputFields = selectedGroup?.inputFields ?? [];
 	const selectedOutputExists = selectedEnrichCol
 		? fieldsRef.current?.some((field) => field.name.toLowerCase() === selectedEnrichCol.label.toLowerCase()) === true
 		: false;
@@ -574,7 +590,7 @@ export function AddColumnPopover({
 										}}
 									>
 										<option value="">Select input column...</option>
-										{eligibleInputFields.map((f) => (
+										{selectedInputFields.map((f) => (
 											<option key={f.id} value={f.name}>{f.name}</option>
 										))}
 									</select>
@@ -720,21 +736,36 @@ export function AddColumnPopover({
 											<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
 											Enrichment
 										</div>
-										<div className="grid grid-cols-2 gap-0.5">
-											{enrichColumns.map((col) => (
-												<button
-													key={col.key}
-													type="button"
-													onClick={() => setSelectedEnrichCol(col)}
-													className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition-all text-left hover:opacity-80"
-													style={{
-														color: "var(--color-text)",
-														background: "transparent",
-													}}
-												>
-													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-warning, #f59e0b)" }}><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-													{col.label}
-												</button>
+										<div className="space-y-2">
+											{enrichGroups.map((group) => (
+												<div key={group.category}>
+													{enrichGroups.length > 1 && (
+														<div className="text-[10px] font-medium uppercase tracking-wider px-1 mb-1" style={{ color: "var(--color-text-muted)" }}>
+															{group.label}
+														</div>
+													)}
+													<div className="grid grid-cols-2 gap-0.5">
+														{group.columns.map((col) => (
+															<button
+																key={`${col.category}:${col.key}`}
+																type="button"
+																onClick={() => {
+																	setSelectedEnrichCol(col);
+																	setEnrichInputField(group.defaultInputField);
+																	setScopeMenuOpen(false);
+																}}
+																className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition-all text-left hover:opacity-80"
+																style={{
+																	color: "var(--color-text)",
+																	background: "transparent",
+																}}
+															>
+																<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-warning, #f59e0b)" }}><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+																{col.label}
+															</button>
+														))}
+													</div>
+												</div>
 											))}
 										</div>
 									</div>

@@ -49,7 +49,7 @@ describe("AddColumnPopover", () => {
 			expect(screen.getByRole("option", { name: "Email" })).toBeInTheDocument();
 		});
 		expect(inputSelect).toHaveValue("Email");
-		expect(screen.getByText(/Will enrich using.*Email.*column/)).toBeInTheDocument();
+		expect(screen.queryByText(/Will enrich using.*Email.*column/)).not.toBeInTheDocument();
 	});
 
 	it("does not render the old column-name search field in the add-column popover", async () => {

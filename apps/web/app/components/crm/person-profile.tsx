@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { PersonAvatar } from "./person-avatar";
 import { CompanyFavicon } from "./company-favicon";
@@ -166,6 +166,39 @@ export function PersonProfile({
     [personId],
   );
 
+  // Notes is a single richtext field on the People object — same PATCH
+  // surface as `handleSaveName`. Mirroring the optimistic pattern keeps the
+  // textarea from re-rendering through a skeleton when the user blurs.
+  const handleSaveNotes = useCallback(
+    async (next: string) => {
+      const res = await fetch(
+        `/api/workspace/objects/people/entries/${encodeURIComponent(personId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: { Notes: next } }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              person: {
+                ...prev.person,
+                notes: next,
+                updated_at: new Date().toISOString(),
+              },
+            }
+          : prev,
+      );
+    },
+    [personId],
+  );
+
   if (loading && !data) {
     return (
       <div className="flex h-full flex-col" style={{ background: "var(--color-background)" }}>
@@ -224,7 +257,7 @@ export function PersonProfile({
               onOpenCompany={onOpenCompany}
             />
           )}
-          {tab === "notes" && <NotesTab data={data} />}
+          {tab === "notes" && <NotesTab data={data} onSave={handleSaveNotes} />}
         </div>
       </div>
     </div>
@@ -658,19 +691,161 @@ function ActivityTab({
   );
 }
 
-function NotesTab({ data }: { data: PersonResponse }) {
-  if (!data.person.notes?.trim()) {
-    return (
-      <CrmEmptyState
-        title="No notes yet"
-        description="Notes added in the People object detail panel will show up here."
-      />
-    );
-  }
+// ---------------------------------------------------------------------------
+// Notes tab — inline autosaving editor
+// ---------------------------------------------------------------------------
+//
+// `Notes` is a single richtext field on the People object. Rather than send
+// the user to the workspace detail panel to type one, we render an
+// always-visible auto-growing textarea right here. The affordance IS the
+// editor — there's no click-to-edit step, no modal.
+//
+// Save model:
+//   - Autosave on blur, but skip the PATCH if the value is unchanged.
+//   - Cmd/Ctrl+Enter saves without losing focus (so the user can keep typing).
+//   - Escape reverts the draft to the last persisted value.
+//   - "Saved · just now" / "Saving…" / red retry button under the editor.
+//
+// `data.person.notes` and `data.person.updated_at` are the source of truth; we
+// sync local editor state whenever the parent reloads the person so we don't
+// clobber fresh server state or show stale save timestamps.
+function NotesTab({
+  data,
+  onSave,
+}: {
+  data: PersonResponse;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const persisted = data.person.notes ?? "";
+  const persistedSavedAt = data.person.updated_at;
+  const [draft, setDraft] = useState(persisted);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(persistedSavedAt);
+  const [error, setError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Used to short-circuit `commit()` if the value matches what's already
+  // saved — prevents a redundant PATCH on every blur.
+  const lastSavedRef = useRef(persisted);
+  // Track in-flight saves so a blur-fired save and a Cmd+Enter save can't
+  // race the optimistic state into the wrong order.
+  const savingRef = useRef(false);
+
+  useEffect(() => {
+    if (persisted !== lastSavedRef.current) {
+      lastSavedRef.current = persisted;
+      setDraft(persisted);
+    }
+    setSavedAt(persistedSavedAt);
+  }, [persisted, persistedSavedAt]);
+
+  // Auto-grow: reset to `auto` first so the textarea can shrink, then snap
+  // to scrollHeight. Re-runs every time the draft changes.
+  const autoGrow = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) {return;}
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 160)}px`;
+  }, []);
+  useEffect(() => {
+    autoGrow();
+  }, [draft, autoGrow]);
+
+  const commit = useCallback(
+    async (next: string) => {
+      if (savingRef.current) {return;}
+      if (next === lastSavedRef.current) {return;}
+      savingRef.current = true;
+      setSaving(true);
+      setError(null);
+      try {
+        await onSave(next);
+        lastSavedRef.current = next;
+        setSavedAt(new Date().toISOString());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't save note.");
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [onSave],
+  );
+
+  // Re-render the "Saved · 12s ago" line over time without bumping any
+  // server state — a 30s tick is plenty granular for the relative buckets
+  // formatRelativeDate produces.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!savedAt || saving) {return;}
+    const id = window.setInterval(() => forceTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, [savedAt, saving]);
+
+  const firstName = data.person.name?.trim().split(/\s+/)[0] ?? null;
+  const placeholder = firstName
+    ? `Write a note about ${firstName}…`
+    : "Write a note…";
+
+  const dirty = draft !== lastSavedRef.current;
+
   return (
-    <article className="prose prose-sm max-w-none" style={{ color: "var(--color-text)" }}>
-      <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{data.person.notes}</pre>
-    </article>
+    <section className="space-y-2">
+      <textarea
+        ref={textareaRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          void commit(draft);
+        }}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            void commit(draft);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setDraft(lastSavedRef.current);
+            setError(null);
+          }
+        }}
+        placeholder={placeholder}
+        aria-label="Notes"
+        className="w-full resize-none rounded-2xl border px-4 py-3 text-[14px] leading-relaxed transition-shadow focus:outline-none focus:ring-2 focus:ring-(--color-accent)/30"
+        style={{
+          minHeight: 160,
+          color: "var(--color-text)",
+          background: "var(--color-surface)",
+          borderColor: "var(--color-border)",
+          fontFamily: "inherit",
+        }}
+      />
+      <div
+        className="flex items-center justify-end gap-2 px-1 text-[11px]"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        {error ? (
+          <button
+            type="button"
+            onClick={() => {
+              void commit(draft);
+            }}
+            className="hover:underline"
+            style={{ color: "var(--color-error)" }}
+          >
+            Couldn&apos;t save — retry
+          </button>
+        ) : saving ? (
+          <span>Saving…</span>
+        ) : dirty ? (
+          <span style={{ opacity: 0.7 }}>Unsaved changes</span>
+        ) : savedAt ? (
+          <span>
+            Saved
+            {" · "}
+            {formatRelativeDate(savedAt) || "just now"}
+          </span>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

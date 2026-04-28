@@ -717,7 +717,7 @@ export function DataTable<TData, TValue>({
 				{/* Search */}
 				{enableGlobalFilter && (
 					<div
-						className="flex items-center gap-2 h-8 px-3 backdrop-blur-sm rounded-full focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow max-w-[260px] min-w-[140px] shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
+						className="flex min-w-[140px] max-w-[260px] flex-[1_1_180px] items-center gap-2 h-8 px-3 backdrop-blur-sm rounded-full focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
 						style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)" }}
 					>
 						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" style={{ color: "var(--color-text-muted)", opacity: 0.5 }}>
@@ -757,75 +757,75 @@ export function DataTable<TData, TValue>({
 					</div>
 				)}
 
-				<div className="flex-1" />
+				<div className="ml-auto flex min-w-0 max-w-full flex-[1_1_220px] flex-wrap items-center justify-end gap-2">
+					{toolbarExtra}
 
-				{toolbarExtra}
-
-				{/* Columns menu */}
-				<DropdownMenu>
-					<DropdownMenuTrigger
-						className="h-8 px-3 flex items-center gap-1.5 rounded-full text-xs cursor-pointer transition-colors backdrop-blur-sm shadow-[0_0_21px_0_rgba(0,0,0,0.05)] outline-none focus:outline-none"
-						style={{ color: "var(--color-text-muted)", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}
-					>
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-							<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /><path d="M15 3v18" />
-						</svg>
-						Columns
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" sideOffset={6}>
-						<DropdownMenuCheckboxItem
-							checked={stickyFirstColumn}
-							onSelect={() => setStickyFirstColumn((v) => !v)}
+					{/* Columns menu */}
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							className="h-8 px-3 flex items-center gap-1.5 rounded-full text-xs cursor-pointer transition-colors backdrop-blur-sm shadow-[0_0_21px_0_rgba(0,0,0,0.05)] outline-none focus:outline-none"
+							style={{ color: "var(--color-text-muted)", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}
 						>
-							Freeze first column
-						</DropdownMenuCheckboxItem>
-						<DropdownMenuSeparator />
-						{visibleColumns.length === 0 ? (
-							<div className="px-2 py-1.5 text-xs opacity-50">No toggleable columns</div>
-						) : (
-							table.getAllLeafColumns()
-								.filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column" && c.getCanHide())
-								.map((column) => (
-									<DropdownMenuCheckboxItem
-										key={column.id}
-										checked={column.getIsVisible()}
-										onSelect={() => column.toggleVisibility(!column.getIsVisible())}
-									>
-										{typeof column.columnDef.header === "string"
-											? column.columnDef.header
-											: String((column.columnDef.meta as Record<string, string> | undefined)?.label ?? column.id)}
-									</DropdownMenuCheckboxItem>
-								))
-						)}
-					</DropdownMenuContent>
-				</DropdownMenu>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /><path d="M15 3v18" />
+							</svg>
+							Columns
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" sideOffset={6}>
+							<DropdownMenuCheckboxItem
+								checked={stickyFirstColumn}
+								onSelect={() => setStickyFirstColumn((v) => !v)}
+							>
+								Freeze first column
+							</DropdownMenuCheckboxItem>
+							<DropdownMenuSeparator />
+							{visibleColumns.length === 0 ? (
+								<div className="px-2 py-1.5 text-xs opacity-50">No toggleable columns</div>
+							) : (
+								table.getAllLeafColumns()
+									.filter((c) => c.id !== "__rownum" && c.id !== "select" && c.id !== "actions" && c.id !== "__add_column" && c.getCanHide())
+									.map((column) => (
+										<DropdownMenuCheckboxItem
+											key={column.id}
+											checked={column.getIsVisible()}
+											onSelect={() => column.toggleVisibility(!column.getIsVisible())}
+										>
+											{typeof column.columnDef.header === "string"
+												? column.columnDef.header
+												: String((column.columnDef.meta as Record<string, string> | undefined)?.label ?? column.id)}
+										</DropdownMenuCheckboxItem>
+									))
+							)}
+						</DropdownMenuContent>
+					</DropdownMenu>
 
-				{/* Refresh button */}
-				{onRefresh && (
-					<button
-						type="button"
-						onClick={onRefresh}
-						className="h-8 w-8 rounded-full flex items-center justify-center cursor-pointer transition-colors backdrop-blur-sm shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
-						style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-text-muted)" }}
-					>
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path d="M16 21h5v-5" /></svg>
-					</button>
-				)}
+					{/* Refresh button */}
+					{onRefresh && (
+						<button
+							type="button"
+							onClick={onRefresh}
+							className="h-8 w-8 rounded-full flex items-center justify-center cursor-pointer transition-colors backdrop-blur-sm shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
+							style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-text-muted)" }}
+						>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path d="M16 21h5v-5" /></svg>
+						</button>
+					)}
 
-				{/* Add button */}
-				{onAdd && (
-					<button
-						type="button"
-						onClick={onAdd}
-						className="h-8 px-3 flex items-center gap-1.5 rounded-full text-xs font-medium cursor-pointer transition-colors shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
-						style={{
-							background: "var(--color-accent)",
-							color: "#fff",
-						}}
-					>
-						{addButtonLabel}
-					</button>
-				)}
+					{/* Add button */}
+					{onAdd && (
+						<button
+							type="button"
+							onClick={onAdd}
+							className="h-8 px-3 flex items-center gap-1.5 rounded-full text-xs font-medium cursor-pointer transition-colors shadow-[0_0_21px_0_rgba(0,0,0,0.05)]"
+							style={{
+								background: "var(--color-accent)",
+								color: "#fff",
+							}}
+						>
+							{addButtonLabel}
+						</button>
+					)}
+				</div>
 			</div>
 			)}
 

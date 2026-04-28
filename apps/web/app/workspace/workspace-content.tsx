@@ -162,6 +162,7 @@ const LEFT_SIDEBAR_FULL_MIN = 200;
 const LEFT_SIDEBAR_FULL_DEFAULT = 260;
 const LEFT_SIDEBAR_MIN = LEFT_SIDEBAR_COMPACT_WIDTH;
 const LEFT_SIDEBAR_MAX = 480;
+const CENTER_PANEL_MIN = 300;
 const RIGHT_PANEL_MIN = 360;
 const RIGHT_PANEL_MAX = 2000;
 const STORAGE_LEFT = "dench-workspace-left-sidebar-width";
@@ -488,6 +489,7 @@ function WorkspacePageInner() {
   const chatPanelRefs = useRef<Record<string, ChatPanelHandle | null>>({});
   // Root layout ref for resize handle position (handle follows cursor)
   const layoutRef = useRef<HTMLDivElement>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
 
   // Live-reactive tree via SSE watcher (with browse-mode support)
   const {
@@ -564,6 +566,26 @@ function WorkspacePageInner() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [pendingComposioAction, setPendingComposioAction] = useState<ComposioChatAction | null>(null);
   const [tableSelectionContext, setTableSelectionContext] = useState<TableSelectionContext | null>(null);
+
+  useEffect(() => {
+    const updateLayoutWidth = () => {
+      setLayoutWidth(layoutRef.current?.clientWidth ?? window.innerWidth);
+    };
+    updateLayoutWidth();
+
+    const observer =
+      typeof ResizeObserver !== "undefined" && layoutRef.current
+        ? new ResizeObserver(updateLayoutWidth)
+        : null;
+    if (layoutRef.current) {
+      observer?.observe(layoutRef.current);
+    }
+    window.addEventListener("resize", updateLayoutWidth);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateLayoutWidth);
+    };
+  }, []);
 
   // Tabs state — single source of truth for content + chat tabs.
   // Replaces the older tabState/activePath/content/activeContentTabId quartet
@@ -877,6 +899,33 @@ function WorkspacePageInner() {
 
   // Whether the left sidebar is in compact (icon-only) mode.
   const isLeftSidebarCompact = leftSidebarWidth < LEFT_SIDEBAR_FULL_MIN;
+  const reservedLeftSidebarWidth = !isMobile && !leftSidebarCollapsed ? leftSidebarWidth : 0;
+  const availableRightPanelMaxWidth = useMemo(() => {
+    const totalWidth = layoutWidth || (typeof window !== "undefined" ? window.innerWidth : 0);
+    if (!totalWidth) {
+      return rightPanelWidth;
+    }
+    return clamp(
+      totalWidth - reservedLeftSidebarWidth - CENTER_PANEL_MIN,
+      RIGHT_PANEL_MIN,
+      RIGHT_PANEL_MAX,
+    );
+  }, [layoutWidth, reservedLeftSidebarWidth, rightPanelWidth]);
+  // Right panel width contract — three values, three concerns:
+  //   - rightPanelWidth          → user's saved preference (persisted to localStorage,
+  //                                only mutated by the resize handle). Never used as a
+  //                                rendered width directly.
+  //   - renderedRightPanelWidth  → preference clamped to currently-available space.
+  //                                Used as the inner content width so right-panel pages
+  //                                instantly reflow when the left sidebar opens/closes,
+  //                                instead of overflowing and getting clipped by the
+  //                                outer aside's overflow-hidden.
+  //   - effectiveRightPanelWidth → renderedRightPanelWidth, but 0 while collapsed.
+  //                                Used as the OUTER aside width so collapse animates
+  //                                smoothly (outer wipes over inner; inner stays at
+  //                                rendered width during the 200ms transition).
+  const renderedRightPanelWidth = Math.min(rightPanelWidth, availableRightPanelMaxWidth);
+  const effectiveRightPanelWidth = rightPanelCollapsed ? 0 : renderedRightPanelWidth;
 
   // Snap-aware resize handler: dragging below the compact threshold snaps to icon mode;
   // dragging into the gap between threshold and full min snaps to full min.
@@ -1214,12 +1263,12 @@ function WorkspacePageInner() {
       setRightPanelCollapsed(false);
       return;
     }
-    const CHAT_MIN = 420;
-    const ideal = window.innerWidth - leftSidebarWidth - CHAT_MIN;
+    const totalWidth = layoutRef.current?.clientWidth ?? window.innerWidth;
+    const ideal = totalWidth - reservedLeftSidebarWidth - CENTER_PANEL_MIN;
     const wideTarget = clamp(ideal, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX);
     setRightPanelCollapsed(false);
     setRightPanelWidth((current) => Math.max(current, wideTarget));
-  }, [leftSidebarWidth]);
+  }, [reservedLeftSidebarWidth]);
 
   const handleNavigate = useCallback(
     (
@@ -2409,7 +2458,7 @@ function WorkspacePageInner() {
 
 
       {/* ── Center: chat panel ── */}
-      <main className="flex-1 flex flex-col min-w-[420px] overflow-hidden relative" style={{ background: "var(--color-main-bg)" }}>
+      <main className="flex-1 flex flex-col min-w-[300px] overflow-hidden relative" style={{ background: "var(--color-main-bg)" }}>
         {/* Mobile top bar */}
         {isMobile && (
           <div
@@ -2566,19 +2615,19 @@ function WorkspacePageInner() {
         <aside
           className={`sidebar-animate flex-shrink-0 min-h-0 flex flex-col relative ${rightPanelCollapsed ? "overflow-hidden" : "border-l overflow-hidden"}`}
           style={{
-            width: rightPanelCollapsed ? 0 : rightPanelWidth,
-            minWidth: rightPanelCollapsed ? 0 : rightPanelWidth,
+            width: effectiveRightPanelWidth,
+            minWidth: effectiveRightPanelWidth,
             borderColor: "var(--color-border)",
             background: "var(--color-bg)",
             transition: "width 200ms ease, min-width 200ms ease",
           }}
         >
-          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: rightPanelWidth, minWidth: rightPanelWidth }}>
+          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: renderedRightPanelWidth, minWidth: renderedRightPanelWidth }}>
             <ResizeHandle
               mode="right"
               containerRef={layoutRef}
               min={RIGHT_PANEL_MIN}
-              max={RIGHT_PANEL_MAX}
+              max={availableRightPanelMaxWidth}
               onResize={setRightPanelWidth}
             />
             <RightPanel>
@@ -3676,14 +3725,13 @@ function ObjectView({
         {/* Right: search, filter, views, settings, refresh, +Add.
             `ml-auto` pushes this cluster to the right edge whether the row
             wraps or not. */}
-        <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-          {/* Search input — hidden on narrow widths so the rest of the toolbar fits */}
+        <div className="ml-auto flex min-w-0 max-w-full flex-[1_1_280px] flex-wrap items-center justify-end gap-1.5">
+          {/* Search input — shrinks/wraps before core actions disappear. */}
           <div
-            className="hidden md:flex items-center gap-1.5 h-7 px-2 rounded-md focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow"
+            className="flex min-w-[128px] max-w-[180px] flex-[1_1_150px] items-center gap-1.5 h-7 px-2 rounded-md focus-within:ring-2 focus-within:ring-(--color-accent)/30 transition-shadow"
             style={{
               border: "1px solid var(--color-border)",
               background: "var(--color-surface)",
-              width: 180,
             }}
           >
             <svg

@@ -834,12 +834,7 @@ export function AddColumnPopover({
 										))}
 									</select>
 								</div>
-								{enrichInputField && (
-									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-text-muted)" }}>
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /></svg>
-										Will enrich using &ldquo;{enrichInputField}&rdquo; column
-									</div>
-								)}
+
 								{selectedOutputExists && (
 									<div className="flex items-center gap-1.5 text-xs px-1" style={{ color: "var(--color-accent)" }}>
 										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
@@ -1010,10 +1005,6 @@ export function AddColumnPopover({
 									/>
 								</div>
 							)}
-
-							<div className="px-3 pb-2 text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-								Creates &ldquo;{nextDefaultFieldName(fieldTypeLabel(type), fieldsRef.current)}&rdquo;. Rename it from the column menu after creating.
-							</div>
 
 							{error && (
 								<div className="px-3 pb-2">

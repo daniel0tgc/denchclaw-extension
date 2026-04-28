@@ -218,28 +218,46 @@ export function SelectOptionsEditor({
 	const [draft, setDraft] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const savingRef = useRef(false);
+	const savedOptionsRef = useRef(values);
 
 	useEffect(() => {
 		setOptions(values);
+		savedOptionsRef.current = values;
 		setError(null);
 	}, [values]);
 
 	const saveOptions = useCallback(async (nextValues: string[]) => {
+		if (savingRef.current) {
+			return false;
+		}
 		const normalized = normalizeOptionList(nextValues);
 		if (!normalized.ok) {
 			setError(normalized.error);
 			return false;
 		}
+		const currentSaved = savedOptionsRef.current;
+		if (
+			normalized.values.length === currentSaved.length &&
+			normalized.values.every((value, index) => value === currentSaved[index])
+		) {
+			setOptions(normalized.values);
+			setError(null);
+			return true;
+		}
+		savingRef.current = true;
 		setSaving(true);
 		setError(null);
 		try {
 			await onSave(normalized.values);
 			setOptions(normalized.values);
+			savedOptionsRef.current = normalized.values;
 			return true;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to save options");
 			return false;
 		} finally {
+			savingRef.current = false;
 			setSaving(false);
 		}
 	}, [onSave]);
@@ -256,6 +274,10 @@ export function SelectOptionsEditor({
 	}, [draft, options, saveOptions]);
 
 	const renameOption = useCallback(async (index: number, nextValue: string) => {
+		const originalValue = savedOptionsRef.current[index] ?? "";
+		if (nextValue.trim() === originalValue) {
+			return;
+		}
 		const next = [...options];
 		next[index] = nextValue;
 		await saveOptions(next);
@@ -316,6 +338,7 @@ export function SelectOptionsEditor({
 						<button
 							type="button"
 							disabled={saving}
+							onMouseDown={(e) => e.preventDefault()}
 							onClick={() => void renameOption(index, option)}
 							className="flex h-7 w-7 items-center justify-center rounded-full transition-colors disabled:opacity-40 hover:opacity-70"
 							style={{ color: "var(--color-text-muted)" }}
@@ -681,6 +704,7 @@ export function AddColumnPopover({
 					return;
 				}
 				handleClose();
+				onCreated();
 				onEnrichmentStartRef.current?.({
 					fieldId: existingOutputField.id,
 					fieldName: existingOutputField.name,

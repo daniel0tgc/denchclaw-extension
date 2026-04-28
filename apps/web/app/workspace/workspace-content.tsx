@@ -1255,11 +1255,11 @@ function WorkspacePageInner() {
       return;
     }
     const totalWidth = layoutRef.current?.clientWidth ?? window.innerWidth;
-    const ideal = totalWidth - leftSidebarWidth - CENTER_PANEL_MIN;
+    const ideal = totalWidth - reservedLeftSidebarWidth - CENTER_PANEL_MIN;
     const wideTarget = clamp(ideal, RIGHT_PANEL_MIN, RIGHT_PANEL_MAX);
     setRightPanelCollapsed(false);
     setRightPanelWidth((current) => Math.max(current, wideTarget));
-  }, [leftSidebarWidth]);
+  }, [reservedLeftSidebarWidth]);
 
   const handleNavigate = useCallback(
     (
@@ -2613,7 +2613,7 @@ function WorkspacePageInner() {
             transition: "width 200ms ease, min-width 200ms ease",
           }}
         >
-          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: effectiveRightPanelWidth, minWidth: effectiveRightPanelWidth }}>
+          <div className="flex h-full min-h-0 flex-col relative overflow-hidden" style={{ width: rightPanelWidth, minWidth: rightPanelWidth }}>
             <ResizeHandle
               mode="right"
               containerRef={layoutRef}

@@ -1,9 +1,15 @@
 import {
+  fetchComposioConnections,
   initiateComposioConnect,
   resolveComposioApiKey,
   resolveComposioEligibility,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
+import {
+  extractComposioConnections,
+  normalizeComposioConnections,
+  normalizeComposioToolkitSlug,
+} from "@/lib/composio-client";
 import { resolveComposioConnectToolkitSlug } from "@/lib/composio-normalization";
 import { resolveAppPublicOrigin } from "@/lib/public-origin";
 
@@ -54,8 +60,25 @@ export async function POST(request: Request) {
   const gatewayUrl = resolveComposioGatewayUrl();
   const requestedToolkit = body.toolkit.trim();
   const connectToolkit = resolveComposioConnectToolkitSlug(requestedToolkit);
+  const normalizedToolkit = normalizeComposioToolkitSlug(connectToolkit);
 
   try {
+    const activeConnection = normalizeComposioConnections(
+      extractComposioConnections(await fetchComposioConnections(gatewayUrl, apiKey)),
+    ).find((connection) => connection.normalized_toolkit_slug === normalizedToolkit && connection.is_active);
+
+    if (activeConnection) {
+      return Response.json(
+        {
+          error: "This app is already connected. Disconnect it before connecting another account.",
+          code: "APP_ALREADY_CONNECTED",
+          connection_id: activeConnection.id,
+          toolkit: normalizedToolkit,
+        },
+        { status: 409 },
+      );
+    }
+
     const data = await initiateComposioConnect(
       gatewayUrl,
       apiKey,

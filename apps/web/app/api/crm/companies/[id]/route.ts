@@ -5,11 +5,12 @@ import {
   buildEntryProjection,
   buildLatestMessagePerThreadCte,
   hydratePeopleByIds,
+  jsonArrayContains,
   loadCrmFieldMaps,
   safeQuery,
   sqlString,
 } from "@/lib/crm-queries";
-import { deriveWebsite } from "@/lib/website-from-domain";
+import { deriveDisplayDomain, deriveWebsite } from "@/lib/website-from-domain";
 import { getConnectionStrengthBucket } from "@/lib/connection-strength-label";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export async function GET(
     updated_at: raw.updated_at,
   };
 
-  // ─── 2. People at this company (match by domain on People.Email Address) ─
+  // ─── 2. People at this company ─────────────────────────────────────────
   type PersonRow = Record<string, string | null>;
   let people: Array<{
     id: string;
@@ -81,14 +82,32 @@ export async function GET(
     last_interaction_at: string | null;
     avatar_url: string | null;
   }> = [];
-  if (company.domain) {
-    const safeDomain = company.domain.replace(/'/g, "''").toLowerCase();
+  const companyDomain = deriveDisplayDomain(company.domain ?? company.website);
+  const peopleCompanyFieldId = fieldMaps.people["Company"];
+  const peoplePredicates: string[] = [];
+  if (peopleCompanyFieldId) {
+    peoplePredicates.push(
+      `sub.company_id = ${sqlString(company.id)}`,
+      jsonArrayContains("sub.company_id", company.id),
+    );
+  }
+  if (companyDomain) {
+    const domainSql = sqlString(companyDomain.toLowerCase());
+    const emailDomainSql = "LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1))";
+    peoplePredicates.push(
+      `${emailDomainSql} = ${domainSql}`,
+      `${emailDomainSql} LIKE '%.' || ${domainSql}`,
+    );
+  }
+
+  if (peoplePredicates.length > 0) {
     const peopleProjection = buildEntryProjection({
       objectId: ONBOARDING_OBJECT_IDS.people,
       fieldMap: fieldMaps.people,
       aliasedFields: [
         { name: "Full Name", alias: "name" },
         { name: "Email Address", alias: "email" },
+        { name: "Company", alias: "company_id" },
         { name: "Job Title", alias: "job_title" },
         { name: "Strength Score", alias: "strength_score" },
         { name: "Last Interaction At", alias: "last_interaction_at" },
@@ -105,8 +124,7 @@ export async function GET(
       SELECT * FROM (
         SELECT DISTINCT ON (COALESCE(LOWER(TRIM(sub.email)), sub.entry_id)) sub.*
         FROM (${peopleProjection}) sub
-        WHERE LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) = '${safeDomain}'
-           OR LOWER(SUBSTR(sub.email, INSTR(sub.email, '@') + 1)) LIKE '%.${safeDomain}'
+        WHERE ${peoplePredicates.map((predicate) => `(${predicate})`).join("\n           OR ")}
         ORDER BY COALESCE(LOWER(TRIM(sub.email)), sub.entry_id),
                  TRY_CAST(sub.strength_score AS DOUBLE) DESC NULLS LAST,
                  sub.last_interaction_at DESC NULLS LAST

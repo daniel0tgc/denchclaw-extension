@@ -5,6 +5,8 @@
 
 export type EnrichmentCategory = "people" | "company";
 
+export const ENRICHMENT_CATEGORIES: EnrichmentCategory[] = ["people", "company"];
+
 export type EnrichmentColumnDef = {
 	label: string;
 	key: string;
@@ -110,6 +112,19 @@ export function getEligibleInputFields(
 	fields: FieldCandidate[],
 ): FieldCandidate[] {
 	return fields.filter((field) => isEligibleInputField(category, field));
+}
+
+export function getAvailableEnrichmentCategories(
+	objectName: string,
+	fields: FieldCandidate[],
+): EnrichmentCategory[] {
+	const detected = detectEnrichmentCategory(objectName);
+	if (detected) return [detected];
+
+	const categoriesWithInputs = ENRICHMENT_CATEGORIES.filter(
+		(category) => getEligibleInputFields(category, fields).length > 0,
+	);
+	return categoriesWithInputs.length > 0 ? categoriesWithInputs : ENRICHMENT_CATEGORIES;
 }
 
 export function autoDetectInputField(

@@ -1843,11 +1843,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					lastAnnouncedFilePathRef.current = fileContext.path;
 				}
 
-				// Store HTML keyed by the message text the renderer will see
-				// (with [Attached files: …] inline) so chat-message.tsx can
-				// recover the rich-text version when echoing back the
-				// message that was just sent.
-				userHtmlMapRef.current.set(messageText, html);
 				pendingHtmlRef.current = html;
 
 				userScrolledAwayRef.current = false;
@@ -1867,6 +1862,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					if (fileContext?.tableSelection) {
 						gatewayMessageText = `${formatTableSelectionContext(fileContext.tableSelection)}\n\n${gatewayMessageText}`;
 					}
+
+					// Key the HTML map by the SAME text the UI message will carry,
+					// so chat-message.tsx's `userHtmlMap.get(textContent)` lookup
+					// matches and the rich rendering (mention pills etc.) is
+					// preserved on first render of the user's bubble.
+					userHtmlMapRef.current.set(gatewayMessageText, html);
 
 					const userMsg = {
 						id: `user-${Date.now()}`,
@@ -1895,6 +1896,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					// /api/chat path: send messageText (raw text + inline
 					// attachments prefix only) + structured workspaceContext
 					// via the transport body callback.
+					//
+					// useChat's sendMessage will create a UI message whose
+					// text part equals `messageText`, so key the HTML map by
+					// `messageText` to match chat-message.tsx's lookup.
+					userHtmlMapRef.current.set(messageText, html);
 					if (Object.keys(workspaceContext).length > 0) {
 						pendingWorkspaceContextRef.current = workspaceContext;
 					}

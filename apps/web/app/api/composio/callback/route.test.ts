@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
+const { invalidateComposioConnectionsCacheMock } = vi.hoisted(() => ({
+  invalidateComposioConnectionsCacheMock: vi.fn(),
+}));
+
+vi.mock("../connections/route", () => ({
+  invalidateComposioConnectionsCache: invalidateComposioConnectionsCacheMock,
+}));
+
 vi.mock("@/lib/integrations", () => ({
   refreshIntegrationsRuntime: vi.fn(),
 }));
@@ -59,6 +67,7 @@ describe("Composio callback API", () => {
 
     const html = await response.text();
     expect(response.status).toBe(200);
+    expect(invalidateComposioConnectionsCacheMock).toHaveBeenCalledTimes(1);
     expect(mockedRefreshIntegrationsRuntime).toHaveBeenCalledTimes(1);
     expect(html).toContain('"connected_account_id":"acct_123"');
     expect(html).toContain('"connected_toolkit_slug":"x"');
@@ -71,6 +80,7 @@ describe("Composio callback API", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(invalidateComposioConnectionsCacheMock).not.toHaveBeenCalled();
     expect(mockedRefreshIntegrationsRuntime).not.toHaveBeenCalled();
   });
 

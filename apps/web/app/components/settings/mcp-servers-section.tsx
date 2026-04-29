@@ -191,6 +191,7 @@ export function McpServersSection() {
 
       const payload = await response.json() as { server?: McpServerEntry };
       if (payload.server) {
+        hydratedProbeKeysRef.current.delete(payload.server.key);
         setServers((current) => upsertServer(current, payload.server as McpServerEntry));
       } else {
         await fetchServers();

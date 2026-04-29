@@ -239,6 +239,9 @@ describe("ComposioAppsSection", () => {
       expect(screen.getByText("Gmail")).toBeInTheDocument();
     });
 
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/composio/connections?include_toolkits=1&fresh=1",
+    );
     expect(screen.getByText("Your Apps")).toBeInTheDocument();
     expect(screen.getByText("GitHub")).toBeInTheDocument();
 

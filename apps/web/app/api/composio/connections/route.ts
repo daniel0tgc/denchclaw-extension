@@ -39,6 +39,11 @@ const connectionsCache = new Map<string, CacheEntry<ComposioConnectionsResponse>
 const toolkitBulkCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
 const resolvedToolkitsCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
 
+export function invalidateComposioConnectionsCache(): void {
+  connectionsCache.clear();
+  resolvedToolkitsCache.clear();
+}
+
 function buildCacheKey(gatewayUrl: string, apiKey: string, suffix = ""): string {
   return `${gatewayUrl}::${apiKey}${suffix ? `::${suffix}` : ""}`;
 }

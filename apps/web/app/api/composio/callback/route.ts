@@ -3,6 +3,7 @@ import {
   resolveComposioApiKey,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
+import { invalidateComposioConnectionsCache } from "../connections/route";
 import {
   extractComposioConnections,
   normalizeComposioConnections,
@@ -77,6 +78,7 @@ export async function GET(request: Request) {
     | Awaited<ReturnType<typeof resolveConnectedToolkitSummary>>
     | undefined;
   if (success) {
+    invalidateComposioConnectionsCache();
     resolvedConnection = await resolveConnectedToolkitSummary(connectedAccountId);
     void (async () => {
       try {

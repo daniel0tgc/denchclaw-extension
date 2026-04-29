@@ -87,6 +87,48 @@ describe("Composio connections API", () => {
     expect(fetchComposioToolkitsMock).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates cached connections while preserving cached toolkit metadata", async () => {
+    fetchComposioConnectionsMock
+      .mockResolvedValueOnce({
+        connections: [
+          {
+            id: "ca_twitter_1",
+            toolkit_slug: "twitter",
+            toolkit_name: "Twitter",
+            status: "ACTIVE",
+            created_at: "2026-04-03T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        connections: [
+          {
+            id: "ca_gmail_1",
+            toolkit_slug: "gmail",
+            toolkit_name: "Gmail",
+            status: "ACTIVE",
+            created_at: "2026-04-04T00:00:00.000Z",
+          },
+        ],
+      });
+    const { GET, invalidateComposioConnectionsCache } = await import("./route");
+    const request = new Request("http://localhost/api/composio/connections?include_toolkits=1");
+
+    const cachedResponse = await GET(request);
+    const cachedBody = await cachedResponse.json();
+    const repeatedResponse = await GET(request);
+    const repeatedBody = await repeatedResponse.json();
+    invalidateComposioConnectionsCache();
+    const invalidatedResponse = await GET(request);
+    const invalidatedBody = await invalidatedResponse.json();
+
+    expect(cachedBody.connections[0].toolkit_slug).toBe("twitter");
+    expect(repeatedBody.connections[0].toolkit_slug).toBe("twitter");
+    expect(invalidatedBody.connections[0].toolkit_slug).toBe("gmail");
+    expect(fetchComposioConnectionsMock).toHaveBeenCalledTimes(2);
+    expect(fetchComposioToolkitsMock).toHaveBeenCalledTimes(1);
+  });
+
   it("uses connection-backed placeholders when the bulk toolkit fetch misses", async () => {
     fetchComposioToolkitsMock.mockResolvedValueOnce({ items: [] });
     fetchComposioConnectionsMock.mockResolvedValue({

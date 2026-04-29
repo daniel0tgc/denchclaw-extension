@@ -1195,44 +1195,125 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 			};
 		}, [status, stop]);
 
-		// Auto-scroll to bottom on new messages, but only when the user
-		// is already near the bottom.  If the user scrolls up during
-		// streaming, we stop auto-scrolling until they return to the
-		// bottom (or a new user message is sent).
+		// ── Stick-to-bottom scroll logic ──
+		//
+		// Fundamental principle: the only thing that should ever move the user
+		// away from the bottom is a user-initiated scroll gesture. Anything
+		// else (new messages, lazy-loaded components, async font/highlight
+		// hydration, status-row toggles, cloud-state fetches, image loads)
+		// is layout drift and should never visibly shift content under the
+		// user's cursor when they are at the bottom.
+		//
+		// Implementation:
+		//   1. `wantsToBePinnedRef` is the single source of truth for intent.
+		//      It flips only on user input gestures, never on programmatic
+		//      or layout-induced scroll events.
+		//   2. A ResizeObserver on the scroll container + its content re-pins
+		//      to the bottom on *every* size change, so async layout updates
+		//      (ReportCard, voice button mount, web fonts, etc.) never leave
+		//      the user stranded above the last message.
+		//   3. The legacy messages-changed effect is preserved so token-by-
+		//      token streaming feels smooth even before ResizeObserver fires.
 		const scrollContainerRef = useRef<HTMLDivElement>(null);
-		const userScrolledAwayRef = useRef(false);
-		const scrollRafRef = useRef(0);
+		const wantsToBePinnedRef = useRef(true);
+		const isUserScrollingRef = useRef(false);
+		const userScrollResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const repinRafRef = useRef(0);
 		const [showScrollButton, setShowScrollButton] = useState(false);
-
-		// Detect when the user scrolls away from the bottom.
-		useEffect(() => {
-			const el = scrollContainerRef.current;
-			if (!el) {return;}
-
-			const onScroll = () => {
-				const away = isChatScrolledAwayFromBottom(el);
-				userScrolledAwayRef.current = away;
-				setShowScrollButton(away);
-			};
-
-			el.addEventListener("scroll", onScroll, { passive: true });
-			return () => el.removeEventListener("scroll", onScroll);
-		}, []);
 
 		const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 			const el = scrollContainerRef.current;
 			if (!el) {return;}
-			userScrolledAwayRef.current = false;
+			wantsToBePinnedRef.current = true;
 			setShowScrollButton(false);
 			scrollChatToBottom(el, behavior);
 		}, []);
 
-		// Auto-scroll effect — skips when user has scrolled away.
+		// Track user-initiated input so we can tell user scrolls apart from
+		// layout-induced scrolls (clamping when content shrinks, our own
+		// programmatic re-pins, etc.). Only user-initiated scrolls update
+		// `wantsToBePinnedRef`.
 		useEffect(() => {
-			if (userScrolledAwayRef.current) {return;}
-			if (scrollRafRef.current) {return;}
-			scrollRafRef.current = requestAnimationFrame(() => {
-				scrollRafRef.current = 0;
+			const el = scrollContainerRef.current;
+			if (!el) {return;}
+
+			const markUserScrolling = () => {
+				isUserScrollingRef.current = true;
+				if (userScrollResetTimerRef.current) {
+					clearTimeout(userScrollResetTimerRef.current);
+				}
+				userScrollResetTimerRef.current = setTimeout(() => {
+					isUserScrollingRef.current = false;
+				}, 200);
+			};
+
+			const onScroll = () => {
+				if (!isUserScrollingRef.current) {return;}
+				const away = isChatScrolledAwayFromBottom(el);
+				wantsToBePinnedRef.current = !away;
+				setShowScrollButton(away);
+			};
+
+			el.addEventListener("wheel", markUserScrolling, { passive: true });
+			el.addEventListener("touchstart", markUserScrolling, { passive: true });
+			el.addEventListener("touchmove", markUserScrolling, { passive: true });
+			el.addEventListener("pointerdown", markUserScrolling, { passive: true });
+			el.addEventListener("keydown", markUserScrolling);
+			el.addEventListener("scroll", onScroll, { passive: true });
+
+			return () => {
+				if (userScrollResetTimerRef.current) {
+					clearTimeout(userScrollResetTimerRef.current);
+				}
+				el.removeEventListener("wheel", markUserScrolling);
+				el.removeEventListener("touchstart", markUserScrolling);
+				el.removeEventListener("touchmove", markUserScrolling);
+				el.removeEventListener("pointerdown", markUserScrolling);
+				el.removeEventListener("keydown", markUserScrolling);
+				el.removeEventListener("scroll", onScroll);
+			};
+		}, []);
+
+		// Re-pin to bottom whenever content size changes for *any* reason
+		// (the key fix). Coalesced via rAF so a burst of layout updates
+		// produces a single scroll write per frame.
+		useEffect(() => {
+			const el = scrollContainerRef.current;
+			if (!el) {return;}
+
+			const repinIfNeeded = () => {
+				if (repinRafRef.current) {return;}
+				repinRafRef.current = requestAnimationFrame(() => {
+					repinRafRef.current = 0;
+					const elInner = scrollContainerRef.current;
+					if (!elInner) {return;}
+					if (!wantsToBePinnedRef.current) {return;}
+					if (isUserScrollingRef.current) {return;}
+					scrollChatToBottom(elInner, "auto");
+				});
+			};
+
+			const ro = new ResizeObserver(repinIfNeeded);
+			ro.observe(el);
+			const content = el.firstElementChild;
+			if (content instanceof HTMLElement) {ro.observe(content);}
+
+			return () => {
+				if (repinRafRef.current) {
+					cancelAnimationFrame(repinRafRef.current);
+					repinRafRef.current = 0;
+				}
+				ro.disconnect();
+			};
+		}, []);
+
+		// Re-pin on new messages too — keeps token-by-token streaming smooth
+		// before the ResizeObserver pass arrives.
+		useEffect(() => {
+			if (!wantsToBePinnedRef.current) {return;}
+			if (repinRafRef.current) {return;}
+			repinRafRef.current = requestAnimationFrame(() => {
+				repinRafRef.current = 0;
 				scrollToBottom("auto");
 			});
 		}, [messages, scrollToBottom]);
@@ -1862,7 +1943,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
 				pendingHtmlRef.current = html;
 
-				userScrolledAwayRef.current = false;
+				wantsToBePinnedRef.current = true;
 
 				if (gatewaySessionKey) {
 					// The gateway flow is a separate transport (POST /api/gateway/chat
@@ -2108,7 +2189,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 					sessionIdRef.current = sessionId;
 					onActiveSessionChange?.(sessionId);
 					onSessionsChange?.();
-					userScrolledAwayRef.current = false;
+					wantsToBePinnedRef.current = true;
 					void sendMessage({ text });
 				},
 				insertFileMention: (name: string, path: string) => {

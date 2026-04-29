@@ -147,4 +147,67 @@ describe("chat scroll helpers", () => {
 
     expect(calls).toEqual([{ top: 1400, behavior: "auto" }]);
   });
+
+  // ── Regression: layout drift under a pinned user ──
+  // The bug: when the user was at the bottom, async layout changes (cloud
+  // settings fetch ≈1–2 s, lazy ReportCard, voice button mount on cloud
+  // refresh, web font load, status row toggle) grew or shrank the scroll
+  // content WITHOUT touching the `messages` array. The old auto-scroll
+  // listened only on `[messages]`, so the user drifted away from bottom and
+  // perceived a small upward jump after 1–2 s of sitting still.
+  //
+  // The fix re-pins on every content-size change via ResizeObserver. These
+  // tests pin the scroll-position contract that the new code must honor.
+
+  it("detects user has drifted off bottom when content grows but scrollTop doesn't", () => {
+    // User was at bottom (distance = 0) before any layout change.
+    const before = { clientHeight: 600, scrollHeight: 1400, scrollTop: 800 };
+    expect(isChatScrolledAwayFromBottom(before)).toBe(false);
+
+    // Cloud-settings fetch resolves; voice-button row mounts in the last
+    // assistant message. Content grows by 100 px, scrollTop unchanged.
+    const afterGrow = { clientHeight: 600, scrollHeight: 1500, scrollTop: 800 };
+    expect(getChatDistanceFromBottom(afterGrow)).toBe(100);
+    expect(isChatScrolledAwayFromBottom(afterGrow)).toBe(true);
+
+    // After re-pinning to the new scrollHeight, distance returns to 0.
+    const afterRepin = { clientHeight: 600, scrollHeight: 1500, scrollTop: 900 };
+    expect(isChatScrolledAwayFromBottom(afterRepin)).toBe(false);
+  });
+
+  it("tolerates browser scrollTop clamping when content shrinks", () => {
+    // User was at bottom of scrollHeight = 1500 (scrollTop = 900).
+    const before = { clientHeight: 600, scrollHeight: 1500, scrollTop: 900 };
+    expect(isChatScrolledAwayFromBottom(before)).toBe(false);
+
+    // Status row unmounts (e.g. `isStreaming` flipped false). Content
+    // shrinks by 50 px; the browser clamps scrollTop to (scrollHeight -
+    // clientHeight) = 850. The viewport is now back at the true bottom.
+    const afterShrink = { clientHeight: 600, scrollHeight: 1450, scrollTop: 850 };
+    expect(getChatDistanceFromBottom(afterShrink)).toBe(0);
+    expect(isChatScrolledAwayFromBottom(afterShrink)).toBe(false);
+  });
+
+  it("scrollChatToBottom always targets scrollHeight, even after async growth", () => {
+    // Simulate the real sequence of bytes hitting the DOM during a 200 ms
+    // window: ReportCard placeholder → real chart → voice button mount.
+    const calls: number[] = [];
+    let scrollHeight = 1400;
+    const el = {
+      get scrollHeight() {
+        return scrollHeight;
+      },
+      scrollTo: (options: ScrollToOptions) => {
+        calls.push(options.top as number);
+      },
+    };
+
+    scrollChatToBottom(el, "auto");
+    scrollHeight = 1500; // chart hydrated
+    scrollChatToBottom(el, "auto");
+    scrollHeight = 1532; // voice button row mounted
+    scrollChatToBottom(el, "auto");
+
+    expect(calls).toEqual([1400, 1500, 1532]);
+  });
 });

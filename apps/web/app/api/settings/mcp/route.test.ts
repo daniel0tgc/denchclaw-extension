@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DELETE, GET, POST } from "./route";
 
 vi.mock("@/lib/mcp-servers", () => {
   class MockMcpServerError extends Error {
@@ -16,9 +15,15 @@ vi.mock("@/lib/mcp-servers", () => {
     listMcpServers: vi.fn(),
     addMcpServer: vi.fn(),
     removeMcpServer: vi.fn(),
+    getMcpServerConfig: vi.fn(),
+    recordServerState: vi.fn(),
     McpServerError: MockMcpServerError,
   };
 });
+
+vi.mock("@/lib/mcp-probe", () => ({
+  probeMcpServer: vi.fn(),
+}));
 
 vi.mock("@/lib/telemetry", () => ({
   trackServer: vi.fn(),
@@ -26,16 +31,34 @@ vi.mock("@/lib/telemetry", () => ({
 
 const {
   addMcpServer,
+  getMcpServerConfig,
   listMcpServers,
   McpServerError,
+  recordServerState,
   removeMcpServer,
 } = await import("@/lib/mcp-servers");
+const { probeMcpServer } = await import("@/lib/mcp-probe");
 const { trackServer } = await import("@/lib/telemetry");
+const { DELETE, GET, POST } = await import("./route");
 
 const mockedAddMcpServer = vi.mocked(addMcpServer);
+const mockedGetMcpServerConfig = vi.mocked(getMcpServerConfig);
 const mockedListMcpServers = vi.mocked(listMcpServers);
 const mockedRemoveMcpServer = vi.mocked(removeMcpServer);
+const mockedRecordServerState = vi.mocked(recordServerState);
+const mockedProbeMcpServer = vi.mocked(probeMcpServer);
 const mockedTrackServer = vi.mocked(trackServer);
+
+const baseEntry = {
+  key: "acme",
+  url: "https://mcp.example.com",
+  transport: "streamable-http",
+  hasAuth: false,
+  state: "untested" as const,
+  toolCount: null,
+  lastCheckedAt: null,
+  lastDetail: null,
+};
 
 describe("MCP settings API", () => {
   beforeEach(() => {
@@ -44,12 +67,7 @@ describe("MCP settings API", () => {
 
   it("GET returns configured MCP servers", async () => {
     mockedListMcpServers.mockReturnValue([
-      {
-        key: "acme",
-        url: "https://mcp.example.com",
-        transport: "streamable-http",
-        hasAuth: true,
-      },
+      { ...baseEntry, hasAuth: true, state: "connected", toolCount: 5 },
     ]);
 
     const response = await GET();
@@ -58,10 +76,10 @@ describe("MCP settings API", () => {
     expect(response.status).toBe(200);
     expect(body.servers).toEqual([
       {
-        key: "acme",
-        url: "https://mcp.example.com",
-        transport: "streamable-http",
+        ...baseEntry,
         hasAuth: true,
+        state: "connected",
+        toolCount: 5,
       },
     ]);
   });
@@ -94,12 +112,25 @@ describe("MCP settings API", () => {
     });
   });
 
-  it("POST creates a server and returns it", async () => {
-    mockedAddMcpServer.mockReturnValue({
-      key: "acme",
+  it("POST creates a server, runs an immediate probe, and returns the post-probe entry", async () => {
+    mockedAddMcpServer.mockReturnValue({ ...baseEntry });
+    mockedGetMcpServerConfig.mockReturnValue({
       url: "https://mcp.example.com",
       transport: "streamable-http",
-      hasAuth: true,
+    });
+    mockedProbeMcpServer.mockResolvedValue({
+      status: "needs_auth",
+      toolCount: null,
+      authChallenge: null,
+      detail: "HTTP 401 from MCP server.",
+      checkedAt: "2026-04-29T00:00:00.000Z",
+      httpStatus: 401,
+    });
+    mockedRecordServerState.mockReturnValue({
+      ...baseEntry,
+      state: "needs_auth",
+      lastDetail: "HTTP 401 from MCP server.",
+      lastCheckedAt: "2026-04-29T00:00:00.000Z",
     });
 
     const response = await POST(new Request("http://localhost/api/settings/mcp", {
@@ -108,7 +139,6 @@ describe("MCP settings API", () => {
       body: JSON.stringify({
         key: "acme",
         url: "https://mcp.example.com",
-        authToken: "secret-token",
       }),
     }));
     const body = await response.json();
@@ -118,19 +148,46 @@ describe("MCP settings API", () => {
       key: "acme",
       url: "https://mcp.example.com",
       transport: undefined,
-      authToken: "secret-token",
     });
-    expect(body.server).toEqual({
-      key: "acme",
+    expect(mockedProbeMcpServer).toHaveBeenCalledWith({
       url: "https://mcp.example.com",
-      transport: "streamable-http",
-      hasAuth: true,
+      headers: undefined,
+    });
+    expect(mockedRecordServerState).toHaveBeenCalledWith("acme", {
+      state: "needs_auth",
+      toolCount: null,
+      detail: "HTTP 401 from MCP server.",
+      checkedAt: "2026-04-29T00:00:00.000Z",
+    });
+    expect(body.server).toMatchObject({
+      key: "acme",
+      state: "needs_auth",
+      lastDetail: "HTTP 401 from MCP server.",
     });
     expect(mockedTrackServer).toHaveBeenCalledWith("mcp_server_added", {
       key: "acme",
       transport: "streamable-http",
-      has_auth: true,
+      has_auth: false,
     });
+  });
+
+  it("POST still returns 201 when the post-create probe blows up", async () => {
+    mockedAddMcpServer.mockReturnValue({ ...baseEntry });
+    mockedGetMcpServerConfig.mockReturnValue(null);
+
+    const response = await POST(new Request("http://localhost/api/settings/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: "acme",
+        url: "https://mcp.example.com",
+      }),
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.server).toMatchObject({ key: "acme", state: "untested" });
+    expect(mockedProbeMcpServer).not.toHaveBeenCalled();
   });
 
   it("POST returns helper validation errors", async () => {

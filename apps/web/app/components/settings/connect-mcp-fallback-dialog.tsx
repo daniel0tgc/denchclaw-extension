@@ -12,25 +12,39 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 
-export type AddMcpServerInput = {
-  key: string;
-  url: string;
+export type ConnectMcpFallbackInput = {
+  authToken: string;
 };
 
-type AddMcpServerDialogProps = {
+type ConnectMcpFallbackDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (input: AddMcpServerInput) => Promise<string | null>;
+  serverKey: string;
+  serverUrl: string;
+  /**
+   * Called when the user submits a token. Returns an error message string to
+   * display in the dialog, or null on success (which causes the dialog to
+   * close).
+   */
+  onSubmit: (input: ConnectMcpFallbackInput) => Promise<string | null>;
+  /**
+   * If provided, surfaced above the input as context (e.g. the
+   * `WWW-Authenticate` `error_description` from the server). Helps the user
+   * understand why they're being asked for a token.
+   */
+  hint?: string | null;
 };
 
-export function AddMcpServerDialog({
+export function ConnectMcpFallbackDialog({
   open,
   onOpenChange,
+  serverKey,
+  serverUrl,
   onSubmit,
-}: AddMcpServerDialogProps) {
-  const keyInputRef = useRef<HTMLInputElement>(null);
-  const [key, setKey] = useState("");
-  const [url, setUrl] = useState("");
+  hint,
+}: ConnectMcpFallbackDialogProps) {
+  const tokenInputRef = useRef<HTMLInputElement>(null);
+  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -38,20 +52,15 @@ export function AddMcpServerDialog({
     if (!open) {
       return;
     }
-    setKey("");
-    setUrl("");
+    setToken("");
     setError(null);
     setSubmitting(false);
-    setTimeout(() => keyInputRef.current?.focus(), 100);
+    setTimeout(() => tokenInputRef.current?.focus(), 100);
   }, [open]);
 
   const handleSubmit = async () => {
-    if (!key.trim()) {
-      setError("Please enter a server name.");
-      return;
-    }
-    if (!url.trim()) {
-      setError("Please enter a server URL.");
+    if (!token.trim()) {
+      setError("Please enter an access token.");
       return;
     }
 
@@ -59,16 +68,11 @@ export function AddMcpServerDialog({
     setError(null);
 
     try {
-      const submitError = await onSubmit({
-        key: key.trim(),
-        url: url.trim(),
-      });
-
+      const submitError = await onSubmit({ authToken: token.trim() });
       if (submitError) {
         setError(submitError);
         return;
       }
-
       onOpenChange(false);
     } finally {
       setSubmitting(false);
@@ -79,27 +83,54 @@ export function AddMcpServerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add MCP Server</DialogTitle>
+          <DialogTitle>Connect to {serverKey}</DialogTitle>
           <DialogDescription>
-            Connect a remote MCP server over streamable HTTP. After adding it, click
-            Connect on the row to authenticate.
+            Paste an access token for this MCP server. It will be sent as an
+            <code className="mx-1">Authorization: Bearer ...</code>
+            header on every request.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          <div
+            className="rounded-xl border px-3 py-2 text-xs leading-5"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface)",
+              color: "var(--color-text-muted)",
+            }}
+          >
+            <div className="text-[11px] uppercase tracking-wide">Endpoint</div>
+            <div className="mt-1 truncate" style={{ color: "var(--color-text)" }} title={serverUrl}>
+              {serverUrl}
+            </div>
+          </div>
+
+          {hint ? (
+            <p
+              className="rounded-lg px-3 py-2 text-xs leading-5"
+              style={{
+                background: "rgba(234, 179, 8, 0.08)",
+                color: "var(--color-text-muted)",
+              }}
+            >
+              Server says: {hint}
+            </p>
+          ) : null}
+
           <div>
             <label
               className="mb-1.5 block text-sm font-medium"
               style={{ color: "var(--color-text-secondary)" }}
             >
-              Server name
+              Access token
             </label>
             <input
-              ref={keyInputRef}
-              type="text"
-              value={key}
+              ref={tokenInputRef}
+              type="password"
+              value={token}
               onChange={(event) => {
-                setKey(event.target.value);
+                setToken(event.target.value);
                 setError(null);
               }}
               onKeyDown={(event) => {
@@ -107,7 +138,7 @@ export function AddMcpServerDialog({
                   void handleSubmit();
                 }
               }}
-              placeholder="e.g. acme-mcp"
+              placeholder="sk-..."
               className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
               style={{
                 background: "var(--color-bg)",
@@ -116,48 +147,8 @@ export function AddMcpServerDialog({
               }}
             />
             <p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>
-              Use only letters, numbers, hyphens, or underscores.
+              The <code>Bearer</code> prefix is added automatically.
             </p>
-          </div>
-
-          <div>
-            <label
-              className="mb-1.5 block text-sm font-medium"
-              style={{ color: "var(--color-text-secondary)" }}
-            >
-              Server URL
-            </label>
-            <input
-              type="url"
-              value={url}
-              onChange={(event) => {
-                setUrl(event.target.value);
-                setError(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !submitting) {
-                  void handleSubmit();
-                }
-              }}
-              placeholder="https://mcp.example.com"
-              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
-              style={{
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
-              }}
-            />
-          </div>
-
-          <div
-            className="rounded-xl border px-3 py-2 text-xs"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-text-muted)",
-            }}
-          >
-            Transport: <span style={{ color: "var(--color-text)" }}>streamable-http</span>
           </div>
 
           {error && (
@@ -184,13 +175,13 @@ export function AddMcpServerDialog({
           <Button
             type="button"
             onClick={() => void handleSubmit()}
-            disabled={submitting || !key.trim() || !url.trim()}
+            disabled={submitting || !token.trim()}
             className="rounded-lg px-5"
             style={{ background: "var(--color-accent)", color: "var(--color-bg)" }}
           >
             <span className="inline-flex items-center gap-2">
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-              <span>{submitting ? "Adding..." : "Add Server"}</span>
+              <span>{submitting ? "Connecting..." : "Connect"}</span>
             </span>
           </Button>
         </DialogFooter>

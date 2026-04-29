@@ -437,7 +437,7 @@ export function ComposioAppsSection({
         return;
       }
       initialFetchStartedRef.current = true;
-      void fetchData();
+      void fetchData({ fresh: true });
     } else {
       initialFetchStartedRef.current = false;
       setState((prev) => ({ ...prev, loading: false }));

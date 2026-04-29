@@ -9,6 +9,10 @@ import {
   duckdbQueryAllAsync,
   isDatabaseFile,
 } from "@/lib/workspace";
+import {
+  projectMissingObjectsToFilesystem,
+  type ProjectionTarget,
+} from "@/lib/workspace-projection";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,6 +41,8 @@ export type TreeNode = {
 
 type DbObject = {
   name: string;
+  id?: string | null;
+  description?: string | null;
   default_view?: string;
   /**
    * DuckDB's `-json` CLI mode serializes BOOLEAN columns as JSON strings
@@ -132,7 +138,7 @@ async function loadDbObjects(): Promise<{
   let rows: Array<DbObject & { name: string }> = [];
   try {
     rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT name, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
+      "SELECT id, name, description, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
       "name",
     );
   } catch {
@@ -141,7 +147,7 @@ async function loadDbObjects(): Promise<{
     // HARDCODED_HIDDEN_OBJECT_NAMES set already keeps the CRM-only objects
     // out of the tree.
     rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT name, default_view FROM objects",
+      "SELECT id, name, description, default_view FROM objects",
       "name",
     );
   }
@@ -332,6 +338,52 @@ export async function GET(req: Request) {
   }
 
   const { visible: dbObjects, hidden: hiddenObjectNames } = await loadDbObjects();
+
+  // ── Self-heal: project DB-only objects to the filesystem ─────────────
+  // The tree builder is filesystem-centric: a DuckDB row only becomes a
+  // visible node if a directory and `.object.yaml` exist for it. Agents
+  // (and a few legacy code paths) frequently insert into `objects`
+  // without ever creating those filesystem entries — leaving rows
+  // invisible in both the sidebar and the file tree, which the user
+  // (correctly) experiences as "I created a table and it disappeared".
+  //
+  // To make the system converge regardless of how the row got into
+  // DuckDB, every tree GET projects any missing object into the
+  // workspace. The helper is idempotent, refuses to write outside the
+  // workspace root, and never overwrites an existing `.object.yaml`,
+  // so this is safe to run on every request. Errors are logged but do
+  // not block the tree response — the tree still renders, the user just
+  // doesn't see the (still DB-only) row this turn.
+  try {
+    const targets: ProjectionTarget[] = [];
+    for (const obj of dbObjects.values()) {
+      targets.push({
+        name: obj.name,
+        id: obj.id ?? null,
+        description: obj.description ?? null,
+        default_view: obj.default_view ?? null,
+      });
+    }
+    if (targets.length > 0) {
+      const results = projectMissingObjectsToFilesystem(root, targets);
+      const errors = results.filter((r) => r.status === "error");
+      if (errors.length > 0) {
+        // Surface in server logs so we can diagnose persistent failures
+        // (e.g. permission errors, exotic filesystems) without
+        // breaking the user-facing tree.
+        console.warn(
+          "[workspace/tree] projection errors:",
+          errors.map((e) => `${e.name}: ${e.reason ?? "unknown"}`).join("; "),
+        );
+      }
+    }
+  } catch (err) {
+    // Defensive: never let projection break the tree response.
+    console.warn(
+      "[workspace/tree] projection threw:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 
   const tree = await buildTree(root, "", dbObjects, hiddenObjectNames, showHidden);
 

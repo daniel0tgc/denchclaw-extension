@@ -149,10 +149,16 @@ export async function POST(request: Request) {
 	}
 
 	const now = new Date().toISOString();
+	// NOTE: `icon` is intentionally NOT in this INSERT. The
+	// `migrateIconsFromDuckdbToYaml` migration drops the `icon` column
+	// from `objects` (it now lives only in `<objectDir>/.object.yaml`),
+	// so any INSERT referencing it would fail on post-migration
+	// workspaces. The `icon` value is still passed to `writeObjectYaml`
+	// below — that is the single source of truth.
 	const created = await duckdbExecOnFileAsync(
 		dbFile,
-		`INSERT INTO objects (id, name, description, icon, default_view, sort_order, created_at, updated_at)
-		 VALUES ('${sqlEscape(objectId)}', '${sqlEscape(name)}', ${description ? `'${sqlEscape(description)}'` : "NULL"}, '${sqlEscape(icon)}', '${defaultView}', ${sortOrder}, '${now}', '${now}')`,
+		`INSERT INTO objects (id, name, description, default_view, sort_order, created_at, updated_at)
+		 VALUES ('${sqlEscape(objectId)}', '${sqlEscape(name)}', ${description ? `'${sqlEscape(description)}'` : "NULL"}, '${defaultView}', ${sortOrder}, '${now}', '${now}')`,
 	);
 	if (!created) {
 		return Response.json({ error: "Failed to create object." }, { status: 500 });

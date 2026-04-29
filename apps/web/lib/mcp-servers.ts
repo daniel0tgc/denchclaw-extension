@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { deleteMcpServerSecret } from "@/lib/mcp-secrets";
 import { resolveOpenClawStateDir } from "@/lib/workspace";
 
 type UnknownRecord = Record<string, unknown>;
@@ -10,11 +11,25 @@ export type McpServerConfig = {
   headers?: Record<string, string>;
 };
 
+/**
+ * Lifecycle of a user-added MCP server in the settings UI:
+ *
+ *   untested    : just added, never probed
+ *   connected   : probe succeeded, tools are reachable
+ *   needs_auth  : probe returned 401/403; user must click Connect
+ *   error       : probe failed for non-auth reasons (network, malformed)
+ */
+export type McpServerState = "untested" | "connected" | "needs_auth" | "error";
+
 export type McpServerEntry = {
   key: string;
   url: string;
   transport: string;
   hasAuth: boolean;
+  state: McpServerState;
+  toolCount: number | null;
+  lastCheckedAt: string | null;
+  lastDetail: string | null;
 };
 
 export class McpServerError extends Error {
@@ -30,6 +45,7 @@ export class McpServerError extends Error {
 const RESERVED_MCP_SERVER_KEYS = new Set(["composio"]);
 const MCP_SERVER_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 const REMOTE_MCP_TRANSPORT = "streamable-http";
+const STATE_SIDECAR_FILENAME = ".mcp-states.json";
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -45,6 +61,10 @@ function openClawConfigPath(): string {
   return join(resolveOpenClawStateDir(), "openclaw.json");
 }
 
+function statesSidecarPath(): string {
+  return join(resolveOpenClawStateDir(), STATE_SIDECAR_FILENAME);
+}
+
 function readConfig(): UnknownRecord {
   const configPath = openClawConfigPath();
   if (!existsSync(configPath)) {
@@ -57,12 +77,70 @@ function readConfig(): UnknownRecord {
   }
 }
 
-function writeConfig(config: UnknownRecord): void {
+function ensureStateDir(): void {
   const stateDir = resolveOpenClawStateDir();
   if (!existsSync(stateDir)) {
     mkdirSync(stateDir, { recursive: true });
   }
+}
+
+function writeConfig(config: UnknownRecord): void {
+  ensureStateDir();
   writeFileSync(openClawConfigPath(), JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
+
+type StateRecord = {
+  state: McpServerState;
+  toolCount: number | null;
+  lastCheckedAt: string | null;
+  lastDetail: string | null;
+};
+
+function readStatesSidecar(): Record<string, StateRecord> {
+  const path = statesSidecarPath();
+  if (!existsSync(path)) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    const record = asRecord(parsed);
+    if (!record) {
+      return {};
+    }
+    const out: Record<string, StateRecord> = {};
+    for (const [key, value] of Object.entries(record)) {
+      const entry = asRecord(value);
+      if (!entry) {
+        continue;
+      }
+      const state = readString(entry.state);
+      out[key] = {
+        state: isMcpServerState(state) ? state : "untested",
+        toolCount: typeof entry.toolCount === "number" ? entry.toolCount : null,
+        lastCheckedAt: readString(entry.lastCheckedAt) ?? null,
+        lastDetail: readString(entry.lastDetail) ?? null,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeStatesSidecar(states: Record<string, StateRecord>): void {
+  ensureStateDir();
+  writeFileSync(
+    statesSidecarPath(),
+    JSON.stringify(states, null, 2) + "\n",
+    "utf-8",
+  );
+}
+
+function isMcpServerState(value: string | undefined): value is McpServerState {
+  return value === "untested"
+    || value === "connected"
+    || value === "needs_auth"
+    || value === "error";
 }
 
 function ensureRecord(parent: UnknownRecord, key: string): UnknownRecord {
@@ -135,7 +213,20 @@ function formatAuthorizationHeader(authToken?: string | null): string | null {
   return `Bearer ${tokenWithoutPrefix}`;
 }
 
-function toServerEntry(key: string, rawServer: UnknownRecord): McpServerEntry | null {
+function defaultStateRecord(): StateRecord {
+  return {
+    state: "untested",
+    toolCount: null,
+    lastCheckedAt: null,
+    lastDetail: null,
+  };
+}
+
+function buildEntry(
+  key: string,
+  rawServer: UnknownRecord,
+  states: Record<string, StateRecord>,
+): McpServerEntry | null {
   const url = readString(rawServer.url);
   const transport = readString(rawServer.transport);
   if (!url || !transport) {
@@ -143,11 +234,16 @@ function toServerEntry(key: string, rawServer: UnknownRecord): McpServerEntry | 
   }
 
   const headers = asRecord(rawServer.headers);
+  const stateRecord = states[key] ?? defaultStateRecord();
   return {
     key,
     url,
     transport,
     hasAuth: Boolean(readString(headers?.Authorization)),
+    state: stateRecord.state,
+    toolCount: stateRecord.toolCount,
+    lastCheckedAt: stateRecord.lastCheckedAt,
+    lastDetail: stateRecord.lastDetail,
   };
 }
 
@@ -159,14 +255,65 @@ export function listMcpServers(): McpServerEntry[] {
     return [];
   }
 
+  const states = readStatesSidecar();
+
   return Object.entries(servers)
     .filter(([key]) => !RESERVED_MCP_SERVER_KEYS.has(key))
     .map(([key, rawServer]) => {
       const server = asRecord(rawServer);
-      return server ? toServerEntry(key, server) : null;
+      return server ? buildEntry(key, server, states) : null;
     })
     .filter((server): server is McpServerEntry => Boolean(server))
-    .sort((a, b) => a.key.localeCompare(b.key));
+    .toSorted((a, b) => a.key.localeCompare(b.key));
+}
+
+export function getMcpServer(key: string): McpServerEntry | null {
+  const normalizedKey = assertServerKey(key);
+  const config = readConfig();
+  const mcp = asRecord(config.mcp);
+  const servers = asRecord(mcp?.servers);
+  const raw = asRecord(servers?.[normalizedKey]);
+  if (!raw) {
+    return null;
+  }
+  return buildEntry(normalizedKey, raw, readStatesSidecar());
+}
+
+/**
+ * Returns the wire-level config (url, transport, headers) for the given
+ * server, or null if the server doesn't exist. Used by the probe and
+ * connect-token routes that need to make outbound requests on behalf of
+ * the user.
+ */
+export function getMcpServerConfig(key: string): McpServerConfig | null {
+  const normalizedKey = assertServerKey(key);
+  const config = readConfig();
+  const mcp = asRecord(config.mcp);
+  const servers = asRecord(mcp?.servers);
+  const raw = asRecord(servers?.[normalizedKey]);
+  if (!raw) {
+    return null;
+  }
+  const url = readString(raw.url);
+  const transport = readString(raw.transport);
+  if (!url || !transport) {
+    return null;
+  }
+  const headersRaw = asRecord(raw.headers);
+  const headers: Record<string, string> = {};
+  if (headersRaw) {
+    for (const [hKey, hValue] of Object.entries(headersRaw)) {
+      const stringValue = readString(hValue);
+      if (stringValue) {
+        headers[hKey] = stringValue;
+      }
+    }
+  }
+  return {
+    url,
+    transport,
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+  };
 }
 
 export function addMcpServer(input: {
@@ -198,12 +345,104 @@ export function addMcpServer(input: {
   servers[key] = nextServer;
 
   writeConfig(config);
+
+  // New servers start untested — the caller is expected to probe immediately
+  // afterward and the result will overwrite this default.
+  const states = readStatesSidecar();
+  states[key] = defaultStateRecord();
+  writeStatesSidecar(states);
+
   return {
     key,
     url,
     transport,
     hasAuth: Boolean(authorizationHeader),
+    state: "untested",
+    toolCount: null,
+    lastCheckedAt: null,
+    lastDetail: null,
   };
+}
+
+/**
+ * Replace the `Authorization` header on an existing server. Pass `null` to
+ * clear it (e.g. after a disconnect or token revocation).
+ *
+ * Used by the Connect flow's token route (Phase 1) and the OAuth callback
+ * route (Phase 2) — both ultimately end up writing a Bearer header here.
+ */
+export function setAuthorizationHeader(
+  key: string,
+  header: string | null,
+): McpServerEntry {
+  const normalizedKey = assertServerKey(key);
+  const config = readConfig();
+  const mcp = asRecord(config.mcp);
+  const servers = asRecord(mcp?.servers);
+  const existing = asRecord(servers?.[normalizedKey]);
+  if (!servers || !existing) {
+    throw new McpServerError(404, `MCP server '${normalizedKey}' was not found.`);
+  }
+
+  const headers = asRecord(existing.headers) ?? {};
+  if (header === null) {
+    delete headers.Authorization;
+    if (Object.keys(headers).length === 0) {
+      delete existing.headers;
+    } else {
+      existing.headers = headers;
+    }
+  } else {
+    headers.Authorization = header;
+    existing.headers = headers;
+  }
+
+  writeConfig(config);
+
+  const entry = buildEntry(normalizedKey, existing, readStatesSidecar());
+  if (!entry) {
+    throw new McpServerError(500, "Failed to read server entry after update.");
+  }
+  return entry;
+}
+
+/**
+ * Persist the result of a probe (or any other state change) for a given
+ * server. Stored in a sidecar file so we don't pollute the wire-level
+ * `mcp.servers.<key>` config that the agent runtime consumes.
+ */
+export function recordServerState(
+  key: string,
+  update: {
+    state: McpServerState;
+    toolCount?: number | null;
+    detail?: string | null;
+    checkedAt?: string;
+  },
+): McpServerEntry {
+  const normalizedKey = assertServerKey(key);
+  const config = readConfig();
+  const mcp = asRecord(config.mcp);
+  const servers = asRecord(mcp?.servers);
+  const existing = asRecord(servers?.[normalizedKey]);
+  if (!existing) {
+    throw new McpServerError(404, `MCP server '${normalizedKey}' was not found.`);
+  }
+
+  const states = readStatesSidecar();
+  states[normalizedKey] = {
+    state: update.state,
+    toolCount: update.toolCount ?? null,
+    lastCheckedAt: update.checkedAt ?? new Date().toISOString(),
+    lastDetail: update.detail ?? null,
+  };
+  writeStatesSidecar(states);
+
+  const entry = buildEntry(normalizedKey, existing, states);
+  if (!entry) {
+    throw new McpServerError(500, "Failed to read server entry after state update.");
+  }
+  return entry;
 }
 
 export function removeMcpServer(key: string): void {
@@ -226,4 +465,11 @@ export function removeMcpServer(key: string): void {
   }
 
   writeConfig(config);
+
+  const states = readStatesSidecar();
+  if (states[normalizedKey]) {
+    delete states[normalizedKey];
+    writeStatesSidecar(states);
+  }
+  deleteMcpServerSecret(normalizedKey);
 }

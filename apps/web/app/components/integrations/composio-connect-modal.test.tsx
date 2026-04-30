@@ -38,7 +38,11 @@ describe("ComposioConnectModal", () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
       if (url.startsWith("/api/composio/toolkits?")) {
         return new Response(JSON.stringify({
           items: [{
@@ -170,6 +174,37 @@ describe("ComposioConnectModal", () => {
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
+  });
+
+  it("adopts an already-connected account without opening the OAuth popup", async () => {
+    const user = userEvent.setup();
+    const onConnectionChange = vi.fn();
+    const onOpenChange = vi.fn();
+    const openSpy = vi.spyOn(window, "open");
+    global.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        already_connected: true,
+        connected_account_id: "ca_existing",
+        connected_toolkit_slug: "gmail",
+        connected_toolkit_name: "Gmail",
+      }))
+    ) as typeof fetch;
+
+    renderModal({ onConnectionChange, onOpenChange });
+
+    await user.click(screen.getByRole("button", { name: "Connect Gmail" }));
+
+    await waitFor(() => {
+      expect(onConnectionChange).toHaveBeenCalledWith({
+        toolkit,
+        connected: true,
+        connectedToolkitSlug: "gmail",
+        connectedToolkitName: "Gmail",
+        shouldProbeLiveAgent: true,
+      });
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it("ignores callback messages from a different origin", async () => {

@@ -123,7 +123,7 @@ describe("Composio connect API", () => {
     );
   });
 
-  it("rejects a second active connection for the same app", async () => {
+  it("returns the existing active connection for the same app", async () => {
     fetchComposioConnectionsMock.mockResolvedValue({
       connections: [
         {
@@ -132,6 +132,7 @@ describe("Composio connect API", () => {
           toolkit_name: "Gmail",
           status: "ACTIVE",
           created_at: "2026-04-01T00:00:00.000Z",
+          account_email: "person@example.com",
         },
       ],
     });
@@ -144,16 +145,20 @@ describe("Composio connect API", () => {
       }),
     );
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      code: "APP_ALREADY_CONNECTED",
+      already_connected: true,
       connection_id: "ca_gmail_1",
+      connected_account_id: "ca_gmail_1",
       toolkit: "gmail",
+      connected_toolkit_slug: "gmail",
+      connected_toolkit_name: "Gmail",
+      account_email: "person@example.com",
     });
     expect(initiateComposioConnectMock).not.toHaveBeenCalled();
   });
 
-  it("treats Google Calendar connect slug aliases as the same app", async () => {
+  it("returns an existing Google Calendar connection for connect slug aliases", async () => {
     fetchComposioConnectionsMock.mockResolvedValue({
       connections: [
         {
@@ -174,11 +179,13 @@ describe("Composio connect API", () => {
       }),
     );
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      code: "APP_ALREADY_CONNECTED",
+      already_connected: true,
       connection_id: "ca_calendar_1",
+      connected_account_id: "ca_calendar_1",
       toolkit: "google-calendar",
+      connected_toolkit_slug: "google-calendar",
     });
     expect(initiateComposioConnectMock).not.toHaveBeenCalled();
   });

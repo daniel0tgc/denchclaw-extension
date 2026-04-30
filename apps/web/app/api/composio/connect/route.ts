@@ -68,15 +68,18 @@ export async function POST(request: Request) {
     ).find((connection) => connection.normalized_toolkit_slug === normalizedToolkit && connection.is_active);
 
     if (activeConnection) {
-      return Response.json(
-        {
-          error: "This app is already connected. Disconnect it before connecting another account.",
-          code: "APP_ALREADY_CONNECTED",
-          connection_id: activeConnection.id,
-          toolkit: normalizedToolkit,
-        },
-        { status: 409 },
-      );
+      return Response.json({
+        already_connected: true,
+        connection_id: activeConnection.id,
+        connected_account_id: activeConnection.id,
+        requested_toolkit: requestedToolkit,
+        connect_toolkit: connectToolkit,
+        toolkit: normalizedToolkit,
+        connected_toolkit_slug: activeConnection.normalized_toolkit_slug,
+        connected_toolkit_name: activeConnection.toolkit_name,
+        account_email: activeConnection.account_email ?? activeConnection.account?.email ?? null,
+        account_label: activeConnection.display_label,
+      });
     }
 
     const data = await initiateComposioConnect(

@@ -13,8 +13,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { chmod as fsChmod, rename as fsRename } from "node:fs/promises";
+import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import process from "node:process";
 import { confirm, isCancel, select, spinner, text } from "@clack/prompts";
 import gradient from "gradient-string";
@@ -1897,6 +1901,128 @@ async function ensureOpenClawCliAvailable(params: {
     };
   }
 
+  /**
+   * macOS Sonoma (14+) sets com.apple.provenance on npm-downloaded files,
+   * causing readFileSync to fail with EPERM from non-entitled processes.
+   * Fix: for each JS file that is blocked, fetch the tarball in-memory (no
+   * disk write → no provenance) and rewrite the file via a temp+rename so
+   * the new inode is locally created and readable.  For shebang files the
+   * comment is inserted after line 1 to keep the shebang valid.
+   */
+  async function fetchBuffer(url: string, maxRedirects = 5): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const lib = url.startsWith("https") ? https : http;
+      lib.get(url, (res) => {
+        if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
+          if (maxRedirects <= 0) return reject(new Error("Too many redirects"));
+          fetchBuffer(res.headers.location, maxRedirects - 1).then(resolve, reject);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      }).on("error", reject);
+    });
+  }
+
+  function parseTarGz(buf: Buffer): Map<string, { data: Buffer; mode: number }> {
+    const tar = gunzipSync(buf);
+    const entries = new Map<string, { data: Buffer; mode: number }>();
+    let offset = 0;
+    let pendingName: string | undefined;
+    while (offset + 512 <= tar.length) {
+      const hdr = tar.subarray(offset, offset + 512);
+      if (hdr.every((b) => b === 0)) break;
+      offset += 512;
+      const rawName = hdr.toString("ascii", 0, 100).replace(/\0+$/, "");
+      const prefix = hdr.toString("ascii", 345, 500).replace(/\0+$/, "");
+      const fullName = pendingName ?? (prefix ? `${prefix}/${rawName}` : rawName);
+      pendingName = undefined;
+      const sizeOct = hdr.toString("ascii", 124, 136).trim().replace(/[^0-7]/g, "");
+      const size = sizeOct ? parseInt(sizeOct, 8) : 0;
+      const typeFlag = hdr.toString("ascii", 156, 157);
+      const modeOct = hdr.toString("ascii", 100, 108).trim().replace(/[^0-7]/g, "");
+      const mode = modeOct ? parseInt(modeOct, 8) : 0;
+      const blockSize = Math.ceil(size / 512) * 512;
+      if (typeFlag === "L") {
+        pendingName = tar.toString("ascii", offset, offset + size).replace(/\0+$/, "");
+      } else if (typeFlag === "x") {
+        const pax = tar.toString("utf8", offset, offset + size);
+        const m = pax.match(/\d+ path=([^\n]+)/);
+        if (m) pendingName = m[1].trimEnd();
+      } else if (typeFlag === "0" || typeFlag === "" || typeFlag === "\0") {
+        entries.set(fullName, { data: Buffer.from(tar.subarray(offset, offset + size)), mode });
+      }
+      offset += blockSize;
+    }
+    return entries;
+  }
+
+  async function unblockOpenClawInstall(installDir: string): Promise<void> {
+    if (!existsSync(installDir)) return;
+    let tarEntries: Map<string, { data: Buffer; mode: number }> | undefined;
+    const loadTarEntries = async () => {
+      if (tarEntries) return tarEntries;
+      try {
+        const pkgJson = JSON.parse(
+          readFileSync(path.join(installDir, "package.json"), "utf8"),
+        ) as { version?: string };
+        const version = pkgJson.version ?? "latest";
+        const buf = await fetchBuffer(
+          `https://registry.npmjs.org/openclaw/-/openclaw-${version}.tgz`,
+        );
+        tarEntries = parseTarGz(buf);
+      } catch {
+        tarEntries = new Map();
+      }
+      return tarEntries!;
+    };
+    const JS_EXTS = new Set([".js", ".mjs", ".cjs", ".ts"]);
+    const walkDir = (dir: string): string[] => {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) files.push(...walkDir(full));
+        else if (e.isFile() && JS_EXTS.has(path.extname(e.name).toLowerCase())) files.push(full);
+      }
+      return files;
+    };
+    const applyFix = (raw: Buffer): Buffer => {
+      const head = raw.slice(0, 25).toString();
+      if (head.startsWith("//\n") || head.includes("\n//\n")) return raw; // already fixed
+      if (raw.slice(0, 2).toString() === "#!") {
+        const nl = raw.indexOf(0x0a);
+        if (nl === -1) return raw;
+        return Buffer.concat([raw.slice(0, nl + 1), Buffer.from("//\n"), raw.slice(nl + 1)]);
+      }
+      return Buffer.concat([Buffer.from("//\n"), raw]);
+    };
+    for (const filePath of walkDir(installDir)) {
+      try {
+        let raw: Buffer;
+        try {
+          raw = readFileSync(filePath);
+        } catch {
+          const entries = await loadTarEntries();
+          const rel = path.relative(installDir, filePath);
+          const entry = entries.get(`package/${rel}`);
+          if (!entry) continue;
+          raw = entry.data;
+        }
+        const patched = applyFix(raw);
+        if (patched === raw) continue;
+        const tmp = filePath + ".__unblock__";
+        writeFileSync(tmp, patched);
+        try {
+          if ((statSync(filePath).mode & 0o111) !== 0) await fsChmod(tmp, 0o755);
+        } catch { /* ignore */ }
+        await fsRename(tmp, filePath);
+      } catch { /* non-fatal */ }
+    }
+  }
+
   const progress = createOpenClawSetupProgress({
     enabled: params.showProgress,
     totalStages: 5,
@@ -1915,7 +2041,7 @@ async function ensureOpenClawCliAvailable(params: {
   let fallbackBinDir: string | undefined;
   progress.startStage("Ensuring openclaw@latest is installed globally");
   if (!globalBefore.installed) {
-    const install = await runCommandWithTimeout(["npm", "install", "-g", "openclaw@latest"], {
+    const install = await runCommandWithTimeout(["npm", "install", "-g", "openclaw@latest", "--ignore-scripts"], {
       timeoutMs: 10 * 60_000,
       env: cleanNpmGlobalEnv(),
       onOutputLine: (line) => {
@@ -1930,7 +2056,7 @@ async function ensureOpenClawCliAvailable(params: {
       const userPrefix = path.join(params.stateDir, "npm-global");
       mkdirSync(userPrefix, { recursive: true });
       const fallbackInstall = await runCommandWithTimeout(
-        ["npm", "install", "--global", "--prefix", userPrefix, "openclaw@latest"],
+        ["npm", "install", "--global", "--prefix", userPrefix, "openclaw@latest", "--ignore-scripts"],
         {
           timeoutMs: 10 * 60_000,
           env: cleanNpmGlobalEnv(),
@@ -1963,6 +2089,11 @@ async function ensureOpenClawCliAvailable(params: {
         };
       }
 
+      // Unblock macOS Sonoma provenance restriction on freshly installed files
+      const fallbackModulesDir = path.join(userPrefix, "lib", "node_modules", "openclaw");
+      progress.output("Unblocking openclaw files (macOS provenance fix)...");
+      await unblockOpenClawInstall(fallbackModulesDir);
+
       fallbackBinDir = resolveUserPrefixBinDir(userPrefix);
       const currentPath = process.env.PATH ?? "";
       if (!currentPath.split(path.delimiter).includes(fallbackBinDir)) {
@@ -1972,6 +2103,17 @@ async function ensureOpenClawCliAvailable(params: {
       installedAt = Date.now();
       progress.completeStage("installed openclaw@latest (user-prefix fallback)");
     } else {
+      // Unblock macOS Sonoma provenance restriction on freshly installed files
+      const globalModulesDir = (
+        await runCommandWithTimeout(["npm", "root", "-g"], {
+          timeoutMs: 10_000,
+          env: cleanNpmGlobalEnv(),
+        }).catch(() => null)
+      )?.stdout?.trim();
+      if (globalModulesDir) {
+        progress.output("Unblocking openclaw files (macOS provenance fix)...");
+        await unblockOpenClawInstall(path.join(globalModulesDir, "openclaw"));
+      }
       installed = true;
       installedAt = Date.now();
       progress.completeStage("installed openclaw@latest");
@@ -3313,14 +3455,40 @@ export async function bootstrapCommand(
   const openclawCommand = installResult.command;
 
   if (await shouldRunUpdate({ opts, runtime, installResult })) {
-    await runOpenClawWithProgress({
-      openclawCommand,
-      args: ["update", "--yes"],
-      timeoutMs: 8 * 60_000,
-      startMessage: "Checking for OpenClaw updates...",
-      successMessage: "OpenClaw is up to date.",
-      errorMessage: "OpenClaw update failed",
-    });
+    // Use our own update flow instead of `openclaw update --yes` so we can
+    // apply the macOS Sonoma com.apple.provenance unblock immediately after
+    // npm downloads the new files (before openclaw tries to readFileSync them).
+    const updateSpinnerInst = spinner();
+    updateSpinnerInst.start("Checking for OpenClaw updates...");
+    try {
+      const updateResult = await runCommandWithTimeout(
+        ["npm", "install", "-g", "openclaw@latest", "--ignore-scripts"],
+        {
+          timeoutMs: 8 * 60_000,
+          env: cleanNpmGlobalEnv(),
+          onOutputLine: (line) => {
+            updateSpinnerInst.message(line.length > 72 ? `${line.slice(0, 69)}...` : line);
+          },
+        },
+      ).catch(() => null);
+      if (!updateResult || updateResult.code !== 0) {
+        updateSpinnerInst.stop("OpenClaw update failed (npm install).");
+      } else {
+        updateSpinnerInst.message("Unblocking updated openclaw files (macOS provenance fix)...");
+        const globalModulesDir = (
+          await runCommandWithTimeout(["npm", "root", "-g"], {
+            timeoutMs: 10_000,
+            env: cleanNpmGlobalEnv(),
+          }).catch(() => null)
+        )?.stdout?.trim();
+        if (globalModulesDir) {
+          await unblockOpenClawInstall(path.join(globalModulesDir, "openclaw"));
+        }
+        updateSpinnerInst.stop("OpenClaw is up to date.");
+      }
+    } catch {
+      updateSpinnerInst.stop("OpenClaw update check skipped.");
+    }
   }
 
   // Determine gateway port: use explicit override, honour previously persisted

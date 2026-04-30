@@ -119,7 +119,7 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
-export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "kimi-k2.5";
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-sonnet-4.6";
 
 // Fallback list used only when the live gateway catalog is unreachable.
 // Live pricing always comes from the gateway's /v1/public/models response.

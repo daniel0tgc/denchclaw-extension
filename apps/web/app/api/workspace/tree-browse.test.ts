@@ -197,10 +197,10 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).not.toContain("~skills");
     });
 
-    it("shows every DuckDB object table in the filesystem tree", async () => {
+    it("hides noisy CRM sync object folders by default without hiding ordinary object folders", async () => {
       // The left CRM navigation can still choose what belongs in the product
-      // nav, but the filesystem tree should reflect the actual object folders
-      // in the workspace, including synced CRM tables.
+      // nav, but the filesystem tree should reflect real object folders while
+      // keeping noisy sync backing tables behind the hidden-files toggle.
       const { resolveWorkspaceRoot, duckdbQueryAllAsync } = await import("@/lib/workspace");
       vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");
       vi.mocked(duckdbQueryAllAsync).mockResolvedValue([
@@ -208,6 +208,9 @@ describe("Workspace Tree & Browse API", () => {
         { name: "company", default_view: "table", hidden_in_sidebar: "false" },
         { name: "opportunity", default_view: "kanban", hidden_in_sidebar: "false" },
         { name: "email_message", default_view: "table", hidden_in_sidebar: "true" },
+        { name: "email_thread", default_view: "table", hidden_in_sidebar: "true" },
+        { name: "calendar_event", default_view: "table", hidden_in_sidebar: "true" },
+        { name: "interaction", default_view: "table", hidden_in_sidebar: "true" },
         { name: "secret", default_view: "table", hidden_in_sidebar: "true" },
       ] as never);
 
@@ -220,6 +223,9 @@ describe("Workspace Tree & Browse API", () => {
             makeDirent("opportunity", true),
             makeDirent("secret", true),
             makeDirent("email_message", true),
+            makeDirent("email_thread", true),
+            makeDirent("calendar_event", true),
+            makeDirent("interaction", true),
           ] as unknown as never[]);
         }
         return Promise.resolve([] as unknown as never[]);
@@ -234,8 +240,48 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).toContain("people");
       expect(rootPaths).toContain("company");
       expect(rootPaths).toContain("opportunity");
-      expect(rootPaths).toContain("email_message");
       expect(rootPaths).toContain("secret");
+      expect(rootPaths).not.toContain("email_message");
+      expect(rootPaths).not.toContain("email_thread");
+      expect(rootPaths).not.toContain("calendar_event");
+      expect(rootPaths).not.toContain("interaction");
+    });
+
+    it("shows CRM sync object folders when hidden files are revealed", async () => {
+      const { resolveWorkspaceRoot, duckdbQueryAllAsync } = await import("@/lib/workspace");
+      vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");
+      vi.mocked(duckdbQueryAllAsync).mockResolvedValue([
+        { name: "people", default_view: "table" },
+        { name: "email_message", default_view: "table" },
+        { name: "email_thread", default_view: "table" },
+        { name: "calendar_event", default_view: "table" },
+        { name: "interaction", default_view: "table" },
+      ] as never);
+
+      const { readdir: mockReaddir } = await import("node:fs/promises");
+      vi.mocked(mockReaddir).mockImplementation((dir) => {
+        if (String(dir) === "/ws") {
+          return Promise.resolve([
+            makeDirent("people", true),
+            makeDirent("email_message", true),
+            makeDirent("email_thread", true),
+            makeDirent("calendar_event", true),
+            makeDirent("interaction", true),
+          ] as unknown as never[]);
+        }
+        return Promise.resolve([] as unknown as never[]);
+      });
+
+      const { GET } = await import("./tree/route.js");
+      const req = new Request("http://localhost/api/workspace/tree?showHidden=1");
+      const res = await GET(req);
+      const json = await res.json();
+      const rootPaths = (json.tree as Array<{ path: string }>).map((n) => n.path);
+      expect(rootPaths).toContain("people");
+      expect(rootPaths).toContain("email_message");
+      expect(rootPaths).toContain("email_thread");
+      expect(rootPaths).toContain("calendar_event");
+      expect(rootPaths).toContain("interaction");
     });
 
     it("yields before tree discovery completes (prevents UI freeze during active agent runs)", async () => {

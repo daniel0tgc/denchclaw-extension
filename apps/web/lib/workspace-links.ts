@@ -303,6 +303,44 @@ export function buildUrl(state: Partial<WorkspaceUrlState>): string {
   return qs ? `/?${qs}` : "/";
 }
 
+/**
+ * Merge view-state params (search / filters / sort / view / viewType /
+ * cols / page / pageSize) from the current URL into a freshly-projected
+ * URL state — but ONLY when the active path is unchanged.
+ *
+ * The shell's URL projection deliberately does not own table view state
+ * (that lives on a per-table ObjectView component). When the shell re-
+ * projects the URL for an unrelated reason (entry modal opened, terminal
+ * toggled, …), it must not stomp the table's view params. Carrying them
+ * over preserves "I had a search applied; I just opened a side panel".
+ *
+ * Crucially, switching tables (path A → path B) must DROP these params.
+ * Otherwise the previous table's filter / search / sort would bleed into
+ * the new table — that's the original bug we got here to fix.
+ */
+export function mergePreservedTableView(
+  projected: Partial<WorkspaceUrlState>,
+  currentSearch: string | URLSearchParams,
+): Partial<WorkspaceUrlState> {
+  const current = typeof currentSearch === "string"
+    ? new URLSearchParams(currentSearch)
+    : currentSearch;
+  const merged: Partial<WorkspaceUrlState> = { ...projected };
+  if (!projected.path || projected.path !== current.get("path")) {
+    return merged;
+  }
+  const carried = parseUrlState(current);
+  if (carried.viewType) merged.viewType = carried.viewType;
+  if (carried.view) merged.view = carried.view;
+  if (carried.filters) merged.filters = carried.filters;
+  if (carried.search) merged.search = carried.search;
+  if (carried.sort) merged.sort = carried.sort;
+  if (carried.page != null) merged.page = carried.page;
+  if (carried.pageSize != null) merged.pageSize = carried.pageSize;
+  if (carried.cols) merged.cols = carried.cols;
+  return merged;
+}
+
 // ---------------------------------------------------------------------------
 // Legacy migration
 // ---------------------------------------------------------------------------

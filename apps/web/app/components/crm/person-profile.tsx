@@ -119,6 +119,19 @@ export function PersonProfile({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [localTab, setLocalTab] = useState<PersonProfileTab>("overview");
+  // Reset the local tab when the parent navigates to a different person.
+  // The component is mounted without a `key` upstream, so React reuses
+  // this instance on `personId` change — without this guard, person B
+  // would inherit person A's selected tab whenever the URL doesn't carry
+  // an explicit `profileTab`. Pattern: store the prop alongside the
+  // dependent state and reset during render so the first paint of B is
+  // already on "overview", with no useEffect-induced flicker.
+  // https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
+  const [previousPersonId, setPreviousPersonId] = useState(personId);
+  if (personId !== previousPersonId) {
+    setPreviousPersonId(personId);
+    setLocalTab("overview");
+  }
   const tab = isPersonProfileTab(activeTab) ? activeTab : localTab;
 
   const handleTabChange = useCallback(

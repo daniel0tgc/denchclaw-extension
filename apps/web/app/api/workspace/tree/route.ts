@@ -87,6 +87,7 @@ const ROOT_ONLY_HIDDEN_SYNC_OBJECTS = new Set([
   "calendar_event",
   "email_message",
   "email_thread",
+  "interaction",
 ]);
 
 async function loadDbObjects(): Promise<Map<string, DbObject>> {

@@ -210,6 +210,7 @@ describe("Workspace Tree & Browse API", () => {
         { name: "email_message", default_view: "table", hidden_in_sidebar: "true" },
         { name: "email_thread", default_view: "table", hidden_in_sidebar: "true" },
         { name: "calendar_event", default_view: "table", hidden_in_sidebar: "true" },
+        { name: "interaction", default_view: "table", hidden_in_sidebar: "true" },
         { name: "secret", default_view: "table", hidden_in_sidebar: "true" },
       ] as never);
 
@@ -224,6 +225,7 @@ describe("Workspace Tree & Browse API", () => {
             makeDirent("email_message", true),
             makeDirent("email_thread", true),
             makeDirent("calendar_event", true),
+            makeDirent("interaction", true),
           ] as unknown as never[]);
         }
         return Promise.resolve([] as unknown as never[]);
@@ -242,6 +244,7 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).not.toContain("email_message");
       expect(rootPaths).not.toContain("email_thread");
       expect(rootPaths).not.toContain("calendar_event");
+      expect(rootPaths).not.toContain("interaction");
     });
 
     it("shows CRM sync object folders when hidden files are revealed", async () => {
@@ -252,6 +255,7 @@ describe("Workspace Tree & Browse API", () => {
         { name: "email_message", default_view: "table" },
         { name: "email_thread", default_view: "table" },
         { name: "calendar_event", default_view: "table" },
+        { name: "interaction", default_view: "table" },
       ] as never);
 
       const { readdir: mockReaddir } = await import("node:fs/promises");
@@ -262,6 +266,7 @@ describe("Workspace Tree & Browse API", () => {
             makeDirent("email_message", true),
             makeDirent("email_thread", true),
             makeDirent("calendar_event", true),
+            makeDirent("interaction", true),
           ] as unknown as never[]);
         }
         return Promise.resolve([] as unknown as never[]);
@@ -276,6 +281,7 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).toContain("email_message");
       expect(rootPaths).toContain("email_thread");
       expect(rootPaths).toContain("calendar_event");
+      expect(rootPaths).toContain("interaction");
     });
 
     it("yields before tree discovery completes (prevents UI freeze during active agent runs)", async () => {

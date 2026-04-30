@@ -108,6 +108,19 @@ export function CompanyProfile({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [localTab, setLocalTab] = useState<CompanyProfileTab>("overview");
+  // Reset the local tab when the parent navigates to a different company.
+  // The component is mounted without a `key` upstream, so React reuses
+  // this instance on `companyId` change — without this guard, company B
+  // would inherit company A's selected tab whenever the URL doesn't carry
+  // an explicit `profileTab`. Pattern: store the prop alongside the
+  // dependent state and reset during render so the first paint of B is
+  // already on "overview", with no useEffect-induced flicker.
+  // https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
+  const [previousCompanyId, setPreviousCompanyId] = useState(companyId);
+  if (companyId !== previousCompanyId) {
+    setPreviousCompanyId(companyId);
+    setLocalTab("overview");
+  }
   const tab = isCompanyProfileTab(activeTab) ? activeTab : localTab;
 
   const handleTabChange = useCallback(

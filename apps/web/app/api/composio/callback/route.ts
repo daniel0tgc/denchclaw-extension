@@ -8,8 +8,15 @@ import {
   extractComposioConnections,
   normalizeComposioConnections,
 } from "@/lib/composio-client";
+import {
+  readOnboardingState,
+  writeConnection,
+  writeOnboardingState,
+  type ConnectionRecord,
+} from "@/lib/denchclaw-state";
 import { refreshIntegrationsRuntime } from "@/lib/integrations";
 import { resolveAppPublicOrigin } from "@/lib/public-origin";
+import type { NormalizedComposioConnection } from "@/lib/composio";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,26 +25,59 @@ function serializeForInlineScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
-async function resolveConnectedToolkitSummary(connectedAccountId: string): Promise<{
-  toolkit_slug: string | null;
-  toolkit_name: string | null;
-  status: string | null;
-}> {
+function syncToolkitFromConnection(
+  connection: NormalizedComposioConnection,
+): "gmail" | "calendar" | null {
+  if (connection.normalized_toolkit_slug === "gmail") {
+    return "gmail";
+  }
+  if (
+    connection.normalized_toolkit_slug === "google-calendar" ||
+    connection.normalized_toolkit_slug === "googlecalendar"
+  ) {
+    return "calendar";
+  }
+  return null;
+}
+
+function persistLocalSyncConnection(connection: NormalizedComposioConnection): void {
+  if (!connection.is_active) {
+    return;
+  }
+  const toolkit = syncToolkitFromConnection(connection);
+  if (!toolkit) {
+    return;
+  }
+
+  const record: ConnectionRecord = {
+    connectionId: connection.id,
+    toolkitSlug: connection.normalized_toolkit_slug,
+    accountEmail: connection.account_email ?? connection.account?.email ?? undefined,
+    accountLabel: connection.display_label,
+    connectedAt: new Date().toISOString(),
+  };
+  writeConnection(toolkit, record);
+
+  const current = readOnboardingState();
+  writeOnboardingState({
+    ...current,
+    connections: {
+      ...current.connections,
+      [toolkit]: record,
+    },
+  });
+}
+
+async function resolveConnectedConnection(
+  connectedAccountId: string,
+): Promise<NormalizedComposioConnection | null> {
   if (!connectedAccountId) {
-    return {
-      toolkit_slug: null,
-      toolkit_name: null,
-      status: null,
-    };
+    return null;
   }
 
   const apiKey = resolveComposioApiKey();
   if (!apiKey) {
-    return {
-      toolkit_slug: null,
-      toolkit_name: null,
-      status: null,
-    };
+    return null;
   }
 
   try {
@@ -46,18 +86,9 @@ async function resolveConnectedToolkitSummary(connectedAccountId: string): Promi
         await fetchComposioConnections(resolveComposioGatewayUrl(), apiKey),
       ),
     );
-    const match = connections.find((connection) => connection.id === connectedAccountId);
-    return {
-      toolkit_slug: match?.normalized_toolkit_slug ?? null,
-      toolkit_name: match?.toolkit_name ?? null,
-      status: match?.normalized_status ?? null,
-    };
+    return connections.find((connection) => connection.id === connectedAccountId) ?? null;
   } catch {
-    return {
-      toolkit_slug: null,
-      toolkit_name: null,
-      status: null,
-    };
+    return null;
   }
 }
 
@@ -75,11 +106,14 @@ export async function GET(request: Request) {
 
   const success = status === "success";
   let resolvedConnection:
-    | Awaited<ReturnType<typeof resolveConnectedToolkitSummary>>
+    | Awaited<ReturnType<typeof resolveConnectedConnection>>
     | undefined;
   if (success) {
     invalidateComposioConnectionsCache();
-    resolvedConnection = await resolveConnectedToolkitSummary(connectedAccountId);
+    resolvedConnection = await resolveConnectedConnection(connectedAccountId);
+    if (resolvedConnection) {
+      persistLocalSyncConnection(resolvedConnection);
+    }
     void (async () => {
       try {
         await refreshIntegrationsRuntime();
@@ -90,9 +124,9 @@ export async function GET(request: Request) {
     type: "composio-callback",
     status,
     connected_account_id: connectedAccountId,
-    connected_toolkit_slug: resolvedConnection?.toolkit_slug ?? null,
+    connected_toolkit_slug: resolvedConnection?.normalized_toolkit_slug ?? null,
     connected_toolkit_name: resolvedConnection?.toolkit_name ?? null,
-    connected_status: resolvedConnection?.status ?? null,
+    connected_status: resolvedConnection?.normalized_status ?? null,
   });
   const targetOriginJson = serializeForInlineScript(targetOrigin);
 

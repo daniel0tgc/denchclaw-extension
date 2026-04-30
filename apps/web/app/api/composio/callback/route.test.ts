@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
-const { invalidateComposioConnectionsCacheMock } = vi.hoisted(() => ({
+const {
+  invalidateComposioConnectionsCacheMock,
+  readOnboardingStateMock,
+  writeConnectionMock,
+  writeOnboardingStateMock,
+} = vi.hoisted(() => ({
   invalidateComposioConnectionsCacheMock: vi.fn(),
+  readOnboardingStateMock: vi.fn(),
+  writeConnectionMock: vi.fn(),
+  writeOnboardingStateMock: vi.fn(),
 }));
 
 vi.mock("../connections/cache", () => ({
@@ -17,6 +25,12 @@ vi.mock("@/lib/composio", () => ({
   fetchComposioConnections: vi.fn(),
   resolveComposioApiKey: vi.fn(() => "dench_test_key"),
   resolveComposioGatewayUrl: vi.fn(() => "https://gateway.example.com"),
+}));
+
+vi.mock("@/lib/denchclaw-state", () => ({
+  readOnboardingState: readOnboardingStateMock,
+  writeConnection: writeConnectionMock,
+  writeOnboardingState: writeOnboardingStateMock,
 }));
 
 const { refreshIntegrationsRuntime } = await import("@/lib/integrations");
@@ -36,6 +50,13 @@ describe("Composio callback API", () => {
       restarted: true,
       error: null,
       profile: "dench",
+    });
+    readOnboardingStateMock.mockReturnValue({
+      version: 1,
+      currentStep: "connect-gmail",
+      completedSteps: ["welcome", "identity", "dench-cloud"],
+      startedAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
     });
     mockedFetchComposioConnections.mockResolvedValue({
       connections: [
@@ -72,6 +93,46 @@ describe("Composio callback API", () => {
     expect(html).toContain('"connected_account_id":"acct_123"');
     expect(html).toContain('"connected_toolkit_slug":"x"');
     expect(html).toContain('"connected_toolkit_name":"X"');
+  });
+
+  it("persists Gmail callback connections for the sync runner", async () => {
+    mockedFetchComposioConnections.mockResolvedValue({
+      connections: [
+        {
+          id: "acct_gmail",
+          toolkit_slug: "gmail",
+          toolkit_name: "Gmail",
+          status: "ACTIVE",
+          created_at: "2026-04-02T00:00:00.000Z",
+          account_email: "person@example.com",
+        },
+      ],
+    } as never);
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/composio/callback?status=success&connected_account_id=acct_gmail",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(writeConnectionMock).toHaveBeenCalledWith(
+      "gmail",
+      expect.objectContaining({
+        connectionId: "acct_gmail",
+        toolkitSlug: "gmail",
+        accountEmail: "person@example.com",
+      }),
+    );
+    expect(writeOnboardingStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connections: expect.objectContaining({
+          gmail: expect.objectContaining({
+            connectionId: "acct_gmail",
+          }),
+        }),
+      }),
+    );
   });
 
   it("does not rebuild when the callback is unsuccessful", async () => {

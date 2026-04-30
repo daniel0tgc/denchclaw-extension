@@ -7,12 +7,18 @@ const {
   resolveComposioApiKeyMock,
   resolveComposioEligibilityMock,
   resolveComposioGatewayUrlMock,
+  readOnboardingStateMock,
+  writeConnectionMock,
+  writeOnboardingStateMock,
 } = vi.hoisted(() => ({
   fetchComposioConnectionsMock: vi.fn(),
   initiateComposioConnectMock: vi.fn(),
   resolveComposioApiKeyMock: vi.fn(),
   resolveComposioEligibilityMock: vi.fn(),
   resolveComposioGatewayUrlMock: vi.fn(),
+  readOnboardingStateMock: vi.fn(),
+  writeConnectionMock: vi.fn(),
+  writeOnboardingStateMock: vi.fn(),
 }));
 
 vi.mock("@/lib/composio", () => ({
@@ -21,6 +27,12 @@ vi.mock("@/lib/composio", () => ({
   resolveComposioApiKey: resolveComposioApiKeyMock,
   resolveComposioEligibility: resolveComposioEligibilityMock,
   resolveComposioGatewayUrl: resolveComposioGatewayUrlMock,
+}));
+
+vi.mock("@/lib/denchclaw-state", () => ({
+  readOnboardingState: readOnboardingStateMock,
+  writeConnection: writeConnectionMock,
+  writeOnboardingState: writeOnboardingStateMock,
 }));
 
 const ORIGINAL_PUBLIC_URL = process.env.DENCHCLAW_PUBLIC_URL;
@@ -39,6 +51,13 @@ describe("Composio connect API", () => {
     fetchComposioConnectionsMock.mockResolvedValue({ connections: [] });
     initiateComposioConnectMock.mockResolvedValue({
       redirect_url: "https://composio.example/connect/zoho",
+    });
+    readOnboardingStateMock.mockReturnValue({
+      version: 1,
+      currentStep: "connect-gmail",
+      completedSteps: ["welcome", "identity", "dench-cloud"],
+      startedAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
     });
   });
 
@@ -156,6 +175,23 @@ describe("Composio connect API", () => {
       account_email: "person@example.com",
     });
     expect(initiateComposioConnectMock).not.toHaveBeenCalled();
+    expect(writeConnectionMock).toHaveBeenCalledWith(
+      "gmail",
+      expect.objectContaining({
+        connectionId: "ca_gmail_1",
+        toolkitSlug: "gmail",
+        accountEmail: "person@example.com",
+      }),
+    );
+    expect(writeOnboardingStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connections: expect.objectContaining({
+          gmail: expect.objectContaining({
+            connectionId: "ca_gmail_1",
+          }),
+        }),
+      }),
+    );
   });
 
   it("returns an existing Google Calendar connection for connect slug aliases", async () => {

@@ -10,8 +10,15 @@ import {
   normalizeComposioConnections,
   normalizeComposioToolkitSlug,
 } from "@/lib/composio-client";
+import {
+  readOnboardingState,
+  writeConnection,
+  writeOnboardingState,
+  type ConnectionRecord,
+} from "@/lib/denchclaw-state";
 import { resolveComposioConnectToolkitSlug } from "@/lib/composio-normalization";
 import { resolveAppPublicOrigin } from "@/lib/public-origin";
+import type { NormalizedComposioConnection } from "@/lib/composio";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,6 +26,49 @@ export const runtime = "nodejs";
 type ConnectRequestBody = {
   toolkit?: unknown;
 };
+
+function syncToolkitFromConnection(
+  connection: NormalizedComposioConnection,
+): "gmail" | "calendar" | null {
+  if (connection.normalized_toolkit_slug === "gmail") {
+    return "gmail";
+  }
+  if (
+    connection.normalized_toolkit_slug === "google-calendar" ||
+    connection.normalized_toolkit_slug === "googlecalendar"
+  ) {
+    return "calendar";
+  }
+  return null;
+}
+
+function persistLocalSyncConnection(connection: NormalizedComposioConnection): void {
+  if (!connection.is_active) {
+    return;
+  }
+  const toolkit = syncToolkitFromConnection(connection);
+  if (!toolkit) {
+    return;
+  }
+
+  const record: ConnectionRecord = {
+    connectionId: connection.id,
+    toolkitSlug: connection.normalized_toolkit_slug,
+    accountEmail: connection.account_email ?? connection.account?.email ?? undefined,
+    accountLabel: connection.display_label,
+    connectedAt: new Date().toISOString(),
+  };
+  writeConnection(toolkit, record);
+
+  const current = readOnboardingState();
+  writeOnboardingState({
+    ...current,
+    connections: {
+      ...current.connections,
+      [toolkit]: record,
+    },
+  });
+}
 
 export async function POST(request: Request) {
   const apiKey = resolveComposioApiKey();
@@ -68,6 +118,7 @@ export async function POST(request: Request) {
     ).find((connection) => connection.normalized_toolkit_slug === normalizedToolkit && connection.is_active);
 
     if (activeConnection) {
+      persistLocalSyncConnection(activeConnection);
       return Response.json({
         already_connected: true,
         connection_id: activeConnection.id,

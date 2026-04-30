@@ -65,9 +65,11 @@ async function resolveModalData(toolkitSlug: string, toolkitName?: string | null
 
 export function ChatComposioModalHost({
   request,
+  onRequestHandled,
   onFallbackToIntegrations,
 }: {
   request: ComposioChatAction | null;
+  onRequestHandled?: () => void;
   onFallbackToIntegrations: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -119,8 +121,10 @@ export function ChatComposioModalHost({
     if (!request) {
       return;
     }
-    void hydrateModalTarget(request);
-  }, [hydrateModalTarget, request]);
+    const nextRequest = request;
+    onRequestHandled?.();
+    void hydrateModalTarget(nextRequest);
+  }, [hydrateModalTarget, onRequestHandled, request]);
 
   const handleConnectionChange = useCallback((payload?: {
     toolkit?: ComposioToolkit | null;

@@ -10,7 +10,7 @@ type PostBody = {
 
 export async function GET() {
   try {
-    const status = await getComposioMcpHealth();
+    const status = await getComposioMcpHealth({ autoRepairConfig: true });
     return Response.json(status);
   } catch (error) {
     return Response.json(
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     if (!body.action || body.action === "refresh_status") {
-      return Response.json(await getComposioMcpHealth());
+      return Response.json(await getComposioMcpHealth({ autoRepairConfig: true }));
     }
     if (body.action === "repair_mcp") {
       return Response.json(await getComposioMcpHealth({
@@ -42,7 +42,10 @@ export async function POST(request: Request) {
       }));
     }
     if (body.action === "probe_live_agent") {
-      return Response.json(await getComposioMcpHealth({ includeLiveAgentProbe: true }));
+      return Response.json(await getComposioMcpHealth({
+        autoRepairConfig: true,
+        includeLiveAgentProbe: true,
+      }));
     }
     return Response.json(
       { error: "Unknown action. Use 'refresh_status', 'repair_mcp', or 'probe_live_agent'." },

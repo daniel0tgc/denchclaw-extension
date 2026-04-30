@@ -262,7 +262,7 @@ async function runLiveAgentProbe(): Promise<ComposioMcpHealth["liveAgent"]> {
         })
         .filter((event): event is AgentEvent => Boolean(event));
 
-      const finalChat = [...chatPayloads].reverse().find((event) => {
+      const finalChat = chatPayloads.toReversed().find((event) => {
         if (event.event !== "chat") {
           return false;
         }
@@ -378,6 +378,7 @@ async function applyComposioMcpRepair(
 export async function getComposioMcpHealth(options?: {
   includeLiveAgentProbe?: boolean;
   repairConfig?: boolean;
+  autoRepairConfig?: boolean;
 }): Promise<ComposioMcpHealth> {
   const generatedAt = nowIso();
   const workspaceDir = resolveWorkspaceRoot();
@@ -399,9 +400,18 @@ export async function getComposioMcpHealth(options?: {
 
   let refresh: IntegrationRuntimeRefresh | undefined;
   let latestConfiguredServer = configuredServer;
-  if (options?.repairConfig && apiKey) {
+  let configWasRepaired = false;
+  const shouldRepairConfig = Boolean(
+    apiKey &&
+      (
+        options?.repairConfig ||
+        (options?.autoRepairConfig && !compareServerSnapshots(configuredServer, expectedServer))
+      ),
+  );
+  if (shouldRepairConfig && apiKey) {
     refresh = await applyComposioMcpRepair(gatewayUrl, apiKey);
     latestConfiguredServer = readConfiguredComposioServer(readConfig());
+    configWasRepaired = true;
   }
 
   const matchesExpected = apiKey
@@ -474,7 +484,7 @@ export async function getComposioMcpHealth(options?: {
   if (options?.includeLiveAgentProbe && apiKey) {
     liveAgent = await runLiveAgentProbe();
     cachedLiveAgentCheck = liveAgent;
-  } else if (options?.repairConfig) {
+  } else if (options?.repairConfig || configWasRepaired) {
     liveAgent = {
       status: "unknown",
       detail: LIVE_AGENT_REPAIR_PENDING_DETAIL,

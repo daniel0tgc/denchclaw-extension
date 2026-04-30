@@ -6,7 +6,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
@@ -142,8 +141,12 @@ export function ComposioConnectModal({
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
-      if (event.data?.type !== "composio-callback") return;
-      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "composio-callback") {
+        return;
+      }
+      if (event.origin !== window.location.origin) {
+        return;
+      }
 
       callbackHandledRef.current = true;
       stopPopupPolling();
@@ -173,7 +176,9 @@ export function ComposioConnectModal({
   }, [onConnectionChange, onOpenChange, stopPopupPolling, toolkit]);
 
   const handleConnect = useCallback(async () => {
-    if (!toolkit) return;
+    if (!toolkit) {
+      return;
+    }
     if (connected) {
       setError(`Disconnect ${toolkit.name} before connecting a different account.`);
       return;
@@ -191,6 +196,28 @@ export function ComposioConnectModal({
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to start connection.");
       }
+      const existingConnectionId = data.connected_account_id ?? data.connection_id;
+      if (data.already_connected && existingConnectionId) {
+        onConnectionChange({
+          toolkit,
+          connected: true,
+          connectedToolkitSlug:
+            typeof data.connected_toolkit_slug === "string"
+              ? data.connected_toolkit_slug
+              : toolkit.slug,
+          connectedToolkitName:
+            typeof data.connected_toolkit_name === "string"
+              ? data.connected_toolkit_name
+              : toolkit.name,
+          shouldProbeLiveAgent: true,
+        });
+        setConnecting(false);
+        onOpenChange(false);
+        return;
+      }
+      if (!data.redirect_url) {
+        throw new Error(data.error ?? "Failed to start connection.");
+      }
       const popup = window.open(
         data.redirect_url,
         "_blank",
@@ -205,7 +232,9 @@ export function ComposioConnectModal({
       popup.focus?.();
       popupPollRef.current = window.setInterval(() => {
         const currentPopup = popupRef.current;
-        if (!currentPopup || !currentPopup.closed) return;
+        if (!currentPopup || !currentPopup.closed) {
+          return;
+        }
 
         stopPopupPolling();
         popupRef.current = null;
@@ -242,7 +271,9 @@ export function ComposioConnectModal({
     }
   }, [onConnectionChange]);
 
-  if (!toolkit) return null;
+  if (!toolkit) {
+    return null;
+  }
 
   const authLabel = toolkit.auth_schemes.length > 0
     ? toolkit.auth_schemes.map(formatAuthScheme).join(", ")

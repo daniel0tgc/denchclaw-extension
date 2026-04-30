@@ -1325,6 +1325,10 @@ function WorkspacePageInner() {
     });
   }, []);
 
+  const handleComposioActionHandled = useCallback(() => {
+    setPendingComposioAction(null);
+  }, []);
+
   const handleComposioFallbackToIntegrations = useCallback(() => {
     handleNavigate("integrations");
   }, [handleNavigate]);
@@ -2605,6 +2609,7 @@ function WorkspacePageInner() {
 
         <ChatComposioModalHost
           request={pendingComposioAction}
+          onRequestHandled={handleComposioActionHandled}
           onFallbackToIntegrations={handleComposioFallbackToIntegrations}
         />
 

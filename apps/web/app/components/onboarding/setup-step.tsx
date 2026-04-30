@@ -11,9 +11,16 @@ type DenchCloudStatus = {
 };
 
 type ConnectInitiateResponse = {
+  already_connected?: boolean;
   redirect_url?: string;
   connection_id?: string | null;
+  connected_account_id?: string | null;
   connect_toolkit?: string | null;
+  connected_toolkit_slug?: string | null;
+  connected_toolkit_name?: string | null;
+  account_email?: string | null;
+  account_label?: string | null;
+  code?: string;
   error?: string;
 };
 
@@ -26,6 +33,96 @@ type CallbackPayload = {
 };
 
 type ToolkitKey = "gmail" | "calendar";
+
+type ExistingComposioConnection = {
+  id?: string | null;
+  connectionId?: string | null;
+  toolkit_slug?: string | null;
+  normalized_toolkit_slug?: string | null;
+  toolkit_name?: string | null;
+  status?: string | null;
+  account_email?: string | null;
+  account_label?: string | null;
+  account?: {
+    email?: string | null;
+    label?: string | null;
+  } | null;
+  toolkit?: {
+    slug?: string | null;
+    name?: string | null;
+  } | null;
+};
+
+type ExistingConnectionsResponse = {
+  connections?: ExistingComposioConnection[];
+  items?: ExistingComposioConnection[];
+};
+
+type PersistConnectionInput = {
+  connectionId: string;
+  toolkitSlug: string | null;
+  accountEmail?: string | null;
+};
+
+const ONBOARDING_STEP_ORDER = [
+  "welcome",
+  "identity",
+  "dench-cloud",
+  "connect-gmail",
+  "connect-calendar",
+  "backfill",
+  "complete",
+] as const;
+
+function stepIndex(step: OnboardingState["currentStep"]): number {
+  return ONBOARDING_STEP_ORDER.indexOf(step);
+}
+
+function shouldAdvanceFrom(
+  currentStep: OnboardingState["currentStep"],
+  fromStep: OnboardingState["currentStep"],
+): boolean {
+  const current = stepIndex(currentStep);
+  const from = stepIndex(fromStep);
+  return current >= 0 && from >= 0 && current <= from;
+}
+
+function normalizeToolkitSlug(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/_/g, "-");
+}
+
+function readConnectionId(connection: ExistingComposioConnection): string | null {
+  const id = connection.id ?? connection.connectionId;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
+
+function connectionToolkitSlug(connection: ExistingComposioConnection): string {
+  return normalizeToolkitSlug(
+    connection.normalized_toolkit_slug ??
+      connection.toolkit_slug ??
+      connection.toolkit?.slug,
+  );
+}
+
+function connectionAccountEmail(connection: ExistingComposioConnection): string | null {
+  const email = connection.account_email ?? connection.account?.email;
+  return typeof email === "string" && email.includes("@") ? email : null;
+}
+
+function connectionMatchesToolkit(
+  connection: ExistingComposioConnection,
+  toolkit: ToolkitKey,
+): boolean {
+  const status = (connection.status ?? "").trim().toUpperCase();
+  if (status && status !== "ACTIVE") {
+    return false;
+  }
+  const slug = connectionToolkitSlug(connection);
+  if (toolkit === "gmail") {
+    return slug === "gmail";
+  }
+  return slug === "google-calendar" || slug === "googlecalendar";
+}
 
 /**
  * Single compact filled CTA used on active connection rows. Solid surface
@@ -172,6 +269,7 @@ export function SetupStep({
   const popupRef = useRef<Window | null>(null);
   const popupPollRef = useRef<number | null>(null);
   const callbackToolkitRef = useRef<ToolkitKey | null>(null);
+  const reconciledExistingConnectionsRef = useRef(false);
 
   // Derived connection flags. `state.denchCloud` is present whenever the user
   // has either configured it or explicitly skipped — `skipped: true` means
@@ -260,27 +358,27 @@ export function SetupStep({
     }
   }, []);
 
-  const completeToolkit = useCallback(
+  const persistToolkitConnection = useCallback(
     async (
       toolkit: ToolkitKey,
-      connectionId: string,
-      connectionToolkitSlug: string | null,
+      connection: PersistConnectionInput,
+      baseState: OnboardingState = state,
     ) => {
       const fromStep = toolkit === "gmail" ? "connect-gmail" : "connect-calendar";
       const toStep = toolkit === "gmail" ? "connect-calendar" : "backfill";
+      const shouldAdvance = shouldAdvanceFrom(baseState.currentStep, fromStep);
       try {
         const res = await fetch("/api/onboarding/connections", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             toolkit,
-            connectionId,
+            connectionId: connection.connectionId,
             toolkitSlug:
-              connectionToolkitSlug ??
+              connection.toolkitSlug ??
               (toolkit === "gmail" ? "gmail" : "google-calendar"),
-            accountEmail: null,
-            fromStep,
-            toStep,
+            accountEmail: connection.accountEmail ?? null,
+            ...(shouldAdvance ? { fromStep, toStep } : {}),
           }),
         });
         if (!res.ok) {
@@ -289,14 +387,99 @@ export function SetupStep({
         }
         const next = (await res.json()) as OnboardingState;
         onAdvance(next);
+        return next;
       } catch (err) {
         setToolkitError(
           err instanceof Error ? err.message : "Could not save the connection.",
         );
+        return baseState;
       }
     },
-    [onAdvance],
+    [onAdvance, state],
   );
+
+  const completeToolkit = useCallback(
+    async (
+      toolkit: ToolkitKey,
+      connectionId: string,
+      connectionToolkitSlug: string | null,
+    ) => {
+      await persistToolkitConnection(toolkit, {
+        connectionId,
+        toolkitSlug: connectionToolkitSlug,
+      });
+    },
+    [persistToolkitConnection],
+  );
+
+  // Dench Cloud/Composio is the source of truth for OAuth. If a user already
+  // connected Gmail in a prior attempt but local onboarding metadata was never
+  // written, adopt that active account instead of showing a misleading
+  // "Connect" button that can only end in an "already connected" error.
+  useEffect(() => {
+    if (!denchCloudConnected) {
+      return;
+    }
+    if (reconciledExistingConnectionsRef.current) {
+      return;
+    }
+    if (gmailConnected && calendarConnected) {
+      return;
+    }
+    reconciledExistingConnectionsRef.current = true;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/composio/connections?include_toolkits=1&fresh=1", {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as ExistingConnectionsResponse;
+        const existingConnections = data.connections?.length ? data.connections : data.items ?? [];
+        let nextState = state;
+
+        const existingGmail = gmailConnected
+          ? null
+          : existingConnections.find((connection) => connectionMatchesToolkit(connection, "gmail"));
+        const gmailId = existingGmail ? readConnectionId(existingGmail) : null;
+        if (!cancelled && existingGmail && gmailId) {
+          nextState = await persistToolkitConnection("gmail", {
+            connectionId: gmailId,
+            toolkitSlug: connectionToolkitSlug(existingGmail) || "gmail",
+            accountEmail: connectionAccountEmail(existingGmail),
+          }, nextState);
+        }
+
+        const existingCalendar = calendarConnected
+          ? null
+          : existingConnections.find((connection) => connectionMatchesToolkit(connection, "calendar"));
+        const calendarId = existingCalendar ? readConnectionId(existingCalendar) : null;
+        if (!cancelled && existingCalendar && calendarId) {
+          nextState = await persistToolkitConnection("calendar", {
+            connectionId: calendarId,
+            toolkitSlug: connectionToolkitSlug(existingCalendar) || "google-calendar",
+            accountEmail: connectionAccountEmail(existingCalendar),
+          }, nextState);
+        }
+      } catch {
+        // Reconciliation is opportunistic. The Connect button path below still
+        // handles existing-account adoption if this probe fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    calendarConnected,
+    denchCloudConnected,
+    gmailConnected,
+    persistToolkitConnection,
+    state,
+  ]);
 
   // Subscribe to the Composio popup's postMessage callback.
   useEffect(() => {
@@ -342,7 +525,37 @@ export function SetupStep({
           body: JSON.stringify({ toolkit: slug }),
         });
         const data = (await res.json()) as ConnectInitiateResponse;
-        if (!res.ok || !data.redirect_url) {
+        const existingConnectionId = data.connected_account_id ?? data.connection_id ?? null;
+        if (data.already_connected && existingConnectionId) {
+          await persistToolkitConnection(toolkit, {
+            connectionId: existingConnectionId,
+            toolkitSlug:
+              data.connected_toolkit_slug ??
+              data.connect_toolkit ??
+              (toolkit === "gmail" ? "gmail" : "google-calendar"),
+            accountEmail: data.account_email ?? null,
+          });
+          setActiveToolkit(null);
+          callbackToolkitRef.current = null;
+          return;
+        }
+        if (!res.ok) {
+          if (data.code === "APP_ALREADY_CONNECTED" && existingConnectionId) {
+            await persistToolkitConnection(toolkit, {
+              connectionId: existingConnectionId,
+              toolkitSlug:
+                data.connected_toolkit_slug ??
+                data.connect_toolkit ??
+                (toolkit === "gmail" ? "gmail" : "google-calendar"),
+              accountEmail: data.account_email ?? null,
+            });
+            setActiveToolkit(null);
+            callbackToolkitRef.current = null;
+            return;
+          }
+          throw new Error(data.error ?? `HTTP ${res.status}`);
+        }
+        if (!data.redirect_url) {
           throw new Error(data.error ?? `HTTP ${res.status}`);
         }
         const popup = window.open(
@@ -378,7 +591,7 @@ export function SetupStep({
         );
       }
     },
-    [stopPopupPolling],
+    [persistToolkitConnection, stopPopupPolling],
   );
 
   async function handleDenchCloudSubmit(event: React.FormEvent) {

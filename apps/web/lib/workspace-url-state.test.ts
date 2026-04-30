@@ -19,6 +19,7 @@ import {
   parseWorkspaceLink,
   isWorkspaceLink,
   isEntryLink,
+  mergePreservedTableView,
   type WorkspaceUrlState,
 } from "./workspace-links";
 
@@ -490,5 +491,107 @@ describe("real-world edge cases", () => {
     expect(state.page).toBeNull();
     expect(state.pageSize).toBeNull();
     expect(state.cols).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-table view-state preservation across shell URL re-projections
+// ---------------------------------------------------------------------------
+
+describe("mergePreservedTableView (table-switch bleed prevention)", () => {
+  it("preserves search/filters/sort/cols/view/viewType/page when staying on the same table", () => {
+    // Simulates: user has a search applied on /people, then opens an
+    // unrelated side panel (terminal toggle, entry modal, etc.) and the
+    // shell re-projects the URL with just `path=people`. The view state
+    // must survive that round-trip.
+    const fg = { id: "root", conjunction: "and" as const, rules: [{ id: "r1", field: "status", operator: "equals" as const, value: "active" }] };
+    const sortRules = [{ field: "created_at", direction: "desc" as const }];
+    const current = serializeUrlState({
+      path: "people",
+      search: "acme",
+      filters: fg,
+      sort: sortRules,
+      view: "Active",
+      viewType: "kanban",
+      cols: ["name", "email"],
+      page: 2,
+      pageSize: 25,
+    });
+
+    const merged = mergePreservedTableView({ path: "people" }, current);
+
+    expect(merged.path).toBe("people");
+    expect(merged.search).toBe("acme");
+    expect(merged.filters).toEqual(fg);
+    expect(merged.sort).toEqual(sortRules);
+    expect(merged.view).toBe("Active");
+    expect(merged.viewType).toBe("kanban");
+    expect(merged.cols).toEqual(["name", "email"]);
+    expect(merged.page).toBe(2);
+    expect(merged.pageSize).toBe(25);
+  });
+
+  it("drops view-state params when path changes (the original 'filters bleed across tables' bug)", () => {
+    // User had a filter on /people, then clicked /company in the tree.
+    // The shell projects `path=company`; previous table's view state must
+    // be dropped so company starts fresh.
+    const current = serializeUrlState({
+      path: "people",
+      search: "acme",
+      filters: { id: "root", conjunction: "and", rules: [{ id: "r", field: "x", operator: "equals", value: "y" }] },
+      sort: [{ field: "name", direction: "asc" }],
+      view: "Active",
+      viewType: "kanban",
+      cols: ["name"],
+      page: 3,
+      pageSize: 50,
+    });
+
+    const merged = mergePreservedTableView({ path: "company" }, current);
+
+    expect(merged.path).toBe("company");
+    expect(merged.search).toBeUndefined();
+    expect(merged.filters).toBeUndefined();
+    expect(merged.sort).toBeUndefined();
+    expect(merged.view).toBeUndefined();
+    expect(merged.viewType).toBeUndefined();
+    expect(merged.cols).toBeUndefined();
+    expect(merged.page).toBeUndefined();
+    expect(merged.pageSize).toBeUndefined();
+  });
+
+  it("drops view-state params when leaving a table for a chat/browse view (no path)", () => {
+    // User leaves the table to a chat or browse mode. Projection has no
+    // path, so view-state params from the prior table must not survive.
+    const current = serializeUrlState({
+      path: "people",
+      search: "acme",
+      view: "Active",
+    });
+
+    const merged = mergePreservedTableView({ chat: "sess-1" }, current);
+
+    expect(merged.chat).toBe("sess-1");
+    expect(merged.path).toBeUndefined();
+    expect(merged.search).toBeUndefined();
+    expect(merged.view).toBeUndefined();
+  });
+
+  it("does not invent view-state params when the URL has none (no-op when nothing to preserve)", () => {
+    const merged = mergePreservedTableView(
+      { path: "people" },
+      "path=people",
+    );
+    expect(merged.search).toBeUndefined();
+    expect(merged.filters).toBeUndefined();
+    expect(merged.view).toBeUndefined();
+  });
+
+  it("accepts a URLSearchParams instance for the current URL (no string parsing required)", () => {
+    const merged = mergePreservedTableView(
+      { path: "people" },
+      new URLSearchParams("path=people&search=acme"),
+    );
+    expect(merged.search).toBe("acme");
   });
 });

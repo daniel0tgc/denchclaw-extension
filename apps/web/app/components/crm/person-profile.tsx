@@ -82,9 +82,9 @@ type PersonResponse = {
 // Tabs
 // ---------------------------------------------------------------------------
 
-type Tab = "overview" | "emails" | "calendar" | "activity" | "notes";
+export type PersonProfileTab = "overview" | "emails" | "calendar" | "activity" | "notes";
 
-const TABS: ReadonlyArray<{ id: Tab; label: string; getCount?: (data: PersonResponse) => number | null }> = [
+const TABS: ReadonlyArray<{ id: PersonProfileTab; label: string; getCount?: (data: PersonResponse) => number | null }> = [
   { id: "overview", label: "Overview" },
   { id: "emails", label: "Emails", getCount: (d) => d.threads.length },
   { id: "calendar", label: "Meetings", getCount: (d) => d.events.length },
@@ -92,25 +92,42 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; getCount?: (data: PersonResp
   { id: "notes", label: "Notes" },
 ];
 
+function isPersonProfileTab(value: string | undefined): value is PersonProfileTab {
+  return value === "overview" || value === "emails" || value === "calendar" || value === "activity" || value === "notes";
+}
+
 // ---------------------------------------------------------------------------
 // Top-level component
 // ---------------------------------------------------------------------------
 
 export function PersonProfile({
   personId,
+  activeTab,
   onOpenPerson,
   onOpenCompany,
   onBackToList,
+  onTabChange,
 }: {
   personId: string;
+  activeTab?: string;
   onOpenPerson?: (id: string) => void;
   onOpenCompany?: (id: string) => void;
   onBackToList?: () => void;
+  onTabChange?: (tab: PersonProfileTab) => void;
 }) {
   const [data, setData] = useState<PersonResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [localTab, setLocalTab] = useState<PersonProfileTab>("overview");
+  const tab = isPersonProfileTab(activeTab) ? activeTab : localTab;
+
+  const handleTabChange = useCallback(
+    (nextTab: PersonProfileTab) => {
+      setLocalTab(nextTab);
+      onTabChange?.(nextTab);
+    },
+    [onTabChange],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -232,7 +249,7 @@ export function PersonProfile({
       <PersonHeader
         data={data}
         tab={tab}
-        onTabChange={setTab}
+        onTabChange={handleTabChange}
         onOpenCompany={onOpenCompany}
         onBackToList={onBackToList}
         onSaveName={handleSaveName}
@@ -277,8 +294,8 @@ function PersonHeader({
   onSaveName,
 }: {
   data: PersonResponse;
-  tab: Tab;
-  onTabChange: (t: Tab) => void;
+  tab: PersonProfileTab;
+  onTabChange: (t: PersonProfileTab) => void;
   onOpenCompany?: (id: string) => void;
   onBackToList?: () => void;
   onSaveName: (newName: string) => Promise<void>;

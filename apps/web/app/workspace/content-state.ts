@@ -106,5 +106,5 @@ export type ContentState =
   | { kind: "app"; appPath: string; manifest: DenchAppManifest; filename: string }
   | { kind: "crm-inbox" }
   | { kind: "crm-calendar" }
-  | { kind: "crm-person"; entryId: string }
-  | { kind: "crm-company"; entryId: string };
+  | { kind: "crm-person"; entryId: string; profileTab?: string }
+  | { kind: "crm-company"; entryId: string; profileTab?: string };

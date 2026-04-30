@@ -14,6 +14,7 @@
  *   Skills:      /?path=~skills
  *   Cron views:  /?path=~cron&cronView=calendar&cronCalMode=week&cronDate=2026-03-05
  *   Object view: /?path=leads&viewType=kanban&filters=...&sort=...&search=...&page=1&pageSize=50&cols=a,b,c&view=MyView
+ *   Profile tab: /?entry=company:abc&profileTab=team
  *   Preview:     /?path=file.md&preview=other.md
  *   Send:        /?send=install+duckdb  (consumed immediately)
  *
@@ -46,6 +47,8 @@ export type WorkspaceUrlState = {
   /** File-scoped chat session (active when a file is open in the main panel). */
   fileChat: string | null;
   entry: { objectName: string; entryId: string } | null;
+  /** Active subtab inside a CRM profile page, e.g. company team or person activity. */
+  profileTab: string | null;
   send: string | null;
   browse: string | null;
   hidden: boolean;
@@ -139,6 +142,7 @@ export function parseUrlState(search: string | URLSearchParams): WorkspaceUrlSta
     subagent: params.get("subagent"),
     fileChat: params.get("fileChat"),
     entry,
+    profileTab: params.get("profileTab"),
     send: params.get("send"),
     browse: params.get("browse"),
     hidden: params.get("hidden") === "1",
@@ -176,6 +180,7 @@ export function serializeUrlState(state: Partial<WorkspaceUrlState>): string {
   if (state.entry) {
     params.set("entry", `${state.entry.objectName}:${state.entry.entryId}`);
   }
+  if (state.profileTab) params.set("profileTab", state.profileTab);
   if (state.send) params.set("send", state.send);
   if (state.browse) params.set("browse", state.browse);
   if (state.hidden) params.set("hidden", "1");

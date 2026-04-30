@@ -21,6 +21,7 @@ import {
   openChat,
   openContent,
   promoteContent,
+  projectUrlState,
   saveTabsState,
   selectActiveContentTab,
   selectActivePath,
@@ -29,7 +30,7 @@ import {
   workspaceTabsReducer,
   bindChatSession,
 } from "./workspace-tabs";
-import { parseUrlState } from "./workspace-links";
+import { parseUrlState, serializeUrlState } from "./workspace-links";
 
 beforeEach(() => {
   if (typeof window !== "undefined") {
@@ -330,11 +331,54 @@ describe("URL roundtrip / popstate idempotency", () => {
     expect(selectActiveContentTab(state)?.kind).toBe("object");
   });
 
+  it("maps legacy path=companies URLs to the canonical company object", () => {
+    const state = applyUrlToState(EMPTY_TABS_STATE, parseUrlState("path=companies"), {});
+    expect(selectActiveContentTab(state)?.kind).toBe("object");
+    expect(selectActiveContentTab(state)?.path).toBe("company");
+  });
+
   it("applyUrl with entry=people:abc opens a crm-person tab", () => {
     const url = parseUrlState("entry=people:abc");
     const state = applyUrlToState(EMPTY_TABS_STATE, url, {});
     expect(state.activeContentId).toBe("crm-person:abc");
     expect(selectActiveContentTab(state)?.meta?.entryId).toBe("abc");
+  });
+
+  it("round-trips a CRM company profile and selected subtab through browser history", () => {
+    let state: WorkspaceTabsState = openContent(EMPTY_TABS_STATE, {
+      id: contentTabIdFor("crm-company", "company", { entryId: "co_1" }),
+      kind: "crm-company",
+      path: "company",
+      title: "Company",
+      meta: { entryId: "co_1", profileTab: "team" },
+      preview: true,
+    });
+
+    const companyUrl = serializeUrlState(projectUrlState(state, {
+      chatSessionId: null,
+      chatSubagentKey: null,
+      entryModal: null,
+      browseDir: null,
+      showHidden: false,
+      terminalOpen: false,
+      cron: {
+        view: "overview",
+        calMode: "month",
+        date: null,
+        runFilter: "all",
+        run: null,
+      },
+    }));
+    expect(companyUrl).toBe("entry=company%3Aco_1&profileTab=team");
+
+    state = applyUrlToState(state, parseUrlState("entry=people:p_1"), {});
+    expect(selectActiveContentTab(state)?.kind).toBe("crm-person");
+
+    state = applyUrlToState(state, parseUrlState(companyUrl), {});
+    const active = selectActiveContentTab(state);
+    expect(active?.kind).toBe("crm-company");
+    expect(active?.path).toBe("company");
+    expect(active?.meta).toMatchObject({ entryId: "co_1", profileTab: "team" });
   });
 
   it("applyUrl with no path clears the active content", () => {

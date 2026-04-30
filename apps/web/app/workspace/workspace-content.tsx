@@ -1693,9 +1693,9 @@ function WorkspacePageInner() {
         dispatch({
           type: "openContent",
           tab: {
-            id: contentTabIdFor("crm-company", "companies", { entryId }),
+            id: contentTabIdFor("crm-company", "company", { entryId }),
             kind: "crm-company",
-            path: "companies",
+            path: "company",
             title: "Company",
             meta: { entryId },
             preview: true,
@@ -1713,6 +1713,12 @@ function WorkspacePageInner() {
   // Close entry modal handler — URL sync effect drops `?entry=` automatically.
   const handleCloseEntry = useCallback(() => {
     setEntryModal(null);
+  }, []);
+
+  const handleProfileTabChange = useCallback((profileTab: string) => {
+    const activeId = tabsStateRef.current.activeContentId;
+    if (!activeId) {return;}
+    dispatch({ type: "updateContentMeta", id: activeId, meta: { profileTab } });
   }, []);
 
   // -- URL <-> state bidirectional projection ------------------------------
@@ -2365,6 +2371,7 @@ function WorkspacePageInner() {
       onSendCommand={handleCronSendCommand}
       onMakeTabPermanent={promoteTabByPath}
       onTableSelectionContextChange={setTableSelectionContext}
+      onProfileTabChange={handleProfileTabChange}
     />
   ), [
     workspaceExists, workspaceRoot, tree, activePath, browseDir, treeLoading,
@@ -2373,6 +2380,7 @@ function WorkspacePageInner() {
     searchIndex, handleSelectCronJob, handleBackToCronDashboard,
     cronView, cronCalMode, cronDate, cronRunFilter, cronRun,
     handleCronSendCommand, promoteTabByPath, setTableSelectionContext,
+    handleProfileTabChange,
   ]);
 
   const renderRightPanelPlaceholder = useCallback(() => (
@@ -2743,6 +2751,7 @@ function ContentRenderer({
   onSendCommand,
   onMakeTabPermanent,
   onTableSelectionContextChange,
+  onProfileTabChange,
 }: {
   content: ContentState;
   workspaceExists: boolean;
@@ -2779,6 +2788,7 @@ function ContentRenderer({
   onSendCommand: (message: string) => void;
   onMakeTabPermanent: (path: string) => void;
   onTableSelectionContextChange: (selection: TableSelectionContext | null) => void;
+  onProfileTabChange: (profileTab: string) => void;
 }) {
   switch (content.kind) {
     case "loading":
@@ -3009,9 +3019,11 @@ function ContentRenderer({
       return (
         <PersonProfile
           personId={content.entryId}
+          activeTab={content.profileTab}
           onOpenPerson={(id) => onOpenEntry("people", id)}
           onOpenCompany={(id) => onOpenEntry("company", id)}
           onBackToList={() => onNavigateToObject("people")}
+          onTabChange={onProfileTabChange}
         />
       );
 
@@ -3019,9 +3031,11 @@ function ContentRenderer({
       return (
         <CompanyProfile
           companyId={content.entryId}
+          activeTab={content.profileTab}
           onOpenPerson={(id) => onOpenEntry("people", id)}
           onOpenCompany={(id) => onOpenEntry("company", id)}
           onBackToList={() => onNavigateToObject("company")}
+          onTabChange={onProfileTabChange}
         />
       );
 

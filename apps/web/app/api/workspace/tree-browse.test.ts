@@ -6,7 +6,9 @@ vi.mock("node:fs", () => ({
   readdirSync: vi.fn(() => []),
   readFileSync: vi.fn(() => ""),
   existsSync: vi.fn(() => false),
+  mkdirSync: vi.fn(),
   statSync: vi.fn(() => ({ isDirectory: () => false, size: 100 })),
+  writeFileSync: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -59,7 +61,9 @@ describe("Workspace Tree & Browse API", () => {
       readdirSync: vi.fn(() => []),
       readFileSync: vi.fn(() => ""),
       existsSync: vi.fn(() => false),
+      mkdirSync: vi.fn(),
       statSync: vi.fn(() => ({ isDirectory: () => false, size: 100 })),
+      writeFileSync: vi.fn(),
     }));
     vi.mock("node:fs/promises", () => ({
       readdir: vi.fn(async () => []),
@@ -193,21 +197,17 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).not.toContain("~skills");
     });
 
-    it("does not hide objects when DuckDB returns hidden_in_sidebar as the string \"false\"", async () => {
-      // Regression test for #215. DuckDB's `-json` CLI mode serializes
-      // BOOLEAN columns as JSON strings (`"true"` / `"false"`). The
-      // string `"false"` is truthy in JS, so a naive
-      // `if (row.hidden_in_sidebar)` check used to mark every object as
-      // hidden — wiping all CRM folders (people, company, …) from the
-      // sidebar tree.
+    it("shows every DuckDB object table in the filesystem tree", async () => {
+      // The left CRM navigation can still choose what belongs in the product
+      // nav, but the filesystem tree should reflect the actual object folders
+      // in the workspace, including synced CRM tables.
       const { resolveWorkspaceRoot, duckdbQueryAllAsync } = await import("@/lib/workspace");
       vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");
       vi.mocked(duckdbQueryAllAsync).mockResolvedValue([
         { name: "people", default_view: "table", hidden_in_sidebar: "false" },
         { name: "company", default_view: "table", hidden_in_sidebar: "false" },
         { name: "opportunity", default_view: "kanban", hidden_in_sidebar: "false" },
-        // Real boolean true should still hide. CRM-only objects stay
-        // hidden either way thanks to HARDCODED_HIDDEN_OBJECT_NAMES.
+        { name: "email_message", default_view: "table", hidden_in_sidebar: "true" },
         { name: "secret", default_view: "table", hidden_in_sidebar: "true" },
       ] as never);
 
@@ -219,7 +219,7 @@ describe("Workspace Tree & Browse API", () => {
             makeDirent("company", true),
             makeDirent("opportunity", true),
             makeDirent("secret", true),
-            makeDirent("email_thread", true),
+            makeDirent("email_message", true),
           ] as unknown as never[]);
         }
         return Promise.resolve([] as unknown as never[]);
@@ -234,10 +234,8 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).toContain("people");
       expect(rootPaths).toContain("company");
       expect(rootPaths).toContain("opportunity");
-      // The row marked `hidden_in_sidebar = "true"` should be filtered out.
-      expect(rootPaths).not.toContain("secret");
-      // Hardcoded-hidden CRM objects stay hidden regardless of the DB value.
-      expect(rootPaths).not.toContain("email_thread");
+      expect(rootPaths).toContain("email_message");
+      expect(rootPaths).toContain("secret");
     });
 
     it("yields before tree discovery completes (prevents UI freeze during active agent runs)", async () => {

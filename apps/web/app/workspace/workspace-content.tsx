@@ -260,9 +260,9 @@ function objectNameFromPath(path: string): string {
 
 /**
  * Locate a workspace object node by its raw object name (e.g. `"people"`,
- * `"company"`, `"vc_lead"`). Walks the raw tree, including nodes that the
- * right-panel file tree hides (CRM_HIDDEN_TREE_PATHS only filters the visible
- * tree, not the underlying data). Returns `null` if no matching node exists.
+ * `"company"`, `"vc_lead"`). Walks the raw tree so CRM navigation can find
+ * objects independently from how the file tree chooses to render them.
+ * Returns `null` if no matching node exists.
  */
 function findCrmObjectNode(nodes: TreeNode[], objectName: string): TreeNode | null {
   for (const node of nodes) {
@@ -1543,12 +1543,8 @@ function WorkspacePageInner() {
     [tree, handleNodeSelect, workspaceRoot],
   );
 
-  // Build the enhanced tree: real tree + workspace management virtual folders
-  // (Chat sessions live in the right sidebar, not in the tree.)
-  // In browse mode, skip virtual folders (they only apply to workspace mode)
-  // Hide CRM-bound object tables from the right panel file tree.
-  // They're accessible via the left sidebar CRM nav (People / Companies / Inbox / Calendar),
-  // so showing them here is redundant and caused a visual flicker when the tree re-fetched.
+  // Paths that should stay out of the CRM nav because they already have
+  // dedicated product pages. The file tree itself should show every table.
   const CRM_HIDDEN_TREE_PATHS = useMemo(() => new Set([
     "people",
     "company",
@@ -1558,18 +1554,7 @@ function WorkspacePageInner() {
     "calendar_event",
     "interaction",
   ]), []);
-  // The file-tree version: hides the hardcoded CRM tables AND any
-  // object-typed node (task, deal, ...) because those already get their
-  // own entry in the sidebar's CRM nav. Keeping them in the file tree
-  // too is duplicate chrome the user has to scroll past.
-  const enhancedTree = useMemo(
-    () =>
-      tree.filter(
-        (node) =>
-          !CRM_HIDDEN_TREE_PATHS.has(node.path) && node.type !== "object",
-      ),
-    [tree, CRM_HIDDEN_TREE_PATHS],
-  );
+  const enhancedTree = tree;
   // The sidebar-nav version: only strips the hardcoded CRM tables (which
   // have their own dedicated pages) so custom objects like `task` still
   // show up under "Home" as dynamic CRM entries.

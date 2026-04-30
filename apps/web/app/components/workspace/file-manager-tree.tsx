@@ -33,6 +33,7 @@ import {
   ContextMenuShortcut,
 } from "../ui/context-menu";
 import { InlineRename, RENAME_SHAKE_STYLE } from "./inline-rename";
+import { CrmObjectIcon } from "./crm-object-icon";
 import {
   classifyWorkspacePath,
   fileWriteUrl,
@@ -160,10 +161,8 @@ function NodeIcon({ node, open }: { node: TreeNode; open?: boolean }) {
     return <ChatBubbleIcon />;
   }
   switch (node.type) {
-    // Object directories are real folders on disk that happen to back a
-    // CRM table. The file tree is a 1:1 view of the workspace, so render
-    // them as folders. The CRM nav still discriminates via node.type.
     case "object":
+      return <CrmObjectIcon name={node.icon} size={18} />;
     case "folder":
       return <FolderIcon open={open} />;
     case "document":

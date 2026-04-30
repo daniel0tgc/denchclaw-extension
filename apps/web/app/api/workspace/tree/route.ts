@@ -93,7 +93,12 @@ const ROOT_ONLY_HIDDEN_SYNC_OBJECTS = new Set([
 async function loadDbObjects(): Promise<Map<string, DbObject>> {
   const objects = new Map<string, DbObject>();
   const rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-    "SELECT id, name, description, default_view FROM objects",
+    `SELECT o.id, o.name, o.description, o.default_view
+     FROM objects o
+     JOIN information_schema.tables t
+       ON t.table_schema = 'main'
+      AND t.table_type = 'VIEW'
+      AND t.table_name = 'v_' || replace(o.name, '-', '_')`,
     "name",
   );
   for (const row of rows) {
@@ -213,7 +218,11 @@ async function buildTree(
       }
 
       const objectMeta = await readObjectMeta(absPath);
-      const dbObject = dbObjects.get(entry.name);
+      // DB-only object rows are projected to root-level object directories
+      // before we build the tree. Do not classify nested folders by basename
+      // alone, or ordinary folders like `marketing/influencers` duplicate the
+      // `influencers` table in CRM navigation.
+      const dbObject = relativeBase === "" ? dbObjects.get(entry.name) : undefined;
       const children = await buildTree(absPath, relPath, dbObjects, showHidden);
 
       if (objectMeta || dbObject) {

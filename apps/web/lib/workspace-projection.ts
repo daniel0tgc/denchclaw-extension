@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
 import type { ObjectYamlConfig } from "./workspace";
@@ -24,6 +24,61 @@ export type ProjectionResult = {
   status: ProjectionStatus;
   reason?: string;
 };
+
+const PROJECTION_SCAN_SKIP_DIRS = new Set([
+  ".git",
+  ".next",
+  "node_modules",
+]);
+
+function objectYamlMatchesName(yamlPath: string, objectName: string): boolean {
+  try {
+    const raw = readFileSync(yamlPath, "utf-8");
+    const parsed = YAML.parse(raw) as { name?: unknown } | null;
+    return parsed?.name === objectName;
+  } catch {
+    return false;
+  }
+}
+
+function hasExistingObjectYamlOutsideRootSlot(
+  workspaceRoot: string,
+  objectName: string,
+  rootObjectDir: string,
+): boolean {
+  const resolvedRootObjectDir = resolve(rootObjectDir);
+
+  function walk(dir: string): boolean {
+    let entries: ReturnType<typeof readdirSync>;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+
+    const yamlPath = join(dir, ".object.yaml");
+    if (
+      resolve(dir) !== resolvedRootObjectDir &&
+      existsSync(yamlPath) &&
+      objectYamlMatchesName(yamlPath, objectName)
+    ) {
+      return true;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || PROJECTION_SCAN_SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      if (walk(join(dir, entry.name))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  return walk(workspaceRoot);
+}
 
 /**
  * Project a single DuckDB object onto the filesystem. Idempotent:
@@ -56,6 +111,14 @@ export function projectObjectToFilesystem(
     return { name, status: "skipped", reason: "outside_workspace" };
   }
 
+  const yamlPath = join(objectDir, ".object.yaml");
+  if (
+    !existsSync(yamlPath) &&
+    hasExistingObjectYamlOutsideRootSlot(resolvedRoot, name, objectDir)
+  ) {
+    return { name, status: "skipped", reason: "object_exists_nested" };
+  }
+
   let createdDir = false;
   if (existsSync(objectDir)) {
     let isDir = false;
@@ -82,7 +145,6 @@ export function projectObjectToFilesystem(
     }
   }
 
-  const yamlPath = join(objectDir, ".object.yaml");
   if (existsSync(yamlPath)) {
     if (createdDir) {
       // We just created the directory but somehow the yaml exists — odd

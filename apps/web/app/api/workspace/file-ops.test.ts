@@ -21,6 +21,10 @@ vi.mock("@/lib/workspace", () => ({
   resolveFilesystemPath: vi.fn(),
   isProtectedSystemPath: vi.fn(() => false),
   resolveWorkspaceRoot: vi.fn(() => "/ws"),
+  findDuckDBForObjectAsync: vi.fn(async () => null),
+  duckdbPathAsync: vi.fn(async () => null),
+  duckdbExecOnFileAsync: vi.fn(async () => true),
+  pivotViewIdentifier: vi.fn((name: string) => `"v_${name}"`),
 }));
 
 describe("Workspace File Operations API", () => {
@@ -44,6 +48,10 @@ describe("Workspace File Operations API", () => {
       resolveFilesystemPath: vi.fn(),
       isProtectedSystemPath: vi.fn(() => false),
       resolveWorkspaceRoot: vi.fn(() => "/ws"),
+      findDuckDBForObjectAsync: vi.fn(async () => null),
+      duckdbPathAsync: vi.fn(async () => null),
+      duckdbExecOnFileAsync: vi.fn(async () => true),
+      pivotViewIdentifier: vi.fn((name: string) => `"v_${name}"`),
     }));
   });
 
@@ -247,6 +255,41 @@ describe("Workspace File Operations API", () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.ok).toBe(true);
+    });
+
+    it("drops the object pivot view when deleting an object folder", async () => {
+      const {
+        resolveFilesystemPath,
+        findDuckDBForObjectAsync,
+        duckdbExecOnFileAsync,
+      } = await import("@/lib/workspace");
+      vi.mocked(resolveFilesystemPath).mockReturnValue({
+        absolutePath: "/ws/marketing/YC Founders/yc_company",
+        kind: "workspaceRelative",
+        withinWorkspace: true,
+        workspaceRelativePath: "marketing/YC Founders/yc_company",
+      });
+      vi.mocked(findDuckDBForObjectAsync).mockResolvedValue("/ws/workspace.duckdb");
+
+      const fs = await import("node:fs");
+      vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as never);
+      vi.mocked(fs.existsSync).mockImplementation((path) => String(path).endsWith(".object.yaml"));
+      vi.mocked(fs.readFileSync).mockReturnValue("name: yc_company\n" as never);
+
+      const { DELETE } = await import("./file/route.js");
+      const req = new Request("http://localhost/api/workspace/file", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "marketing/YC Founders/yc_company" }),
+      });
+      const res = await DELETE(req);
+
+      expect(res.status).toBe(200);
+      expect(duckdbExecOnFileAsync).toHaveBeenCalledWith(
+        "/ws/workspace.duckdb",
+        "DROP VIEW IF EXISTS \"v_yc_company\";",
+      );
+      expect(fs.rmSync).toHaveBeenCalledWith("/ws/marketing/YC Founders/yc_company", { recursive: true });
     });
 
     it("returns 403 for system file", async () => {

@@ -458,7 +458,7 @@ export function SetupStep({
           : existingConnections.find((connection) => connectionMatchesToolkit(connection, "calendar"));
         const calendarId = existingCalendar ? readConnectionId(existingCalendar) : null;
         if (!cancelled && existingCalendar && calendarId) {
-          await persistToolkitConnection("calendar", {
+          nextState = await persistToolkitConnection("calendar", {
             connectionId: calendarId,
             toolkitSlug: connectionToolkitSlug(existingCalendar) || "google-calendar",
             accountEmail: connectionAccountEmail(existingCalendar),

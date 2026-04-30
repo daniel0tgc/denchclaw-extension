@@ -39,6 +39,14 @@ function Harness({ onAdvance }: { onAdvance: (state: OnboardingState) => void })
   );
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+}
+
 describe("SetupStep", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -61,11 +69,7 @@ describe("SetupStep", () => {
     };
     const bodies: unknown[] = [];
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
+      const url = requestUrl(input);
       if (url === "/api/onboarding/dench-cloud") {
         return new Response(JSON.stringify({
           configured: true,
@@ -113,5 +117,103 @@ describe("SetupStep", () => {
       },
     ]);
     expect(await screen.findByText("person@example.com")).toBeInTheDocument();
+  });
+
+  it("uses the Gmail reconciliation result when adopting Calendar in the same pass", async () => {
+    const onAdvance = vi.fn();
+    const gmailState: OnboardingState = {
+      ...baseState,
+      currentStep: "connect-calendar",
+      completedSteps: ["welcome", "identity", "dench-cloud", "connect-gmail"],
+      connections: {
+        gmail: {
+          connectionId: "ca_existing_gmail",
+          toolkitSlug: "gmail",
+          accountEmail: "person@example.com",
+          connectedAt: "2026-04-30T00:00:00.000Z",
+        },
+      },
+    };
+    const calendarState: OnboardingState = {
+      ...gmailState,
+      currentStep: "backfill",
+      completedSteps: [
+        "welcome",
+        "identity",
+        "dench-cloud",
+        "connect-gmail",
+        "connect-calendar",
+      ],
+      connections: {
+        ...gmailState.connections,
+        calendar: {
+          connectionId: "ca_existing_calendar",
+          toolkitSlug: "google-calendar",
+          accountEmail: "person@example.com",
+          connectedAt: "2026-04-30T00:00:00.000Z",
+        },
+      },
+    };
+    const bodies: unknown[] = [];
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (url === "/api/onboarding/dench-cloud") {
+        return new Response(JSON.stringify({
+          configured: true,
+          source: "cli",
+          primaryModel: "dench-cloud/gpt-5.5",
+        }));
+      }
+      if (url === "/api/composio/connections?include_toolkits=1&fresh=1") {
+        return new Response(JSON.stringify({
+          connections: [
+            {
+              id: "ca_existing_gmail",
+              toolkit_slug: "gmail",
+              toolkit_name: "Gmail",
+              status: "ACTIVE",
+              account_email: "person@example.com",
+              created_at: "2026-04-30T00:00:00.000Z",
+            },
+            {
+              id: "ca_existing_calendar",
+              toolkit_slug: "google-calendar",
+              toolkit_name: "Google Calendar",
+              status: "ACTIVE",
+              account_email: "person@example.com",
+              created_at: "2026-04-30T00:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (url === "/api/onboarding/connections") {
+        if (typeof init?.body !== "string") {
+          throw new Error("Expected string JSON body.");
+        }
+        const body = JSON.parse(init.body) as { toolkit: string };
+        bodies.push(body);
+        return new Response(JSON.stringify(body.toolkit === "gmail" ? gmailState : calendarState));
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    render(<Harness onAdvance={onAdvance} />);
+
+    await waitFor(() => {
+      expect(bodies).toHaveLength(2);
+    });
+    expect(bodies).toEqual([
+      expect.objectContaining({
+        toolkit: "gmail",
+        fromStep: "connect-gmail",
+        toStep: "connect-calendar",
+      }),
+      expect.objectContaining({
+        toolkit: "calendar",
+        fromStep: "connect-calendar",
+        toStep: "backfill",
+      }),
+    ]);
+    expect(onAdvance).toHaveBeenLastCalledWith(calendarState);
   });
 });

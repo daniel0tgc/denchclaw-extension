@@ -65,6 +65,28 @@ describe("projectObjectToFilesystem", () => {
     expect(existsSync(join(tempRoot, "people", ".object.yaml"))).toBe(true);
   });
 
+  it("does not create a root stub when the object already exists nested", () => {
+    const nestedDir = join(tempRoot, "marketing", "YC Founders", "yc_company");
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(
+      join(nestedDir, ".object.yaml"),
+      "id: id-yc-company\nname: yc_company\nfields:\n  - name: Company Name\n",
+      "utf-8",
+    );
+
+    const result = projectObjectToFilesystem(tempRoot, {
+      name: "yc_company",
+      id: "id-yc-company",
+    });
+
+    expect(result).toEqual({
+      name: "yc_company",
+      status: "skipped",
+      reason: "object_exists_nested",
+    });
+    expect(existsSync(join(tempRoot, "yc_company"))).toBe(false);
+  });
+
   it("is idempotent: running twice when both exist returns skipped", () => {
     projectObjectToFilesystem(tempRoot, { name: "deals", id: "id-3" });
     const second = projectObjectToFilesystem(tempRoot, { name: "deals", id: "id-3" });

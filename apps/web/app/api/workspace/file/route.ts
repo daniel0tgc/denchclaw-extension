@@ -1,10 +1,15 @@
-import { writeFileSync, mkdirSync, rmSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { writeFileSync, mkdirSync, rmSync, statSync, existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import YAML from "yaml";
 import {
   readWorkspaceFile,
   safeResolvePath,
   resolveFilesystemPath,
   isProtectedSystemPath,
+  findDuckDBForObjectAsync,
+  duckdbPathAsync,
+  duckdbExecOnFileAsync,
+  pivotViewIdentifier,
 } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +86,40 @@ export async function POST(req: Request) {
   }
 }
 
+async function dropObjectPivotViewForDeletedFolder(absPath: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const yamlPath = join(absPath, ".object.yaml");
+  if (!existsSync(yamlPath)) {
+    return { ok: true };
+  }
+
+  let objectName: string | null = null;
+  try {
+    const parsed = YAML.parse(readFileSync(yamlPath, "utf-8")) as { name?: unknown } | null;
+    objectName = typeof parsed?.name === "string" ? parsed.name.trim() : null;
+  } catch {
+    objectName = null;
+  }
+
+  if (!objectName) {
+    return { ok: true };
+  }
+
+  const dbFile = await findDuckDBForObjectAsync(objectName) ?? await duckdbPathAsync();
+  if (!dbFile) {
+    return { ok: true };
+  }
+
+  const dropped = await duckdbExecOnFileAsync(
+    dbFile,
+    `DROP VIEW IF EXISTS ${pivotViewIdentifier(objectName)};`,
+  );
+  if (!dropped) {
+    return { ok: false, error: `Failed to delete pivot view for object '${objectName}'.` };
+  }
+
+  return { ok: true };
+}
+
 /**
  * DELETE /api/workspace/file
  * Body: { path: string }
@@ -122,6 +161,12 @@ export async function DELETE(req: Request) {
 
   try {
     const stat = statSync(absPath);
+    if (stat.isDirectory()) {
+      const pivotDelete = await dropObjectPivotViewForDeletedFolder(absPath);
+      if (!pivotDelete.ok) {
+        return Response.json({ error: pivotDelete.error }, { status: 500 });
+      }
+    }
     rmSync(absPath, { recursive: stat.isDirectory() });
     return Response.json({ ok: true, path: relPath });
   } catch (err) {

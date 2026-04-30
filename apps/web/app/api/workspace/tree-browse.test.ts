@@ -284,6 +284,43 @@ describe("Workspace Tree & Browse API", () => {
       expect(rootPaths).toContain("interaction");
     });
 
+    it("does not classify nested folders as objects by basename alone", async () => {
+      const { resolveWorkspaceRoot, duckdbQueryAllAsync } = await import("@/lib/workspace");
+      vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");
+      vi.mocked(duckdbQueryAllAsync).mockResolvedValue([
+        { name: "opportunity", default_view: "table" },
+      ] as never);
+
+      const { readdir: mockReaddir } = await import("node:fs/promises");
+      vi.mocked(mockReaddir).mockImplementation((dir) => {
+        if (String(dir) === "/ws") {
+          return Promise.resolve([
+            makeDirent("archive", true),
+            makeDirent("opportunity", true),
+          ] as unknown as never[]);
+        }
+        if (String(dir) === "/ws/archive") {
+          return Promise.resolve([
+            makeDirent("opportunity", true),
+          ] as unknown as never[]);
+        }
+        return Promise.resolve([] as unknown as never[]);
+      });
+
+      const { GET } = await import("./tree/route.js");
+      const req = new Request("http://localhost/api/workspace/tree");
+      const res = await GET(req);
+      const json = await res.json();
+      const rootObject = (json.tree as Array<{ path: string; type: string; children?: Array<{ path: string; type: string }> }>)
+        .find((node) => node.path === "opportunity");
+      const archive = (json.tree as Array<{ path: string; type: string; children?: Array<{ path: string; type: string }> }>)
+        .find((node) => node.path === "archive");
+      const nestedFolder = archive?.children?.find((node) => node.path === "archive/opportunity");
+
+      expect(rootObject?.type).toBe("object");
+      expect(nestedFolder?.type).toBe("folder");
+    });
+
     it("yields before tree discovery completes (prevents UI freeze during active agent runs)", async () => {
       const { resolveWorkspaceRoot, duckdbQueryAll, duckdbQueryAllAsync } = await import("@/lib/workspace");
       vi.mocked(resolveWorkspaceRoot).mockReturnValue("/ws");

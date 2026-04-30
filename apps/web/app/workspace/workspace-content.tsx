@@ -342,20 +342,20 @@ const HIDE_NOISY_REVERSE_FOR_OBJECT_NAMES: ReadonlySet<string> = new Set([
 function collectCrmObjectNodes(
   tree: TreeNode[],
 ): Array<{ name: string; icon?: string; defaultView?: "table" | "kanban" }> {
-  const out: Array<{ name: string; icon?: string; defaultView?: "table" | "kanban" }> = [];
+  const byName = new Map<string, { name: string; icon?: string; defaultView?: "table" | "kanban" }>();
   function walk(nodes: TreeNode[]) {
     for (const node of nodes) {
       if (node.type === "object") {
         const name = objectNameFromPath(node.path);
-        if (!CRM_NAV_EXCLUDED_OBJECT_NAMES.has(name)) {
-          out.push({ name, icon: node.icon, defaultView: node.defaultView });
+        if (!CRM_NAV_EXCLUDED_OBJECT_NAMES.has(name) && !byName.has(name)) {
+          byName.set(name, { name, icon: node.icon, defaultView: node.defaultView });
         }
       }
       if (node.children) {walk(node.children);}
     }
   }
   walk(tree);
-  return out.toSorted((a, b) => a.name.localeCompare(b.name));
+  return [...byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
 /**

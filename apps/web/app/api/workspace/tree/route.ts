@@ -80,9 +80,15 @@ async function readObjectMeta(
  * directories even when .object.yaml files are missing.
  * Shallower databases win on name conflicts (parent priority).
  *
- * The file tree intentionally shows every object table now, including CRM
- * sync tables that remain hidden from the left CRM navigation.
+ * The file tree intentionally shows object table folders, while a short list
+ * of noisy sync backing tables follows the same show-hidden toggle as dotfiles.
  */
+const ROOT_ONLY_HIDDEN_SYNC_OBJECTS = new Set([
+  "calendar_event",
+  "email_message",
+  "email_thread",
+]);
+
 async function loadDbObjects(): Promise<Map<string, DbObject>> {
   const objects = new Map<string, DbObject>();
   const rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
@@ -157,6 +163,9 @@ async function buildTree(
     // .object.yaml is always needed for metadata; also shown as a node when showHidden is on
     if (e.name === ".object.yaml") {return true;}
     if (e.name.startsWith(".")) {return showHidden;}
+    if (relativeBase === "" && ROOT_ONLY_HIDDEN_SYNC_OBJECTS.has(e.name)) {
+      return showHidden;
+    }
     return true;
   });
 

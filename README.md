@@ -26,65 +26,106 @@
 
 <br />
 
-## Install
+> **This is a fork of [DenchHQ/DenchClaw](https://github.com/DenchHQ/DenchClaw)** maintained by [@daniel0tgc](https://github.com/daniel0tgc).
+> See [Changes from upstream](#changes-from-upstream-denchclaw) for what's different.
 
-### Are you an AI agent reading this? In that case, use the prompt below to setup DenchClaw.
+---
+
+## Changes from Upstream DenchClaw
+
+This fork adds the following on top of the official [DenchHQ/DenchClaw](https://github.com/DenchHQ/DenchClaw):
+
+### macOS Sonoma (14+) Fix
+
+macOS Sonoma sets a kernel-level `com.apple.provenance` attribute on files downloaded via npm. This causes `readFileSync` to fail with `EPERM: operation not permitted` on OpenClaw's bundled plugin files, preventing DenchClaw from starting on any macOS 14+ machine.
+
+**Fix applied in `src/cli/bootstrap-external.ts`:**
+- `--ignore-scripts` added to all `npm install openclaw` calls so the blocked postinstall does not abort the install
+- `unblockOpenClawInstall()` rewrites each JS dist file via a `temp+rename` inode swap — content is fetched **in-memory** from the npm tarball (no disk write = no provenance) for files that are blocked
+- The OpenClaw update flow now uses `npm install -g --ignore-scripts` + unblock instead of `openclaw update --yes`, so updates don't re-introduce the block
+
+This fix is transparent on Linux and Windows (the unblock function is a no-op when files are already readable).
+
+### Extensions
+
+The `extensions/` directory contains custom OpenClaw plugins that are automatically loaded when you run this fork:
+
+| Extension | Description |
+|---|---|
+| `dench-ai-gateway` | Dench Cloud AI model routing |
+| `dench-identity` | Identity and auth helpers |
+| `exa-search` | Web search via Exa |
+| `posthog-analytics` | Analytics event tracking |
+| `apollo-enrichment` | Contact/company data enrichment |
+
+---
+
+## Install (from this fork)
+
+**Node 22+ and pnpm required.**
+
+```bash
+git clone https://github.com/daniel0tgc/denchclaw-extension.git
+cd denchclaw-extension
+
+pnpm install
+pnpm build
+
+# First time only — builds the web UI (~3 min)
+pnpm web:build && pnpm web:prepack
+
+# Run (opens at localhost:3100)
+DENCH_API_KEY=your_key_from_dench.com/api pnpm dev
+```
+
+Get your Dench API key at **[dench.com/api](https://dench.com/api)**.
+
+After the first-time build, subsequent runs are just:
+
+```bash
+DENCH_API_KEY=your_key pnpm dev
+```
+
+---
+
+## AI Agent Setup Prompt
 
 ```
 Install DenchClaw (an OpenClaw CRM Framwork) by running "npx denchclaw", when it asks to update OpenClaw, update it as DenchClaw requires up to date OpenClaw. When it asks for my Dench API Key, help me fetch it from dench.com/api and set it up. Remember that DenchClaw creates a new OpenClaw Gateway (~/.openclaw-dench) on port 19001 by default, and a new main agent in that gateway working in ~/.openclaw-dench/workspace directory (Separate from the usual non-DenchClaw OpenClaw gateway that usually sits in ~/.openclaw). All DenchClaw config sits in ~/.openclaw-dench/openclaw.json. Remember that anytime you interface with DenchClaw using openclaw commands, you must use "openclaw --profile dench" as a prefix, for example, to restart gateway, run "openclaw --profile dench gateway restart". After everything is setup, DenchClaw will be accessible at localhost:3100 by default. If for some reason that Port 19001 and 3100 or those ranges are taken, make sure to kill those ports/processes and then retry npx denchclaw. Also, sometimes if the Web UI on port 3100 crashes, just run "npx denchclaw update" to boot it back up. Remember to refer to https://github.com/DenchHQ/DenchClaw (DenchClaw's official GitHub Repository) for more information.
 ```
-
-### Manual Install
-
-**Node 22+ required.**
-
-```bash
-npx denchclaw@latest
-```
-
-Opens at `localhost:3100` after completing onboarding wizard.
 
 ---
 
 ## Commands
 
 ```bash
-npx denchclaw@latest # runs onboarding again for openclaw --profile dench
-npx denchclaw@latest update # updates denchclaw web-runtime with current settings as is
-npx denchclaw restart # restarts denchclaw web server
-npx denchclaw start # starts denchclaw web server
-npx denchclaw stop # stops denchclaw web server
+pnpm dev                     # start DenchClaw (localhost:3100)
+pnpm build                   # rebuild CLI after code changes
+pnpm web:build               # rebuild web UI (run after web changes)
+pnpm web:prepack             # finalize standalone web build
 
-# some examples
-openclaw --profile dench <any openclaw command>
+# OpenClaw gateway commands (always use --profile dench)
 openclaw --profile dench gateway restart
+openclaw --profile dench gateway status
+openclaw --profile dench devices list
+openclaw --profile dench devices approve --latest
 
 openclaw --profile dench config set gateway.port 19001
 openclaw --profile dench gateway install --force --port 19001
-openclaw --profile dench gateway restart
 openclaw --profile dench uninstall
 ```
 
 ### Daemonless / Docker
 
-For containers or environments without systemd/launchd, set the environment variable once:
-
 ```bash
 export DENCHCLAW_DAEMONLESS=1
+openclaw --profile dench gateway --port 19001  # start gateway as foreground process
 ```
 
-This skips all gateway daemon management (install/start/stop/restart) and launchd LaunchAgent installation across all commands. You must start the gateway yourself as a foreground process:
+Or pass `--skip-daemon-install` per command:
 
 ```bash
-openclaw --profile dench gateway --port 19001
-```
-
-Alternatively, pass `--skip-daemon-install` to individual commands:
-
-```bash
-npx denchclaw --skip-daemon-install
-npx denchclaw update --skip-daemon-install
-npx denchclaw start --skip-daemon-install
+pnpm dev --skip-daemon-install
 ```
 
 ---
@@ -93,29 +134,33 @@ npx denchclaw start --skip-daemon-install
 
 ### `pairing required`
 
-If the Control UI or CLI shows `gateway connect failed: GatewayClientRequestError: pairing required`, the local device is still waiting for approval.
-
-Recent `denchclaw` bootstrap runs try to approve this automatically. If you are on an older install, or bootstrap skipped approval because there were multiple pending requests, list the pending devices first:
+If the Control UI shows `gateway connect failed: pairing required`, list pending devices and approve:
 
 ```bash
 openclaw --profile dench devices list
-```
-
-Review the pending `operator` request, then approve it:
-
-```bash
 openclaw --profile dench devices approve --latest
-
-# or approve the exact request you just reviewed
-openclaw --profile dench devices approve <requestId>
 ```
 
-If the client retries pairing, OpenClaw can replace the pending request with a new `requestId`, so run `devices list` immediately before approving. See the [OpenClaw devices docs](https://docs.openclaw.ai/cli/devices#openclaw-devices-list) for more details.
-
-After approval, refresh the browser. If the UI is still disconnected, restart the managed web runtime:
+Then restart the web runtime:
 
 ```bash
 npx denchclaw restart
+```
+
+### `EPERM: operation not permitted` on macOS
+
+If you see this error on a non-macOS-Sonoma machine or after a system upgrade, the fix is already built into this fork's install flow. If it persists, try:
+
+```bash
+openclaw --profile dench gateway stop
+openclaw --profile dench gateway install --force
+openclaw --profile dench gateway restart
+```
+
+### Web UI not loading (`localhost:3100`)
+
+```bash
+npx denchclaw update   # re-boots the web runtime
 ```
 
 ---
@@ -123,8 +168,8 @@ npx denchclaw restart
 ## Development
 
 ```bash
-git clone https://github.com/DenchHQ/DenchClaw.git
-cd denchclaw
+git clone https://github.com/daniel0tgc/denchclaw-extension.git
+cd denchclaw-extension
 
 pnpm install
 pnpm build
@@ -135,21 +180,28 @@ pnpm dev
 Web UI development:
 
 ```bash
-pnpm install
 pnpm web:dev
 ```
+
+Adding a new extension: create a folder under `extensions/` with an `openclaw.plugin.json` and a `package.json`. It will be picked up automatically on the next `pnpm install`.
+
+---
+
+## Upstream
+
+This fork tracks [DenchHQ/DenchClaw](https://github.com/DenchHQ/DenchClaw). To pull upstream changes:
+
+```bash
+git pull origin main   # origin points to DenchHQ/DenchClaw
+```
+
+The macOS fix is forward-compatible — it only touches `src/cli/bootstrap-external.ts` and does not conflict with upstream feature work.
 
 ---
 
 ## Open Source
 
 MIT Licensed. Fork it, extend it, make it yours.
-
-<p align="center">
-  <a href="https://star-history.com/?repos=DenchHQ%2FDenchClaw&type=date&legend=top-left">
-    <img src="https://api.star-history.com/image?repos=DenchHQ/DenchClaw&type=date&legend=top-left" alt="Star History" width="620" />
-  </a>
-</p>
 
 <p align="center">
   <a href="https://github.com/DenchHQ/DenchClaw"><img src="https://img.shields.io/github/stars/DenchHQ/DenchClaw?style=for-the-badge" alt="GitHub stars"></a>

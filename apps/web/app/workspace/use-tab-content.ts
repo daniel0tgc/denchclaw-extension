@@ -297,9 +297,17 @@ function resolveDerivedContent(
     case "crm-calendar":
       return { kind: "crm-calendar" };
     case "crm-person":
-      return { kind: "crm-person", entryId: tab.meta?.entryId ?? "" };
+      return {
+        kind: "crm-person",
+        entryId: tab.meta?.entryId ?? "",
+        profileTab: tab.meta?.profileTab,
+      };
     case "crm-company":
-      return { kind: "crm-company", entryId: tab.meta?.entryId ?? "" };
+      return {
+        kind: "crm-company",
+        entryId: tab.meta?.entryId ?? "",
+        profileTab: tab.meta?.profileTab,
+      };
     default:
       return { kind: "none" };
   }

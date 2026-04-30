@@ -72,14 +72,18 @@ type CompanyResponse = {
   };
 };
 
-type Tab = "overview" | "team" | "emails" | "meetings";
+export type CompanyProfileTab = "overview" | "team" | "emails" | "meetings";
 
-const TABS: ReadonlyArray<{ id: Tab; label: string; count: (d: CompanyResponse) => number | null }> = [
+const TABS: ReadonlyArray<{ id: CompanyProfileTab; label: string; count: (d: CompanyResponse) => number | null }> = [
   { id: "overview", label: "Overview", count: () => null },
   { id: "team", label: "Team", count: (d) => d.summary.people_count },
   { id: "emails", label: "Emails", count: (d) => d.summary.thread_count },
   { id: "meetings", label: "Meetings", count: (d) => d.summary.event_count },
 ];
+
+function isCompanyProfileTab(value: string | undefined): value is CompanyProfileTab {
+  return value === "overview" || value === "team" || value === "emails" || value === "meetings";
+}
 
 // ---------------------------------------------------------------------------
 // Top-level
@@ -87,19 +91,32 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; count: (d: CompanyResponse) 
 
 export function CompanyProfile({
   companyId,
+  activeTab,
   onOpenPerson,
   onOpenCompany,
   onBackToList,
+  onTabChange,
 }: {
   companyId: string;
+  activeTab?: string;
   onOpenPerson?: (id: string) => void;
   onOpenCompany?: (id: string) => void;
   onBackToList?: () => void;
+  onTabChange?: (tab: CompanyProfileTab) => void;
 }) {
   const [data, setData] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [localTab, setLocalTab] = useState<CompanyProfileTab>("overview");
+  const tab = isCompanyProfileTab(activeTab) ? activeTab : localTab;
+
+  const handleTabChange = useCallback(
+    (nextTab: CompanyProfileTab) => {
+      setLocalTab(nextTab);
+      onTabChange?.(nextTab);
+    },
+    [onTabChange],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,7 +200,7 @@ export function CompanyProfile({
       <CompanyHeader
         data={data}
         tab={tab}
-        onTabChange={setTab}
+        onTabChange={handleTabChange}
         onBackToList={onBackToList}
         onSaveName={handleSaveName}
       />
@@ -217,8 +234,8 @@ function CompanyHeader({
   onSaveName,
 }: {
   data: CompanyResponse;
-  tab: Tab;
-  onTabChange: (t: Tab) => void;
+  tab: CompanyProfileTab;
+  onTabChange: (t: CompanyProfileTab) => void;
   onBackToList?: () => void;
   onSaveName: (newName: string) => Promise<void>;
 }) {

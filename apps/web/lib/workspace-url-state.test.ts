@@ -52,6 +52,16 @@ describe("deep-link restoration", () => {
     expect(state.entry).toEqual({ objectName: "leads", entryId: "entry-789" });
   });
 
+  it("restores CRM profile subtab from copied URL (prevents Safari back losing team tab)", () => {
+    const qs = serializeUrlState({
+      entry: { objectName: "company", entryId: "co_123" },
+      profileTab: "team",
+    });
+    const state = parseUrlState(qs);
+    expect(state.entry).toEqual({ objectName: "company", entryId: "co_123" });
+    expect(state.profileTab).toBe("team");
+  });
+
   it("restores browse mode from copied URL (prevents lost directory context on refresh)", () => {
     const url = buildBrowseLink("/Users/me/projects/app", true);
     const state = parseUrlState(new URL(url, "http://localhost").search);
@@ -467,6 +477,7 @@ describe("real-world edge cases", () => {
     expect(state.subagent).toBeNull();
     expect(state.fileChat).toBeNull();
     expect(state.entry).toBeNull();
+    expect(state.profileTab).toBeNull();
     expect(state.send).toBeNull();
     expect(state.browse).toBeNull();
     expect(state.hidden).toBe(false);

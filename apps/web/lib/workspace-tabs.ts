@@ -104,6 +104,8 @@ export type ContentTab = {
 export type ContentTabMeta = {
   /** For `crm-person` / `crm-company`: the entry id to render. */
   entryId?: string;
+  /** For `crm-person` / `crm-company`: the active profile subtab. */
+  profileTab?: string;
   /** For `cron-job`: the cron job id. */
   cronJobId?: string;
   /** For `browse`: the absolute filesystem dir to list. */
@@ -184,6 +186,7 @@ export type WorkspaceTabsAction =
   | { type: "promoteContent"; id: string }
   | { type: "promoteContentByPath"; path: string }
   | { type: "togglePinContent"; id: string }
+  | { type: "updateContentMeta"; id: string; meta: Partial<ContentTabMeta> }
   | { type: "reorderContent"; id: string; toIndex: number }
   | { type: "renameContent"; id: string; title: string }
   | { type: "openChat"; tab: ChatTabInput }
@@ -435,8 +438,24 @@ export function openContent(
   const existingIdx = state.contentTabs.findIndex((t) => t.id === tab.id);
   if (existingIdx !== -1) {
     let nextTabs = state.contentTabs;
-    if (!tab.preview && state.contentTabs[existingIdx].preview) {
+    const existing = state.contentTabs[existingIdx];
+    const metadataChanged =
+      existing.kind !== tab.kind ||
+      existing.path !== tab.path ||
+      JSON.stringify(existing.meta ?? {}) !== JSON.stringify(tab.meta ?? {});
+    if (metadataChanged) {
       nextTabs = [...state.contentTabs];
+      nextTabs[existingIdx] = {
+        ...nextTabs[existingIdx],
+        kind: tab.kind,
+        path: tab.path,
+        meta: tab.meta,
+      };
+    }
+    if (!tab.preview && state.contentTabs[existingIdx].preview) {
+      if (nextTabs === state.contentTabs) {
+        nextTabs = [...state.contentTabs];
+      }
       nextTabs[existingIdx] = { ...nextTabs[existingIdx], preview: false };
     }
     if (nextTabs === state.contentTabs && state.activeContentId === tab.id) {
@@ -557,6 +576,24 @@ export function togglePinContent(
     changed = true;
     const pinned = !t.pinned;
     return { ...t, pinned, preview: pinned ? false : t.preview };
+  });
+  return changed ? { ...state, contentTabs: nextTabs } : state;
+}
+
+export function updateContentMeta(
+  state: WorkspaceTabsState,
+  id: string,
+  meta: Partial<ContentTabMeta>,
+): WorkspaceTabsState {
+  let changed = false;
+  const nextTabs = state.contentTabs.map((tab) => {
+    if (tab.id !== id) return tab;
+    const nextMeta = { ...(tab.meta ?? {}), ...meta };
+    if (JSON.stringify(tab.meta ?? {}) === JSON.stringify(nextMeta)) {
+      return tab;
+    }
+    changed = true;
+    return { ...tab, meta: nextMeta };
   });
   return changed ? { ...state, contentTabs: nextTabs } : state;
 }
@@ -844,7 +881,19 @@ export function projectUrlState(
   const out: Partial<WorkspaceUrlState> = {};
 
   if (tab) {
-    out.path = tab.path;
+    if (tab.kind === "crm-person" && tab.meta?.entryId) {
+      out.entry = { objectName: "people", entryId: tab.meta.entryId };
+      if (tab.meta.profileTab && tab.meta.profileTab !== "overview") {
+        out.profileTab = tab.meta.profileTab;
+      }
+    } else if (tab.kind === "crm-company" && tab.meta?.entryId) {
+      out.entry = { objectName: "company", entryId: tab.meta.entryId };
+      if (tab.meta.profileTab && tab.meta.profileTab !== "overview") {
+        out.profileTab = tab.meta.profileTab;
+      }
+    } else {
+      out.path = tab.path;
+    }
     if (shell.entryModal) {
       out.entry = shell.entryModal;
     }
@@ -904,7 +953,7 @@ export function contentTabFromUrl(
     if (url.crm === "companies") {
       return makeContentTab({
         kind: "object",
-        path: "companies",
+        path: "company",
         title: "Companies",
         preview: false,
       });
@@ -929,6 +978,14 @@ export function contentTabFromUrl(
   }
 
   const path = url.path;
+  if (path === "companies") {
+    return makeContentTab({
+      kind: "object",
+      path: "company",
+      title: "Companies",
+      preview: true,
+    });
+  }
   const kind = shell.resolveKind?.(path) ?? inferContentTabKindFromPath(path);
   return makeContentTab({
     kind,
@@ -957,13 +1014,16 @@ export function applyUrlToState(
     const isCompany = url.entry.objectName === "company" || url.entry.objectName === "companies";
     if (isPerson || isCompany) {
       const kind: ContentTabKind = isPerson ? "crm-person" : "crm-company";
-      const path = isPerson ? "people" : "companies";
+      const path = isPerson ? "people" : "company";
       next = openContent(next, {
         id: contentTabIdFor(kind, path, { entryId: url.entry.entryId }),
         kind,
         path,
         title: isPerson ? "Person" : "Company",
-        meta: { entryId: url.entry.entryId },
+        meta: {
+          entryId: url.entry.entryId,
+          ...(url.profileTab ? { profileTab: url.profileTab } : {}),
+        },
         preview: true,
       });
       return next;
@@ -1121,6 +1181,8 @@ export function workspaceTabsReducer(
       return promoteContentByPath(state, action.path);
     case "togglePinContent":
       return togglePinContent(state, action.id);
+    case "updateContentMeta":
+      return updateContentMeta(state, action.id, action.meta);
     case "reorderContent":
       return reorderContent(state, action.id, action.toIndex);
     case "renameContent":

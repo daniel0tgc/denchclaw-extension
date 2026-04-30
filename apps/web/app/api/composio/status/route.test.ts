@@ -55,7 +55,7 @@ describe("Composio status API", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.summary.level).toBe("healthy");
-    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith();
+    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({ autoRepairConfig: true });
   });
 
   it("GET uses Dench Integrations branding for fallback load errors", async () => {
@@ -83,6 +83,18 @@ describe("Composio status API", () => {
     });
   });
 
+  it("POST refresh_status also self-heals missing MCP registration", async () => {
+    const request = new Request("http://localhost/api/composio/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "refresh_status" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({ autoRepairConfig: true });
+  });
+
   it("POST runs the live-agent probe when requested", async () => {
     const request = new Request("http://localhost/api/composio/status", {
       method: "POST",
@@ -92,7 +104,10 @@ describe("Composio status API", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(200);
-    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({ includeLiveAgentProbe: true });
+    expect(mockedGetComposioMcpHealth).toHaveBeenCalledWith({
+      autoRepairConfig: true,
+      includeLiveAgentProbe: true,
+    });
   });
 
   it("POST uses Dench Integrations branding for fallback update errors", async () => {

@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
-  Plus,
   RotateCcw,
   Server,
   ShieldCheck,
@@ -13,7 +12,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { AddMcpServerDialog, type AddMcpServerInput } from "./add-mcp-server-dialog";
+import {
+  AddMcpServerInline,
+  type AddMcpServerInlineInput,
+  type AddMcpServerInlineResult,
+} from "./add-mcp-server-inline";
 import {
   ConnectMcpFallbackDialog,
   type ConnectMcpFallbackInput,
@@ -149,7 +152,6 @@ export function McpServersSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [connectTarget, setConnectTarget] = useState<ConnectTarget | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -174,36 +176,6 @@ export function McpServersSection() {
 
   useEffect(() => {
     void fetchServers();
-  }, [fetchServers]);
-
-  const handleAddServer = useCallback(async (input: AddMcpServerInput) => {
-    setNotice(null);
-    try {
-      const response = await fetch("/api/settings/mcp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      });
-
-      if (!response.ok) {
-        return await readErrorMessage(response, "Failed to add MCP server.");
-      }
-
-      const payload = await response.json() as { server?: McpServerEntry };
-      if (payload.server) {
-        hydratedProbeKeysRef.current.delete(payload.server.key);
-        setServers((current) => upsertServer(current, payload.server as McpServerEntry));
-      } else {
-        await fetchServers();
-      }
-      setNotice({
-        tone: "success",
-        message: `Added MCP server '${input.key}'. Click Connect to authenticate.`,
-      });
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : "Failed to add MCP server.";
-    }
   }, [fetchServers]);
 
   const handleProbeServer = useCallback(async (server: McpServerEntry) => {
@@ -361,6 +333,56 @@ export function McpServersSection() {
     [openFallbackDialog, refreshServer],
   );
 
+  // Inline "New MCP Server" submit: save the row, then immediately kick
+  // off the existing OAuth/connect flow on it. The inline form collapses
+  // as soon as the row exists in the list — the OAuth popup, busy state,
+  // and final probe result then surface on the row itself, so the user
+  // never has to click Connect a second time.
+  const handleAddAndConnect = useCallback(
+    async (input: AddMcpServerInlineInput): Promise<AddMcpServerInlineResult> => {
+      setNotice(null);
+      try {
+        const response = await fetch("/api/settings/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+
+        if (!response.ok) {
+          return {
+            ok: false,
+            error: await readErrorMessage(response, "Failed to add MCP server."),
+          };
+        }
+
+        const payload = await response.json() as { server?: McpServerEntry };
+        const newServer = payload.server;
+        if (!newServer) {
+          return {
+            ok: false,
+            error: "Server was added but the response was malformed.",
+          };
+        }
+
+        hydratedProbeKeysRef.current.delete(newServer.key);
+        setServers((current) => upsertServer(current, newServer));
+
+        // Fire-and-forget: continue the connect flow on the new row. The
+        // inline form returns ok now so it can collapse, and the row's own
+        // busy/Connect/Retry affordances cover everything from here.
+        void handleConnectClick(newServer);
+
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Failed to add MCP server.",
+        };
+      }
+    },
+    [handleConnectClick],
+  );
+
   const handleConnectSubmit = useCallback(
     async (input: ConnectMcpFallbackInput) => {
       if (!connectTarget) {
@@ -449,19 +471,6 @@ export function McpServersSection() {
             Connect remote MCP servers to expose additional tools in DenchClaw.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="rounded-lg"
-          onClick={() => {
-            setNotice(null);
-            setAddDialogOpen(true);
-          }}
-          disabled={loading}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-          Add MCP Server
-        </Button>
       </div>
 
       {notice ? <NoticeBanner notice={notice} /> : null}
@@ -485,31 +494,6 @@ export function McpServersSection() {
             Retry
           </Button>
         </div>
-      ) : servers.length === 0 ? (
-        <div
-          className="rounded-xl border px-4 py-5"
-          style={{
-            borderColor: "var(--color-border)",
-            background: "var(--color-surface)",
-          }}
-        >
-          <div className="flex items-start gap-3">
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded-lg"
-              style={{ background: "var(--color-surface-hover)", color: "var(--color-text)" }}
-            >
-              <Server className="h-5 w-5" aria-hidden />
-            </div>
-            <div>
-              <div className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-                No MCP servers yet
-              </div>
-              <p className="mt-1 text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
-                Add a remote MCP endpoint to make its tools available in the app.
-              </p>
-            </div>
-          </div>
-        </div>
       ) : (
         <div className="space-y-3">
           {servers.map((server) => (
@@ -523,14 +507,9 @@ export function McpServersSection() {
               onDelete={() => void handleDeleteServer(server)}
             />
           ))}
+          <AddMcpServerInline onAddAndConnect={handleAddAndConnect} />
         </div>
       )}
-
-      <AddMcpServerDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        onSubmit={handleAddServer}
-      />
 
       {connectTarget ? (
         <ConnectMcpFallbackDialog

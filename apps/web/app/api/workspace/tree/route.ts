@@ -44,31 +44,7 @@ type DbObject = {
   id?: string | null;
   description?: string | null;
   default_view?: string;
-  /**
-   * DuckDB's `-json` CLI mode serializes BOOLEAN columns as JSON strings
-   * (`"true"` / `"false"`), so the value can arrive as either a real
-   * boolean or the string-coerced form depending on the underlying
-   * driver. Always normalize via `parseDuckdbBool` before reading.
-   */
-  hidden_in_sidebar?: boolean | string | number | null;
 };
-
-/**
- * Parse a value that may be a real boolean OR a DuckDB-CLI string
- * representation (`"true"`/`"false"`/`"0"`/`"1"`). Necessary because
- * `duckdb -json` emits booleans as strings, which makes a naive
- * `if (row.bool_col)` check treat `"false"` as truthy.
- */
-function parseDuckdbBool(value: unknown): boolean {
-  if (value === true) {return true;}
-  if (value === false || value == null) {return false;}
-  if (typeof value === "number") {return value !== 0;}
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    return normalized === "true" || normalized === "1" || normalized === "t";
-  }
-  return false;
-}
 
 /** Read .object.yaml metadata from a directory if it exists. */
 async function pathExists(path: string): Promise<boolean> {
@@ -100,70 +76,23 @@ async function readObjectMeta(
 }
 
 /**
- * Names that should NEVER appear in the workspace tree, even if a stale
- * .object.yaml file or folder exists on disk for them. Synced when a
- * workspace was created before `hidden_in_sidebar` shipped — the rows
- * still need to be hidden, and re-init'ing the workspace just to trigger
- * the migration is a terrible UX.
- *
- * Kept in sync with the rows the migration marks hidden in
- * `apps/web/lib/workspace-schema-migrations.ts`.
- */
-const HARDCODED_HIDDEN_OBJECT_NAMES: ReadonlySet<string> = new Set([
-  "email_thread",
-  "email_message",
-  "calendar_event",
-  "interaction",
-]);
-
-/**
  * Query ALL discovered DuckDB files for objects so we can identify object
  * directories even when .object.yaml files are missing.
  * Shallower databases win on name conflicts (parent priority).
  *
- * Returns BOTH the visible-object map AND the set of hidden names, so
- * buildTree can drop folders whose name is hidden (e.g. a stale
- * `email_thread/` folder with a `.object.yaml` left over from a previous
- * sync run that pre-dates the hidden_in_sidebar migration).
+ * The file tree intentionally shows every object table now, including CRM
+ * sync tables that remain hidden from the left CRM navigation.
  */
-async function loadDbObjects(): Promise<{
-  visible: Map<string, DbObject>;
-  hidden: Set<string>;
-}> {
-  const visible = new Map<string, DbObject>();
-  const hidden = new Set<string>(HARDCODED_HIDDEN_OBJECT_NAMES);
-  // Tolerate the column not existing on older workspaces — the schema
-  // migration that adds it runs early in workspace init, but if a user
-  // queries before that lands, the COALESCE keeps the query valid.
-  let rows: Array<DbObject & { name: string }> = [];
-  try {
-    rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT id, name, description, default_view, COALESCE(hidden_in_sidebar, false) AS hidden_in_sidebar FROM objects",
-      "name",
-    );
-  } catch {
-    // Older DuckDB schema — hidden_in_sidebar column doesn't exist. Fall back
-    // to fetching only the columns we know are present; the
-    // HARDCODED_HIDDEN_OBJECT_NAMES set already keeps the CRM-only objects
-    // out of the tree.
-    rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
-      "SELECT id, name, description, default_view FROM objects",
-      "name",
-    );
-  }
+async function loadDbObjects(): Promise<Map<string, DbObject>> {
+  const objects = new Map<string, DbObject>();
+  const rows = await duckdbQueryAllAsync<DbObject & { name: string }>(
+    "SELECT id, name, description, default_view FROM objects",
+    "name",
+  );
   for (const row of rows) {
-    // CRITICAL: `row.hidden_in_sidebar` may arrive as the literal string
-    // `"false"` from DuckDB's `-json` CLI mode (truthy in JS). Use
-    // `parseDuckdbBool` so we don't accidentally hide every object.
-    if (parseDuckdbBool(row.hidden_in_sidebar) || HARDCODED_HIDDEN_OBJECT_NAMES.has(row.name)) {
-      hidden.add(row.name);
-      // Skip CRM-only objects (email_thread / email_message / calendar_event /
-      // interaction). They have dedicated UI and shouldn't show in the tree.
-      continue;
-    }
-    visible.set(row.name, row);
+    objects.set(row.name, row);
   }
-  return { visible, hidden };
+  return objects;
 }
 
 /** Resolve a dirent's effective type, following symlinks to their target. */
@@ -190,7 +119,7 @@ async function readAppManifest(
   dirPath: string,
 ): Promise<TreeNode["appManifest"] | null> {
   const yamlPath = join(dirPath, ".dench.yaml");
-  if (!await pathExists(yamlPath)) return null;
+  if (!await pathExists(yamlPath)) {return null;}
 
   try {
     const content = await readFile(yamlPath, "utf-8");
@@ -213,7 +142,6 @@ async function buildTree(
   absDir: string,
   relativeBase: string,
   dbObjects: Map<string, DbObject>,
-  hiddenObjectNames: Set<string>,
   showHidden = false,
 ): Promise<TreeNode[]> {
   const nodes: TreeNode[] = [];
@@ -229,12 +157,6 @@ async function buildTree(
     // .object.yaml is always needed for metadata; also shown as a node when showHidden is on
     if (e.name === ".object.yaml") {return true;}
     if (e.name.startsWith(".")) {return showHidden;}
-    // Skip top-level folders whose name matches a hidden CRM object
-    // (email_thread / email_message / calendar_event / interaction).
-    // These folders carry stale `.object.yaml` files from earlier
-    // workspace versions that would otherwise still render as objects
-    // in the sidebar tree.
-    if (relativeBase === "" && hiddenObjectNames.has(e.name)) {return false;}
     return true;
   });
 
@@ -267,7 +189,7 @@ async function buildTree(
       if (entry.name.endsWith(".dench.app")) {
         const manifest = await readAppManifest(absPath);
         const displayName = manifest?.name || entry.name.replace(/\.dench\.app$/, "");
-        const children = showHidden ? await buildTree(absPath, relPath, dbObjects, hiddenObjectNames, showHidden) : undefined;
+        const children = showHidden ? await buildTree(absPath, relPath, dbObjects, showHidden) : undefined;
         nodes.push({
           name: displayName,
           path: relPath,
@@ -282,7 +204,7 @@ async function buildTree(
 
       const objectMeta = await readObjectMeta(absPath);
       const dbObject = dbObjects.get(entry.name);
-      const children = await buildTree(absPath, relPath, dbObjects, hiddenObjectNames, showHidden);
+      const children = await buildTree(absPath, relPath, dbObjects, showHidden);
 
       if (objectMeta || dbObject) {
         nodes.push({
@@ -337,7 +259,7 @@ export async function GET(req: Request) {
     return Response.json({ tree, exists: false, workspaceRoot: null, openclawDir, workspace });
   }
 
-  const { visible: dbObjects, hidden: hiddenObjectNames } = await loadDbObjects();
+  const dbObjects = await loadDbObjects();
 
   // ── Self-heal: project DB-only objects to the filesystem ─────────────
   // The tree builder is filesystem-centric: a DuckDB row only becomes a
@@ -385,7 +307,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const tree = await buildTree(root, "", dbObjects, hiddenObjectNames, showHidden);
+  const tree = await buildTree(root, "", dbObjects, showHidden);
 
   return Response.json({ tree, exists: true, workspaceRoot: root, openclawDir, workspace });
 }

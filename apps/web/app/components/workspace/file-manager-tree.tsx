@@ -5,8 +5,6 @@ import {
   IconFolderFilled,
   IconFolderOpenFilled,
   IconFileFilled,
-  IconTableFilled,
-  IconLayoutKanbanFilled,
   IconDatabaseFilled,
   IconReportAnalyticsFilled,
   IconMessageFilled,
@@ -41,7 +39,6 @@ import {
   isVirtualPath,
   toLocalClipboardPath,
 } from "@/lib/workspace-paths";
-import { displayObjectName } from "@/lib/object-display-name";
 
 // --- Types ---
 
@@ -133,14 +130,6 @@ function FolderIcon({ open }: { open?: boolean }) {
     : <IconFolderFilled size={18} style={{ flexShrink: 0, color: "#60a5fa" }} />;
 }
 
-function TableIcon() {
-  return <IconTableFilled size={18} style={{ flexShrink: 0, color: "#42a97a" }} />;
-}
-
-function KanbanIcon() {
-  return <IconLayoutKanbanFilled size={18} style={{ flexShrink: 0, color: "#8b7cf6" }} />;
-}
-
 function DocumentIcon() {
   return <IconFileFilled size={18} style={{ flexShrink: 0, opacity: 0.7 }} />;
 }
@@ -171,12 +160,14 @@ function NodeIcon({ node, open }: { node: TreeNode; open?: boolean }) {
     return <ChatBubbleIcon />;
   }
   switch (node.type) {
+    // Object directories are real folders on disk that happen to back a
+    // CRM table. The file tree is a 1:1 view of the workspace, so render
+    // them as folders. The CRM nav still discriminates via node.type.
     case "object":
-      return node.defaultView === "kanban" ? <KanbanIcon /> : <TableIcon />;
-    case "document":
-      return <DocumentIcon />;
     case "folder":
       return <FolderIcon open={open} />;
+    case "document":
+      return <DocumentIcon />;
     case "database":
       return <DatabaseIcon />;
     case "report":
@@ -205,7 +196,6 @@ function NodeIcon({ node, open }: { node: TreeNode; open?: boolean }) {
 
 function typeColor(node: TreeNode): string {
   switch (node.type) {
-    case "object": return "var(--color-accent)";
     case "document": return "#60a5fa";
     case "database": return "#c084fc";
     case "report": return "#22c55e";
@@ -541,7 +531,7 @@ function DraggableNode({
           />
         ) : (
           <span className="truncate flex-1">
-            {node.type === "object" ? displayObjectName(node.name) : node.name}
+            {node.name}
           </span>
         )}
 
@@ -626,7 +616,7 @@ function DragOverlayContent({ node }: { node: TreeNode }) {
       <span style={{ color: typeColor(node) }}>
         <NodeIcon node={node} />
       </span>
-      <span>{node.type === "object" ? displayObjectName(node.name) : node.name}</span>
+      <span>{node.name}</span>
     </div>
   );
 }

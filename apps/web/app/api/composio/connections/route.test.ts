@@ -111,7 +111,8 @@ describe("Composio connections API", () => {
           },
         ],
       });
-    const { GET, invalidateComposioConnectionsCache } = await import("./route");
+    const { GET } = await import("./route");
+    const { invalidateComposioConnectionsCache } = await import("./cache");
     const request = new Request("http://localhost/api/composio/connections?include_toolkits=1");
 
     const cachedResponse = await GET(request);

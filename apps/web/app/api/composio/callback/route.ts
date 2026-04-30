@@ -3,7 +3,7 @@ import {
   resolveComposioApiKey,
   resolveComposioGatewayUrl,
 } from "@/lib/composio";
-import { invalidateComposioConnectionsCache } from "../connections/route";
+import { invalidateComposioConnectionsCache } from "../connections/cache";
 import {
   extractComposioConnections,
   normalizeComposioConnections,

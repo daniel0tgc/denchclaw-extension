@@ -16,71 +16,16 @@ import {
   normalizeComposioToolkitName,
   normalizeComposioToolkitSlug,
 } from "@/lib/composio-normalization";
+import {
+  fetchBulkToolkitsCached as fetchBulkToolkitsThroughCache,
+  fetchConnectionsCached as fetchConnectionsThroughCache,
+  fetchResolvedToolkitsCached,
+} from "./cache";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const CONNECTIONS_CACHE_TTL_MS = 60_000;
-const TOOLKIT_LOOKUP_CACHE_TTL_MS = 5 * 60_000;
 const CONNECTED_TOOLKIT_BULK_LIMIT = 100;
-const RESOLVED_TOOLKITS_CACHE_TTL_MS = 60_000;
-
-type CacheEntry<T> =
-  | {
-      expiresAt: number;
-      value: T;
-    }
-  | {
-      expiresAt: number;
-      promise: Promise<T>;
-    };
-
-const connectionsCache = new Map<string, CacheEntry<ComposioConnectionsResponse>>();
-const toolkitBulkCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
-const resolvedToolkitsCache = new Map<string, CacheEntry<ComposioToolkit[]>>();
-
-export function invalidateComposioConnectionsCache(): void {
-  connectionsCache.clear();
-  resolvedToolkitsCache.clear();
-}
-
-function buildCacheKey(gatewayUrl: string, apiKey: string, suffix = ""): string {
-  return `${gatewayUrl}::${apiKey}${suffix ? `::${suffix}` : ""}`;
-}
-
-async function readThroughCache<T>(
-  cache: Map<string, CacheEntry<T>>,
-  key: string,
-  ttlMs: number,
-  loader: () => Promise<T>,
-): Promise<T> {
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) {
-    if ("value" in cached) {
-      return cached.value;
-    }
-    return cached.promise;
-  }
-
-  const promise = loader();
-  cache.set(key, {
-    expiresAt: now + ttlMs,
-    promise,
-  });
-
-  try {
-    const value = await promise;
-    cache.set(key, {
-      expiresAt: Date.now() + ttlMs,
-      value,
-    });
-    return value;
-  } catch (error) {
-    cache.delete(key);
-    throw error;
-  }
-}
 
 function createToolkitPlaceholder(slug: string, name: string): ComposioToolkit {
   return {
@@ -99,10 +44,9 @@ async function fetchConnectionsCached(
   gatewayUrl: string,
   apiKey: string,
 ): Promise<ComposioConnectionsResponse> {
-  return await readThroughCache(
-    connectionsCache,
-    buildCacheKey(gatewayUrl, apiKey, "connections"),
-    CONNECTIONS_CACHE_TTL_MS,
+  return await fetchConnectionsThroughCache(
+    gatewayUrl,
+    apiKey,
     async () => await fetchComposioConnections(gatewayUrl, apiKey),
   );
 }
@@ -111,10 +55,9 @@ async function fetchBulkToolkitsCached(
   gatewayUrl: string,
   apiKey: string,
 ): Promise<ComposioToolkit[]> {
-  return await readThroughCache(
-    toolkitBulkCache,
-    buildCacheKey(gatewayUrl, apiKey, `toolkits-bulk:${CONNECTED_TOOLKIT_BULK_LIMIT}`),
-    TOOLKIT_LOOKUP_CACHE_TTL_MS,
+  return await fetchBulkToolkitsThroughCache(
+    gatewayUrl,
+    apiKey,
     async () => extractComposioToolkits(await fetchComposioToolkits(gatewayUrl, apiKey, {
       limit: CONNECTED_TOOLKIT_BULK_LIMIT,
     })).items,
@@ -139,16 +82,10 @@ async function resolveConnectedToolkits(
     return [];
   }
 
-  const resolvedCacheKey = buildCacheKey(
+  return await fetchResolvedToolkitsCached(
     gatewayUrl,
     apiKey,
-    `resolved-toolkits:${[...activeSlugs].toSorted().join(",")}`,
-  );
-
-  return await readThroughCache(
-    resolvedToolkitsCache,
-    resolvedCacheKey,
-    RESOLVED_TOOLKITS_CACHE_TTL_MS,
+    activeSlugs,
     async () => {
       const bulkToolkits = preFetchedBulkToolkits
         ?? await fetchBulkToolkitsCached(gatewayUrl, apiKey).catch(() => []);

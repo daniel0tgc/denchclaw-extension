@@ -5,7 +5,7 @@ const { invalidateComposioConnectionsCacheMock } = vi.hoisted(() => ({
   invalidateComposioConnectionsCacheMock: vi.fn(),
 }));
 
-vi.mock("../connections/route", () => ({
+vi.mock("../connections/cache", () => ({
   invalidateComposioConnectionsCache: invalidateComposioConnectionsCacheMock,
 }));
 

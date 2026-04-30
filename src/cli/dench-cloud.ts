@@ -127,7 +127,7 @@ export function buildDenchGatewayCatalogUrl(gatewayUrl: string | undefined): str
   return `${normalizeDenchGatewayUrl(gatewayUrl)}/v1/public/models`;
 }
 
-export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "kimi-k2.5";
+export const RECOMMENDED_DENCH_CLOUD_MODEL_ID = "claude-sonnet-4.6";
 export const DENCH_COMPOSIO_WRAPPER_TOOLS = [
   "dench_search_integrations",
   "dench_execute_integrations",

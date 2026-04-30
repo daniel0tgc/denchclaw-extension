@@ -99,4 +99,28 @@ describe("DataTable cell selection", () => {
 		const firstRowCheckbox = screen.getAllByRole("checkbox")[1] as HTMLInputElement;
 		expect(firstRowCheckbox.checked).toBe(true);
 	});
+
+	it("forwards header sort clicks to onSortChange so consumers can mirror to the server", () => {
+		const onSortChange = vi.fn();
+		render(
+			<DataTable
+				columns={columns}
+				data={rows}
+				enableSorting
+				onSortChange={onSortChange}
+				hideToolbar
+				getRowId={(row) => row.id}
+			/>,
+		);
+
+		// Header click toggles ascending the first time. Without this hook
+		// (the previous behaviour), TanStack updated only its internal
+		// sorting state and the server was never told — pagination then
+		// returned unsorted rows on every page change.
+		fireEvent.click(screen.getByText("Name"));
+		expect(onSortChange).toHaveBeenLastCalledWith([{ id: "name", desc: false }]);
+
+		fireEvent.click(screen.getByText("Name"));
+		expect(onSortChange).toHaveBeenLastCalledWith([{ id: "name", desc: true }]);
+	});
 });

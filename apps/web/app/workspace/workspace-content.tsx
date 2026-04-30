@@ -3383,6 +3383,19 @@ function ObjectView({
     }, 300);
   }, [fetchEntries]);
 
+  // Server-side sort: when the user picks Sort ascending / descending in
+  // a column header menu, ObjectTable translates TanStack's internal
+  // sorting state into SortRule[] (keyed by field name) and forwards
+  // here. We mirror it into `sortRules` so the URL effect persists it
+  // and refetch with the new ORDER BY so subsequent pages stay
+  // consistent (the previous behaviour only sorted the visible page
+  // client-side, which broke the moment you paginated).
+  const handleServerSort = useCallback((sort: SortRule[]) => {
+    _setSortRules(sort.length > 0 ? sort : undefined);
+    setServerPage(1);
+    void fetchEntries({ page: 1, sort });
+  }, [fetchEntries]);
+
   // Page change
   const handlePageChange = useCallback((page: number) => {
     setServerPage(page);
@@ -3893,6 +3906,7 @@ function ObjectView({
             onColumnSizingChanged={handleColumnSizingChanged}
             serverPagination={serverPaginationProp}
             onServerSearch={handleServerSearch}
+            onServerSort={handleServerSort}
             hideInternalToolbar
             globalFilter={globalFilter}
             onGlobalFilterChange={handleGlobalFilterChange}

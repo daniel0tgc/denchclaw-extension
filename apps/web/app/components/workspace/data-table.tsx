@@ -110,6 +110,15 @@ export type DataTableProps<TData, TValue> = {
 	};
 	// server-side search callback (replaces client-side fuzzy filter)
 	onServerSearch?: (query: string) => void;
+	/**
+	 * Fires whenever the table's internal sorting state changes (header
+	 * click, column-menu Sort ascending / descending). The new sorting
+	 * state is the resolved value, never the TanStack updater fn. The
+	 * client-side sorted row model still keeps the visible page in
+	 * order; consumers use this hook to mirror sort to the server so
+	 * pagination stays consistent across pages.
+	 */
+	onSortChange?: (sorting: SortingState) => void;
 	/** When true, column header click is disabled (no sort-on-click). */
 	disableHeaderClickSort?: boolean;
 	// When true, the built-in toolbar (search, columns, refresh, +Add) is not rendered.
@@ -259,6 +268,7 @@ export function DataTable<TData, TValue>({
 	getRowId,
 	serverPagination,
 	onServerSearch,
+	onSortChange,
 	disableHeaderClickSort = false,
 	hideToolbar = false,
 	globalFilter: globalFilterProp,
@@ -538,7 +548,11 @@ export function DataTable<TData, TValue>({
 			columnOrder: enableColumnReordering ? columnOrder : undefined,
 			pagination: serverPaginationState ?? pagination,
 		},
-		onSortingChange: setSorting,
+		onSortingChange: (updater) => {
+			const next = typeof updater === "function" ? updater(sorting) : updater;
+			setSorting(next);
+			onSortChange?.(next);
+		},
 		onGlobalFilterChange: setGlobalFilter,
 		onColumnFiltersChange: setColumnFilters,
 		onColumnVisibilityChange: (updater) => {

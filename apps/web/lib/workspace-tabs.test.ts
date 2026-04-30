@@ -337,6 +337,53 @@ describe("URL roundtrip / popstate idempotency", () => {
     expect(selectActiveContentTab(state)?.path).toBe("company");
   });
 
+  it("opening the Companies sidebar nav after viewing People activates the company tab (regression: 'click Companies, nothing opens')", () => {
+    // Mirrors `handleNavigate("crm-companies")` → `openTabForNode` flow.
+    let state: WorkspaceTabsState = EMPTY_TABS_STATE;
+    state = openContent(state, {
+      id: contentTabIdFor("object", "people"),
+      kind: "object",
+      path: "people",
+      title: "People",
+      preview: false,
+    });
+    expect(selectActiveContentTab(state)?.path).toBe("people");
+
+    state = openContent(state, {
+      id: contentTabIdFor("object", "company"),
+      kind: "object",
+      path: "company",
+      title: "Companies",
+      preview: false,
+    });
+
+    const active = selectActiveContentTab(state);
+    expect(active?.kind).toBe("object");
+    expect(active?.path).toBe("company");
+    expect(active?.preview).toBe(false);
+    expect(state.contentTabs.map((t) => t.path)).toEqual(["people", "company"]);
+  });
+
+  it("clicking Companies again while already active is a no-op (no duplicate tabs, focus preserved)", () => {
+    let state: WorkspaceTabsState = openContent(EMPTY_TABS_STATE, {
+      id: contentTabIdFor("object", "company"),
+      kind: "object",
+      path: "company",
+      title: "Companies",
+      preview: false,
+    });
+    const before = state;
+    state = openContent(state, {
+      id: contentTabIdFor("object", "company"),
+      kind: "object",
+      path: "company",
+      title: "Companies",
+      preview: false,
+    });
+    expect(state).toBe(before);
+    expect(state.contentTabs).toHaveLength(1);
+  });
+
   it("applyUrl with entry=people:abc opens a crm-person tab", () => {
     const url = parseUrlState("entry=people:abc");
     const state = applyUrlToState(EMPTY_TABS_STATE, url, {});

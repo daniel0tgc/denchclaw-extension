@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { type ColumnDef, type CellContext } from "@tanstack/react-table";
+import { type ColumnDef, type CellContext, type SortingState } from "@tanstack/react-table";
+import type { SortRule } from "@/lib/object-filters";
 import { DataTable, type RowAction, type ColumnSizingState } from "./data-table";
 import { RelationSelect } from "./relation-select";
 import { FormattedFieldValue } from "./formatted-field-value";
@@ -90,6 +91,15 @@ type ObjectTableProps = {
 	serverPagination?: ServerPaginationProps;
 	/** Server-side search callback. */
 	onServerSearch?: (query: string) => void;
+	/**
+	 * Server-side sort callback. Fires when the user picks Sort
+	 * ascending / descending in the column header menu (or clicks a
+	 * header). The `SortRule[]` is keyed by field NAME (matching the
+	 * pivot view's column names), so the API can plug it straight into
+	 * `buildOrderByClause`. Empty array means "no sort, use server
+	 * default".
+	 */
+	onServerSort?: (sort: SortRule[]) => void;
 	/** When true, the DataTable's internal toolbar (search, columns, refresh, +Add) is suppressed. */
 	hideInternalToolbar?: boolean;
 	/** Controlled global filter value. When provided, the DataTable uses this instead of its own state. */
@@ -830,6 +840,7 @@ export function ObjectTable({
 	onColumnSizingChanged,
 	serverPagination,
 	onServerSearch,
+	onServerSort,
 	hideInternalToolbar,
 	globalFilter,
 	onGlobalFilterChange,
@@ -1607,6 +1618,26 @@ export function ObjectTable({
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	), [objectName, stableOnCreated, stableOnEnrichmentStart]);
 
+	// Translate TanStack's internal sort state into the SortRule[] shape
+	// the API expects. The API joins on field NAME (it pivots fields into
+	// columns named after `field.name`), so we resolve column.id (= field.id)
+	// back to field.name. created_at / updated_at don't have a Field record
+	// — their column id IS the SQL column name, so they pass through.
+	const fieldsByIdRef = useRef(dataFields);
+	fieldsByIdRef.current = dataFields;
+	const handleTanstackSort = useCallback((sortingState: SortingState) => {
+		if (!onServerSort) {return;}
+		const next: SortRule[] = sortingState.map((s) => {
+			const direction = s.desc ? "desc" : "asc";
+			if (s.id === "created_at" || s.id === "updated_at") {
+				return { field: s.id, direction };
+			}
+			const field = fieldsByIdRef.current.find((f) => f.id === s.id);
+			return { field: field?.name ?? s.id, direction };
+		});
+		onServerSort(next);
+	}, [onServerSort]);
+
 	return (
 	<>
 		<DataTable
@@ -1639,6 +1670,7 @@ export function ObjectTable({
 			onColumnSizingChange={onColumnSizingChanged}
 			serverPagination={serverPagination}
 			onServerSearch={onServerSearch}
+			onSortChange={onServerSort ? handleTanstackSort : undefined}
 			hideToolbar={hideInternalToolbar}
 			globalFilter={globalFilter}
 			onGlobalFilterChange={onGlobalFilterChange}

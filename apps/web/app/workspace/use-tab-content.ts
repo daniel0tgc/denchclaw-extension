@@ -65,11 +65,21 @@ function cacheReducer(state: CacheState, action: CacheAction): CacheState {
       const order = state.order.includes(action.id)
         ? state.order
         : [...state.order, action.id];
+      // Stale-while-revalidate: when refreshing an entry that already has
+      // cached content (e.g. tree-driven auto refetch, post-edit refresh,
+      // pagination reload), keep the previous content visible until the new
+      // payload lands. This prevents the active right-panel view from
+      // unmounting and flicking to a centered loading spinner / empty
+      // table on every workspace SSE tick.
+      const existing = state.entries[action.id];
       return {
         order: enforceLimit(order),
         entries: {
           ...state.entries,
-          [action.id]: { generation: action.generation, content: undefined },
+          [action.id]: {
+            generation: action.generation,
+            content: existing?.content,
+          },
         },
       };
     }
@@ -131,7 +141,11 @@ export type UseTabContentResult = {
   content: ContentState;
   /**
    * Force-refresh the active tab's payload. No-op for tabs that derive from
-   * live state. Used after destructive actions (e.g. saving an object).
+   * live state. Used after destructive actions (e.g. saving an object) and
+   * by the workspace tree watcher to keep object data in sync with the
+   * underlying DuckDB. Stale-while-revalidate: previous cached content
+   * stays returned from `content` until the refetch resolves, so callers
+   * never see a spurious loading flash mid-refresh.
    */
   refreshActive: () => void;
   /** Drop a single cached entry. Used when a tab is closed. */
@@ -148,6 +162,10 @@ export type UseTabContentResult = {
  *  - When `tab.kind` derives from live state → recompute on every render.
  *  - When `tab.kind` requires a fetch and the cache has no entry → emit
  *    `{kind:"loading"}` while the fetch is in flight, then store the result.
+ *  - When `refreshActive()` re-fetches a tab that already has cached
+ *    content → keep returning the existing content (stale-while-revalidate)
+ *    so the right-panel view doesn't unmount and flick to a spinner / empty
+ *    table on every refresh tick.
  */
 export function useTabContent(
   tab: ContentTab | null,

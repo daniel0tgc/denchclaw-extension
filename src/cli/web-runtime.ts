@@ -28,8 +28,12 @@ const WEB_RUNTIME_APP_DIRNAME = "app";
 const WEB_RUNTIME_APP_BACKUP_DIRNAME = "app.prev";
 const WEB_RUNTIME_MANIFEST_FILENAME = "manifest.json";
 const WEB_RUNTIME_PROCESS_FILENAME = "process.json";
-const WEB_APP_PROBE_ATTEMPTS = 20;
-const WEB_APP_PROBE_DELAY_MS = 750;
+// DuckDB lock conflicts during startup (gateway holds the lock) can delay the
+// web runtime's HTTP readiness by up to ~90s (4 retry sequences × 8 attempts
+// × exponential backoff 250ms→4s). Probe for up to 120s to avoid a false
+// rollback that would restore a stale app.prev build.
+const WEB_APP_PROBE_ATTEMPTS = 80;
+const WEB_APP_PROBE_DELAY_MS = 1_500;
 const WEB_APP_PROBE_TIMEOUT_MS = 1_500;
 const LEGACY_STANDALONE_SEGMENT = "/apps/web/.next/standalone/apps/web";
 

@@ -1154,9 +1154,15 @@ describe("bootstrapCommand always-onboard behavior", () => {
       runtime,
     );
 
+    // The update flow now uses `npm install -g openclaw@latest --ignore-scripts`
+    // (via runCommandWithTimeout → spawn) rather than `openclaw update --yes`.
     const updateIndex = spawnCalls.findIndex(
       (call) =>
-        call.command === "openclaw" && call.args.includes("update") && call.args.includes("--yes"),
+        call.command === "npm" &&
+        call.args.includes("install") &&
+        call.args.includes("-g") &&
+        call.args.includes("openclaw@latest") &&
+        call.args.includes("--ignore-scripts"),
     );
     const onboardIndex = spawnCalls.findIndex(
       (call) => call.command === "openclaw" && call.args.includes("onboard"),
@@ -1185,9 +1191,15 @@ describe("bootstrapCommand always-onboard behavior", () => {
     });
 
     expect(promptMocks.confirm).toHaveBeenCalledTimes(2);
+    // The update flow now uses `npm install -g openclaw@latest --ignore-scripts`
+    // (via runCommandWithTimeout → spawn) rather than `openclaw update --yes`.
     const updateIndex = spawnCalls.findIndex(
       (call) =>
-        call.command === "openclaw" && call.args.includes("update") && call.args.includes("--yes"),
+        call.command === "npm" &&
+        call.args.includes("install") &&
+        call.args.includes("-g") &&
+        call.args.includes("openclaw@latest") &&
+        call.args.includes("--ignore-scripts"),
     );
     const onboardIndex = spawnCalls.findIndex(
       (call) => call.command === "openclaw" && call.args.includes("onboard"),

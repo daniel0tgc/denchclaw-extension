@@ -948,6 +948,10 @@ class GatewayProcessHandle
 
 		let startRes: GatewayResFrame;
 		if (this.useChatSend) {
+			// Use a longer timeout for chat.send: the gateway's embedded agent
+			// authenticates with the cloud provider (~20-25s) before acknowledging,
+			// which exceeds the default 12s REQUEST_TIMEOUT_MS.
+			const CHAT_SEND_TIMEOUT_MS = 90_000;
 			startRes = await client.request("chat.send", {
 				message: msg,
 				...(sessionKey ? { sessionKey } : {}),
@@ -956,7 +960,7 @@ class GatewayProcessHandle
 				...(this.params.attachments?.length
 					? { attachments: this.params.attachments }
 					: {}),
-			});
+			}, CHAT_SEND_TIMEOUT_MS);
 		} else {
 			startRes = await client.request("agent", {
 				message: msg,

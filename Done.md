@@ -740,3 +740,66 @@ OPEN DECISIONS:
 || Fire-and-forget async init in register() | `export default function register(api)` is synchronous. Wrap async init in `void (async () => {...})()` — tools may be called before schema is ready | `index.ts` | 7 |
 || README grep "exercise" vs "exercising" | "Exercising" does NOT contain the substring "exercise" — different suffix. Use "How to Exercise" not "Exercising" in headings that must match this grep check | `README.md` | 7 |
 || EAV batch insert performance | Inserting 10K accounts in batches of 100 (entries + entry_fields) takes ~123 seconds on Apple Silicon. Larger batch size improves throughput but risks connection timeouts | `generate-fixtures.ts` | 7 |
+
+---
+
+## Post-Build: DenchClaw Setup Issues — Why End-to-End Testing Was Blocked
+
+**Date:** 2026-04-30 / 2026-05-01
+**Status:** Root cause identified and fixed in this fork.
+
+### Goal
+
+The goal of this entire repo was to extend DenchClaw with additional capabilities: custom skills (`skills/b2b-crm/`) and a DuckDB-backed database layer (`extensions/b2b-crm/`) for account, contact, and deal management. All seven build phases completed successfully and 146 unit tests pass. However, manual end-to-end testing through the DenchClaw web UI at `localhost:3100` was blocked by a DenchClaw platform bug.
+
+### Issue 1: Chat Stream Returns 404
+
+**Symptom:** Every time a message was sent to an agent in the UI, the browser console logged:
+
+```
+GET http://localhost:3100/api/chat/stream?sessionId=<uuid> 404 (Not Found)
+```
+
+This repeated indefinitely (the UI retried the stream connection in a loop).
+
+**Root cause — scope mismatch in DenchClaw upstream:**
+
+`apps/web/lib/agent-runner.ts` `buildConnectParams()` requests five gateway operator scopes on every agent connection:
+
+- `operator.admin`
+- `operator.approvals`
+- `operator.pairing`
+- `operator.read`
+- `operator.write`
+
+However, after the gateway bootstraps via `npx denchclaw`, the local web runtime's `~/.openclaw-dench/identity/device-auth.json` was persisted with only `operator.pairing` — a minimal scope from an older bootstrap run. When the web runtime connected to the gateway and requested the full five scopes, the gateway rejected the connection with "pairing required: device is asking for more scopes than currently approved."
+
+Because the connection was rejected, `POST /api/chat` never created an agent run. `GET /api/chat/stream?sessionId=xxx` then returned 404 because no active run existed for that session ID — not because the route itself was broken.
+
+### Issue 2: "Failed to start agent: pairing required"
+
+**Symptom:** Sending any chat message displayed the error: `Failed to start agent: pairing required: device is asking for more scopes than currently approved`.
+
+**Root cause:** Same as Issue 1. The gateway's device token for the web runtime was stale. The `b2b-crm` extension registers additional agent tools; adding these extensions causes the gateway to re-evaluate scopes on the next connection, making an already-marginal approval fail outright.
+
+The upstream DenchClaw bootstrap (`src/cli/bootstrap-external.ts`) auto-approves the initial device pairing request when `npx denchclaw` is first run, but it does **not** detect or remediate a stale `device-auth.json` that was approved under an older scope set. This means any install that was bootstrapped before the scope requirements were expanded (or before a new extension was added) hits this issue silently.
+
+### How This Affects This Fork
+
+This fork's primary additions — `extensions/b2b-crm/` and `skills/b2b-crm/` — register new tools and skills into the DenchClaw agent. This is the trigger that causes an already-bootstrapped install to fail with the scope mismatch: the gateway sees new tool scopes being requested and rejects the stale token.
+
+### Fix Applied in This Fork
+
+`src/cli/bootstrap-external.ts` was extended with:
+
+- **`WEB_RUNTIME_OPERATOR_REQUIRED_SCOPES`** — the canonical list of the five scopes the web runtime requests
+- **`readDeviceAuthScopes(stateDir)`** — reads the approved operator scopes from `device-auth.json`
+- **`shouldResetDeviceAuth(stateDir)`** — returns `true` if the file exists but any required scope is missing
+- **Pre-flight scope reset** — inserted before `ensureManagedWebRuntime(...)`: if `shouldResetDeviceAuth` is true, `device-auth.json` is deleted so the web runtime generates a fresh pairing request
+- **Increased pairing poll attempts** — after a reset, `UNREADY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS` (4) is used instead of `READY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS` (1) to give the new request time to appear
+
+The fix is self-healing: running `pnpm dev` or `npx denchclaw update` detects and remediates the scope mismatch automatically, with the message "Resetting stale gateway device token (scope upgrade)…" printed once.
+
+### Why b2b-crm Could Not Be Fully Exercised
+
+Because every chat message returned 404, the agent tools registered by `b2b-crm` (`b2b_crm_sync_push`, `b2b_crm_sync_pull`, etc.) could not be invoked through the UI. Unit tests (146 tests across 6 files) all pass and verify the extension logic in isolation. The PIVOT views, FTS indexes, sync queue, activity scoring, audit trail, and CSV import/export are all implemented and tested — but live agent interaction via DenchClaw chat was blocked by the scope bug until the fix above was applied.

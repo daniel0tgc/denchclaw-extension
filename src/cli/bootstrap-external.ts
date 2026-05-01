@@ -77,6 +77,53 @@ const BOOTSTRAP_DEVICE_PAIRING_REQUIRED_SCOPES = [
   "operator.pairing",
 ] as const;
 
+/** Operator scopes the web runtime requests in apps/web/lib/agent-runner.ts `buildConnectParams`. */
+const WEB_RUNTIME_OPERATOR_REQUIRED_SCOPES = [
+  "operator.admin",
+  "operator.approvals",
+  "operator.pairing",
+  "operator.read",
+  "operator.write",
+] as const;
+
+function readDeviceAuthScopes(stateDir: string): string[] | null {
+  const filePath = path.join(stateDir, "identity", "device-auth.json");
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const tokens = (parsed as Record<string, unknown>).tokens;
+    if (!tokens || typeof tokens !== "object" || Array.isArray(tokens)) {
+      return null;
+    }
+    const operator = (tokens as Record<string, unknown>).operator;
+    if (!operator || typeof operator !== "object" || Array.isArray(operator)) {
+      return null;
+    }
+    const scopes = (operator as Record<string, unknown>).scopes;
+    if (!Array.isArray(scopes)) {
+      return null;
+    }
+    return scopes.filter((s): s is string => typeof s === "string");
+  } catch {
+    return null;
+  }
+}
+
+/** True when device-auth exists but approved operator scopes are below what the web runtime needs (forces re-pair). */
+function shouldResetDeviceAuth(stateDir: string): boolean {
+  const scopes = readDeviceAuthScopes(stateDir);
+  if (scopes === null) {
+    return false;
+  }
+  const set = new Set(scopes);
+  return !WEB_RUNTIME_OPERATOR_REQUIRED_SCOPES.every((scope) => set.has(scope));
+}
+
 type BootstrapRolloutStage = "internal" | "beta" | "default";
 type BootstrapCheckStatus = "pass" | "warn" | "fail";
 
@@ -3857,6 +3904,15 @@ export async function bootstrapCommand(
   }
   const gatewayUrl = `ws://127.0.0.1:${gatewayPort}`;
   const preferredWebPort = parseOptionalPort(opts.webPort) ?? DEFAULT_WEB_APP_PORT;
+  const didResetDeviceAuthForScopes = shouldResetDeviceAuth(stateDir);
+  if (didResetDeviceAuthForScopes) {
+    postOnboardSpinner?.message("Resetting stale gateway device token (scope upgrade)…");
+    try {
+      rmSync(path.join(stateDir, "identity", "device-auth.json"), { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
   postOnboardSpinner?.message(`Starting web runtime on port ${preferredWebPort}…`);
   let webRuntimeStatus = await ensureManagedWebRuntime({
     stateDir,
@@ -3869,12 +3925,14 @@ export async function bootstrapCommand(
   // Bootstrap should finish with the local CLI device paired so the Control UI
   // and follow-up commands do not rely on loopback fallback or manual approval.
   postOnboardSpinner?.message("Checking local device pairing…");
+  const devicePairingPollAttempts =
+    didResetDeviceAuthForScopes || !webRuntimeStatus.ready
+      ? UNREADY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS
+      : READY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS;
   const devicePairing = await attemptBootstrapDevicePairing({
     openclawCommand,
     profile,
-    pollAttempts: webRuntimeStatus.ready
-      ? READY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS
-      : UNREADY_WEB_DEVICE_PAIRING_POLL_ATTEMPTS,
+    pollAttempts: devicePairingPollAttempts,
   });
   if (!webRuntimeStatus.ready && devicePairing.status === "approved") {
     postOnboardSpinner?.message("Waiting for web runtime after pairing…");

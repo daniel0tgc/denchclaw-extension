@@ -303,6 +303,24 @@ await generateSyntheticAccounts(10_000, dbPath);
 
 ## Troubleshooting
 
+### Chat messages return 404 / agent never responds
+
+**Symptom:** The browser console shows repeated `GET /api/chat/stream?sessionId=xxx 404 (Not Found)`, and sending a message in the UI shows "Failed to start agent: pairing required: device is asking for more scopes than currently approved."
+
+**Root cause:** This is a version migration gap in the upstream DenchClaw repo. The web runtime (`apps/web/lib/agent-runner.ts`) requests five operator scopes when connecting to the gateway (`operator.admin`, `operator.approvals`, `operator.pairing`, `operator.read`, `operator.write`). If the stored `~/.openclaw-dench/identity/device-auth.json` was approved under an older version that only granted `operator.pairing`, every new `POST /api/chat` call is rejected before any agent run is created — which is why the subsequent `GET /api/chat/stream` returns 404 (no run exists to stream).
+
+The problem is made worse by the `b2b-crm` extension: registering new agent tools triggers the gateway's scope re-evaluation, so existing installs that worked before adding the extension start failing.
+
+**This fork's fix:** `src/cli/bootstrap-external.ts` now calls `shouldResetDeviceAuth()` before starting the web runtime. If `device-auth.json` exists but is missing any of the five required operator scopes, it is deleted so the web runtime sends a fresh pairing request. The existing `attemptBootstrapDevicePairing` step then auto-approves it. Running `pnpm dev` or `npx denchclaw update` will self-heal silently (you will see "Resetting stale gateway device token (scope upgrade)…" once in the console).
+
+**Manual fix (if needed):**
+
+```bash
+openclaw --profile dench devices list
+openclaw --profile dench devices approve --latest
+npx denchclaw restart
+```
+
 ### `pairing required`
 
 If the Control UI shows `gateway connect failed: pairing required`, list pending devices and approve:

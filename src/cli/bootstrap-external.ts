@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { chmod as fsChmod, rename as fsRename } from "node:fs/promises";
@@ -829,6 +830,21 @@ async function syncBundledPlugins(params: {
       const pluginDest = path.join(params.stateDir, "extensions", plugin.sourceDirName);
       mkdirSync(path.dirname(pluginDest), { recursive: true });
       cpSync(pluginSrc, pluginDest, { recursive: true, force: true });
+
+      // For plugins that depend on packages in the repo's node_modules (e.g. duckdb-async),
+      // symlink node_modules from the packageRoot so the plugin's imports resolve correctly.
+      if (plugin.pluginId === "b2b-crm") {
+        const pluginNodeModulesDest = path.join(pluginDest, "node_modules");
+        const repoNodeModulesSrc = path.join(packageRoot, "node_modules");
+        if (!existsSync(pluginNodeModulesDest) && existsSync(repoNodeModulesSrc)) {
+          try {
+            symlinkSync(repoNodeModulesSrc, pluginNodeModulesDest);
+          } catch {
+            // Symlink may already exist or permission denied — not fatal
+          }
+        }
+      }
+
       const normalizedPluginSrc = normalizeFilesystemPath(pluginSrc);
       const normalizedPluginDest = normalizeFilesystemPath(pluginDest);
       nextAllow.push(plugin.pluginId);
@@ -3606,6 +3622,12 @@ export async function bootstrapCommand(
       sourceDirName: "exa-search",
       enabled: denchCloudSelection.enabled,
       ...(denchCloudSelection.enabled ? { config: { enabled: true } } : {}),
+    },
+    {
+      pluginId: "b2b-crm",
+      sourceDirName: "b2b-crm",
+      enabled: true,
+      config: { enabled: true },
     },
   ];
 

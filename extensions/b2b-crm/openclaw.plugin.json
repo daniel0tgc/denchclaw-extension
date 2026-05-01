@@ -1,0 +1,19 @@
+{
+  "id": "b2b-crm",
+  "name": "B2B CRM Extension",
+  "version": "1.0.0",
+  "description": "B2B account management with bidirectional cloud sync and activity intelligence",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "tenantId": { "type": "string", "description": "Tenant identifier for data isolation" },
+      "syncIntervalMs": { "type": "number", "default": 30000, "description": "Sync queue drain interval in ms" },
+      "encryptionKey": { "type": "string", "description": "Base64-encoded 256-bit key for PII encryption" }
+    }
+  },
+  "uiHints": {
+    "encryptionKey": { "label": "Encryption Key", "sensitive": true }
+  }
+}

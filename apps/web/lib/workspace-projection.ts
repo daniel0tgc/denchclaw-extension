@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
 import type { ObjectYamlConfig } from "./workspace";
@@ -49,7 +49,7 @@ function hasExistingObjectYamlOutsideRootSlot(
   const resolvedRootObjectDir = resolve(rootObjectDir);
 
   function walk(dir: string): boolean {
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: Dirent<string>[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {

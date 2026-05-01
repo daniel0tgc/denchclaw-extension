@@ -391,6 +391,8 @@ export function emitTrace(
 
 /**
  * Emit a custom DenchClaw event (not a PostHog $ai_* event).
+ * Always sets $process_person_profile: false to prevent PostHog from
+ * creating or updating person profiles from anonymous custom events.
  */
 export function emitCustomEvent(
   ph: PostHogClient,
@@ -401,7 +403,10 @@ export function emitCustomEvent(
     ph.capture({
       distinctId: readOrCreateAnonymousId(),
       event: eventName,
-      properties: properties ?? {},
+      properties: {
+        ...properties,
+        $process_person_profile: false,
+      },
     });
   } catch {
     // Fail silently.

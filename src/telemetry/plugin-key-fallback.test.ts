@@ -14,6 +14,7 @@ vi.mock("../../extensions/posthog-analytics/lib/posthog-client.js", () => ({
 
 vi.mock("../../extensions/posthog-analytics/lib/privacy.js", () => ({
   readPrivacyMode: () => true,
+  readPersonInfo: () => null,
   readOrCreateAnonymousId: () => "test-anon-id",
   sanitizeMessages: (v: unknown) => v,
   sanitizeOutputChoices: (v: unknown) => v,

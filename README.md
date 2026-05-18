@@ -68,26 +68,82 @@ The `extensions/` directory contains custom OpenClaw plugins that are automatica
 ```bash
 git clone https://github.com/daniel0tgc/denchclaw-extension.git
 cd denchclaw-extension
-
-pnpm install
-pnpm build
-
-# First time only — builds the web UI (~3 min)
-pnpm web:build && pnpm web:prepack
-
-# Run (opens at localhost:3100)
-DENCH_API_KEY=your_key_from_dench.com/api pnpm dev
+pnpm install        # compiles DuckDB native binary (~5 min on Apple Silicon, one-time)
+pnpm build          # builds CLI dist/
+pnpm web:build && pnpm web:prepack   # builds web UI (~3 min, one-time)
 ```
 
-Get your Dench API key at **[dench.com/api](https://dench.com/api)**.
-
-After the first-time build, subsequent runs are just:
+Get your Dench API key at **[dench.com/api](https://dench.com/api)**, then save it so you never have to type it again:
 
 ```bash
-DENCH_API_KEY=your_key pnpm dev
+echo 'DENCH_API_KEY=your_key_here' >> .env.local
 ```
 
-> **Note on DuckDB:** `pnpm install` compiles the DuckDB native binary from source (~5 min on Apple Silicon, one-time cost).
+Then run:
+
+```bash
+pnpm dev            # reads .env.local automatically
+```
+
+The first run launches the OpenClaw setup wizard. Wizard choices that matter:
+
+| Prompt | Choose |
+|---|---|
+| Config handling | **Reset before setup** |
+| Reset scope | **Config only** |
+| OpenClaw updates | **Yes** |
+| Gateway service | **Restart** |
+
+After the wizard completes, DenchClaw is at **localhost:3100**.
+
+> **Note on DuckDB:** `pnpm install` must compile the DuckDB native binary. If it was skipped (you see `Cannot find module '...duckdb.node'`), run the fix in [DuckDB native binary missing](#duckdb-native-binary-missing).
+
+---
+
+## Daily Usage
+
+The OpenClaw gateway runs as a **launchd daemon** — it starts automatically at login and keeps running in the background. You never need to set up OpenClaw again after the first run.
+
+### Start a session
+
+```bash
+cd ~/denchclaw-extension
+pnpm start
+```
+
+`pnpm start` skips the wizard entirely and boots the web runtime directly. Open **localhost:3100** in your browser.
+
+> **`pnpm dev` vs `pnpm start`**
+> - `pnpm start` → **daily use**. No wizard, no prompts. Starts in a few seconds.
+> - `pnpm dev` → **first-time setup only**, or when you need to reconfigure from scratch. Always runs the full wizard.
+
+### Stop a session
+
+`Ctrl+C` in the terminal. The gateway keeps running in the background — your data and config are preserved.
+
+### Check gateway health
+
+```bash
+openclaw --profile dench gateway status
+```
+
+### Restart the gateway (if it crashed or you changed config)
+
+```bash
+openclaw --profile dench gateway restart
+```
+
+### Watch live logs while using the agent
+
+```bash
+tail -f ~/.openclaw-dench/logs/gateway.log
+```
+
+### What NOT to do
+
+- **Do not** run `pnpm dev` for daily use — it runs the full OpenClaw setup wizard every time.
+- **Do not** delete `~/.openclaw-dench` unless you want to start from scratch (you will lose all agent history, workspace data, and device pairings).
+- **Do not** manually edit `~/.openclaw-dench/openclaw.json` while the gateway is running — use `openclaw --profile dench config set <key> <value>` instead, or stop the gateway first.
 
 ---
 
@@ -102,7 +158,8 @@ Install DenchClaw (an OpenClaw CRM Framwork) by running "npx denchclaw", when it
 ## Commands
 
 ```bash
-pnpm dev                     # start DenchClaw (localhost:3100)
+pnpm start                   # daily use — start web UI, no wizard (localhost:3100)
+pnpm dev                     # first-time setup only — runs full OpenClaw wizard
 pnpm build                   # rebuild CLI after code changes
 pnpm web:build               # rebuild web UI (run after web changes)
 pnpm web:prepack             # finalize standalone web build
@@ -302,6 +359,97 @@ await generateSyntheticAccounts(10_000, dbPath);
 ---
 
 ## Troubleshooting
+
+### Gateway port mismatch after wizard re-run
+
+**Symptom:** Gateway fails to start. Log shows `gateway.auth: Unrecognized key: "devices"` or the launchd plist uses port 19001 but config says 18789 (or vice versa).
+
+**Cause:** Running the wizard twice can leave the launchd plist referencing a stale port or a config key (`devices`) no longer accepted by the current OpenClaw version.
+
+**Fix:**
+
+```bash
+openclaw --profile dench doctor --repair   # heals config anomalies
+openclaw --profile dench gateway install --force  # rewrites plist with correct port
+openclaw --profile dench gateway restart
+```
+
+---
+
+### Agent responds with "403 Your current plan can only use Dench Instant"
+
+**Cause:** The model in `~/.openclaw-dench/openclaw.json` is set to `dench-cloud/anthropic.claude-sonnet-4-6-v1` (or another Max-tier model) but your plan is Dench Instant.
+
+**Fix:**
+
+```bash
+openclaw --profile dench config set agents.defaults.model.primary dench-cloud/dench.instant
+```
+
+The gateway hot-reloads this change immediately — no restart needed.
+
+---
+
+### Device scope upgrade: "pairing required: device is asking for more scopes than currently approved"
+
+**Cause:** The web app's device was previously approved with only `operator.pairing` scope. After a protocol upgrade or config reset, it requests the full operator scope set, which blocks the connection.
+
+**Fix (automated in this fork via `shouldResetDeviceAuth`):** `pnpm dev` will self-heal this silently.
+
+**Manual fix if needed:**
+
+```bash
+openclaw --profile dench devices list
+```
+
+If there is a pending request, patch `~/.openclaw-dench/devices/paired.json` to grant the full scope set and clear `pending.json`:
+
+```bash
+node -e "
+const fs = require('fs'), os = require('os');
+const dir = os.homedir() + '/.openclaw-dench/devices';
+const fullScopes = ['operator.admin','operator.approvals','operator.pairing','operator.read','operator.write'];
+const paired = JSON.parse(fs.readFileSync(dir+'/paired.json','utf-8'));
+const id = Object.keys(paired)[0];
+paired[id].scopes = fullScopes;
+paired[id].approvedScopes = fullScopes;
+if (paired[id].tokens?.operator) paired[id].tokens.operator.scopes = fullScopes;
+fs.writeFileSync(dir+'/paired.json', JSON.stringify(paired, null, 2));
+fs.writeFileSync(dir+'/pending.json', '{}');
+console.log('Patched', id.slice(0,16)+'...');
+"
+openclaw --profile dench gateway restart
+```
+
+---
+
+### DuckDB native binary missing
+
+**Symptom:** `Cannot find module '...duckdb.node'` in gateway logs, or b2b-crm extension shows as loaded but has 0 tools.
+
+**Cause:** `pnpm install` skipped the native compilation step (common when `--ignore-scripts` is set, or on a fresh clone).
+
+**Fix:**
+
+```bash
+cd ~/denchclaw-extension
+DUCKDB_PKG=$(node -e "console.log(require.resolve('duckdb/package.json').replace('/package.json',''))")
+cd "$DUCKDB_PKG" && npm run install
+cd ~/denchclaw-extension
+```
+
+Then redeploy the extensions and symlink node_modules:
+
+```bash
+for ext in b2b-crm dench-ai-gateway dench-identity exa-search apollo-enrichment posthog-analytics; do
+  (cd extensions/$ext && npx tsdown index.ts --out-dir dist --format esm --external openclaw --external duckdb)
+  cp -r extensions/$ext/dist ~/.openclaw-dench/extensions/$ext/
+  ln -sf ~/denchclaw-extension/node_modules ~/.openclaw-dench/extensions/$ext/node_modules 2>/dev/null || true
+done
+openclaw --profile dench gateway restart
+```
+
+---
 
 ### Chat messages return 404 / agent never responds
 

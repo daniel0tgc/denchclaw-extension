@@ -1,5 +1,28 @@
 #!/usr/bin/env node
 
+// Load .env.local from the repo root so DENCH_API_KEY can be stored there
+// instead of being typed on every invocation. Safe to ignore if missing.
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+(function loadEnvLocal() {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(resolve(dir, ".env.local"), "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      if (key && !(key in process.env)) process.env[key] = val;
+    }
+  } catch {
+    // .env.local is optional
+  }
+})();
+
 import module from "node:module";
 
 // https://nodejs.org/api/module.html#module-compile-cache

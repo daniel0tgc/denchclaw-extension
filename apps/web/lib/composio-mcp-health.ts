@@ -364,15 +364,12 @@ function buildSummary(params: {
 }
 
 async function applyComposioMcpRepair(
-  gatewayUrl: string,
-  apiKey: string,
+  _gatewayUrl: string,
+  _apiKey: string,
 ): Promise<IntegrationRuntimeRefresh> {
-  const config = readConfig();
-  const mcp = ensureRecord(config, "mcp");
-  const servers = ensureRecord(mcp, "servers");
-  servers.composio = buildComposioMcpServerConfig(gatewayUrl, apiKey);
-  writeConfig(config);
-  return await refreshIntegrationsRuntime();
+  // Composio MCP is disabled: it injects 500+ tool schemas that exceed the
+  // dench.instant context window, causing the agent to produce empty responses.
+  return { attempted: false, restarted: false, error: null, profile: "dench" };
 }
 
 export async function getComposioMcpHealth(options?: {

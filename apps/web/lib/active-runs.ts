@@ -722,7 +722,7 @@ export function startSubscribeRun(params: {
 		"sessions.patch",
 		{
 			key: sessionKey,
-			thinkingLevel: "none",
+			thinkingLevel: "off",
 			verboseLevel: "full",
 			reasoningLevel: "on",
 		},

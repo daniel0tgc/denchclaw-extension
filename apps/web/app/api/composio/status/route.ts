@@ -10,7 +10,7 @@ type PostBody = {
 
 export async function GET() {
   try {
-    const status = await getComposioMcpHealth({ autoRepairConfig: true });
+    const status = await getComposioMcpHealth({ autoRepairConfig: false });
     return Response.json(status);
   } catch (error) {
     return Response.json(
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     if (!body.action || body.action === "refresh_status") {
-      return Response.json(await getComposioMcpHealth({ autoRepairConfig: true }));
+      return Response.json(await getComposioMcpHealth({ autoRepairConfig: false }));
     }
     if (body.action === "repair_mcp") {
       return Response.json(await getComposioMcpHealth({
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "probe_live_agent") {
       return Response.json(await getComposioMcpHealth({
-        autoRepairConfig: true,
+        autoRepairConfig: false,
         includeLiveAgentProbe: true,
       }));
     }
